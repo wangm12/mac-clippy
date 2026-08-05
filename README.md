@@ -1,79 +1,110 @@
 # Mac Clippy
 
-Mac Clippy is a standalone native macOS 14+ menu-bar clipboard utility. For
-each accepted pasteboard change it retains every advertised representation,
-including unavailable and oversized type markers, while the legacy primary
-representation still drives the clipboard card.
+Mac Clippy is a native macOS clipboard manager that lives in the menu bar. It
+keeps your recent clipboard history searchable and makes frequently reused
+content easy to paste.
 
-## Boundary
+## Features
 
-- The app is a single process with an `NSApplicationDelegate` composition root.
-- The menu bar status item opens a reusable, nonactivating bottom clipboard dock
-  panel on the screen containing the cursor.
-- `MacClippyKit` owns the `MacClippyCore` and `MacClippyPlatform` library
-  targets and their package tests.
-- GRDB.swift is the only external package dependency and backs the app-owned
-  storage layer.
-- Future model-backed behavior is reserved for the Fireworks/GLM5.2 backend;
-  this scaffold makes no network calls.
+- Local clipboard history for text, rich text, HTML, images, and files
+- Fast full-text search with OCR support for captured images
+- Copy, paste, queue paste, and multi-selection
+- Pinboards for content you want to keep handy
+- Snippets with configurable trigger expansion
+- Text transforms such as case conversion, whitespace cleanup, and pretty JSON
+- Privacy filters for concealed, transient, auto-generated, and excluded content
+- Global `Command-Shift-V` shortcut for opening the clipboard dock
 
-## Storage
+## Installation
 
-The app creates `~/Library/Application Support/MacClippy/` with separate
-clipboard, search, pinboard, and snippet databases plus encrypted image blobs.
-The device key is stored in the system keychain. The standalone app has no App
-Group and no dependency on `v1` or `v2`. Snippet triggers are implemented in
-the first-release path with auto expansion by default, optional Tab
-confirmation, and an off setting; event-tap installation is best effort so it
-does not block clipboard capture.
-
-Capture currently supports PNG/TIFF and other image data, text, RTF, HTML, and
-file URLs. Every representation in an accepted change is retained, including
-empty and provider-unavailable payloads (kept as type-only markers), and the
-legacy primary representation still drives the card. Conservative defaults
-exclude concealed, transient, auto-generated, and common password-manager
-content; additional app and text exclusions are configurable in Settings.
-Text-bearing records are indexed when conversion is available. The dock
-reloads recent history when opened, searches the FTS index, and copies or
-injects stored text/HTML/RTF, image, and file representations before closing. Plain-text copy
-remains available for text-bearing records. Text/HTML/RTF cards also offer a
-card context-menu Transform submenu that applies the existing text transform
-engine (Uppercase, Lowercase, Trim whitespace, Pretty JSON, Clean tracking URL)
-as a one-shot pasteboard operation: Copy transformed prepares the pasteboard
-without posting a paste keystroke, and Paste transformed injects Cmd+V and
-bumps frequency only on a successful injection. HTML/RTF are converted to plain
-text before the transform; images and files are never offered.
-The dock's Snippets tab supports saving text clipboard cards by dragging them
-onto the Snippets pill; snippet expansion remains active in the runtime.
-`MacClippyPlatform` provides permission-free Vision OCR APIs for image data and
-`CGImage`; captured-image OCR is wired asynchronously and searchable. Tests do
-not include a real Vision fixture. Paste injection has an explicit manual-paste
-fallback when Accessibility is unavailable. The status item dock also
-toggles with the global Command-Shift-V hotkey.
-A multi-selection also offers Queue paste, which injects a separate Cmd+V per
-selected record in visual order so mixed selections (text + HTML/RTF + image +
-files) can each be consumed by the target app. This is distinct from Paste all,
-which merges a homogeneous text selection into one paste; Paste all is
-unchanged. Queue paste reports explicit unavailable IDs for missing/malformed
-records and stops on a manual-paste (Accessibility-unavailable) result without
-claiming the remaining IDs injected. Full success closes the dock; partial and
-manual-stop outcomes keep the dock open so the explicit result is visible. No
-queue database is added; this is one-shot ordered execution.
-
-## Build
-
-Run from `mac-clippy/`:
+Build a DMG from source:
 
 ```sh
-make generate
-make build
-make test
-make run
 make dmg
-make clean
 ```
 
-`make build` and `make test` use the repo-local `.build/DerivedData` directory.
-`make dmg` (also available as `make release`) builds an unsigned Release app
-and packages it as `dist/MacClippy.dmg`. Set `CODE_SIGNING_ALLOWED=YES`,
-`CODE_SIGN_IDENTITY`, and `DEVELOPMENT_TEAM` when creating a signed artifact.
+The result is written to:
+
+```text
+dist/MacClippy.dmg
+```
+
+Open the DMG, drag `MacClippy.app` to `Applications`, and launch it from
+Finder. Clipboard capture works locally. Automatic paste injection and snippet
+expansion require macOS Accessibility permission; without it, Mac Clippy keeps
+the clipboard available for manual paste.
+
+## Privacy and storage
+
+Clipboard data is stored locally in:
+
+```text
+~/Library/Application Support/MacClippy/
+```
+
+Clipboard payloads and image blobs are encrypted with a device key stored in
+the macOS Keychain. Search metadata is kept separately to support fast search.
+Conservative capture exclusions are enabled by default, and additional app and
+text exclusions can be configured in Settings.
+
+## Development
+
+Requirements:
+
+- macOS 14 or later
+- Xcode 26 or later
+- XcodeGen (`brew install xcodegen`)
+
+Run these commands from the repository root:
+
+```sh
+# Generate the Xcode project from project.yml
+make generate
+
+# Build the Debug app
+make build
+
+# Run Swift package and app tests
+make test
+
+# Build and launch the Debug app
+make run
+
+# Run the complete CI-style build and test flow
+make ci
+```
+
+`MacClippyKit` uses Swift Package Manager and fetches GRDB.swift automatically.
+Build products and package caches are written to `.build/` and are ignored by
+Git.
+
+## Release packaging
+
+`make dmg` creates an unsigned arm64 Release DMG. `make release` is an alias for
+the same command.
+
+To create a signed artifact, provide a Developer ID identity and team ID:
+
+```sh
+CODE_SIGNING_ALLOWED=YES \
+CODE_SIGN_IDENTITY="Developer ID Application: Your Name" \
+DEVELOPMENT_TEAM="TEAM_ID" \
+make dmg
+```
+
+Developer ID signing, notarization, and Gatekeeper verification require the
+appropriate Apple certificates and credentials on the build machine.
+
+## Project layout
+
+```text
+MacClippy/             macOS application and dock UI
+MacClippyKit/          Core storage, capture, search, paste, and platform code
+MacClippyTests/        Application-level XCTest target
+scripts/               Build, signing, verification, and DMG packaging scripts
+project.yml            XcodeGen project definition
+```
+
+## License
+
+This project is currently distributed without a public license.
