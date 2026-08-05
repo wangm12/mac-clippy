@@ -1,0 +1,194 @@
+import AppKit
+import SwiftUI
+
+struct MacClippySourceRGB: Equatable {
+    let red: CGFloat
+    let green: CGFloat
+    let blue: CGFloat
+}
+
+enum MacClippySourceAccent {
+    static let neutralRGB = MacClippySourceRGB(red: 0.48, green: 0.50, blue: 0.54)
+
+    static func representativeRGB(from pixels: [MacClippySourceRGB]) -> MacClippySourceRGB {
+        guard !pixels.isEmpty else { return neutralRGB }
+
+        let colorfulPixels = pixels.filter { pixel in
+            let maximum = max(pixel.red, pixel.green, pixel.blue)
+            let minimum = min(pixel.red, pixel.green, pixel.blue)
+            return maximum - minimum >= 0.10 && maximum >= 0.18
+        }
+        guard !colorfulPixels.isEmpty else { return neutralRGB }
+
+        var weightedRGB = MacClippySourceRGB(red: 0, green: 0, blue: 0)
+        var totalWeight: CGFloat = 0
+        for pixel in colorfulPixels {
+            let maximum = max(pixel.red, pixel.green, pixel.blue)
+            let minimum = min(pixel.red, pixel.green, pixel.blue)
+            let weight = (maximum - minimum) * maximum
+            weightedRGB = MacClippySourceRGB(
+                red: weightedRGB.red + pixel.red * weight,
+                green: weightedRGB.green + pixel.green * weight,
+                blue: weightedRGB.blue + pixel.blue * weight
+            )
+            totalWeight += weight
+        }
+
+        let average = MacClippySourceRGB(
+            red: weightedRGB.red / max(totalWeight, 0.001),
+            green: weightedRGB.green / max(totalWeight, 0.001),
+            blue: weightedRGB.blue / max(totalWeight, 0.001)
+        )
+        let fallback = colorfulPixels.max { left, right in
+            let leftWeight = (max(left.red, left.green, left.blue) - min(left.red, left.green, left.blue)) * max(left.red, left.green, left.blue)
+            let rightWeight = (max(right.red, right.green, right.blue) - min(right.red, right.green, right.blue)) * max(right.red, right.green, right.blue)
+            return leftWeight < rightWeight
+        } ?? average
+        let averageChroma = max(average.red, average.green, average.blue) - min(average.red, average.green, average.blue)
+        let source = averageChroma >= 0.08 ? average : fallback
+        let red = source.red
+        let green = source.green
+        let blue = source.blue
+        let maximum = max(red, green, blue)
+        let minimum = min(red, green, blue)
+        let chroma = maximum - minimum
+        let saturation = min(max(chroma / max(maximum, 0.001), 0.52), 0.82)
+        let brightness = min(max(maximum * 1.08, 0.58), 0.86)
+        let hue: CGFloat
+
+        if chroma == 0 {
+            hue = 0.58
+        } else if maximum == red {
+            hue = ((green - blue) / chroma).truncatingRemainder(dividingBy: 6) / 6
+        } else if maximum == green {
+            hue = ((blue - red) / chroma + 2) / 6
+        } else {
+            hue = ((red - green) / chroma + 4) / 6
+        }
+
+        return rgbFromHSV(hue: hue < 0 ? hue + 1 : hue, saturation: saturation, brightness: brightness)
+    }
+
+    private static func rgbFromHSV(hue: CGFloat, saturation: CGFloat, brightness: CGFloat) -> MacClippySourceRGB {
+        let scaled = hue * 6
+        let sector = Int(floor(scaled))
+        let fraction = scaled - CGFloat(sector)
+        let p = brightness * (1 - saturation)
+        let q = brightness * (1 - saturation * fraction)
+        let t = brightness * (1 - saturation * (1 - fraction))
+
+        switch sector % 6 {
+        case 0: return MacClippySourceRGB(red: brightness, green: t, blue: p)
+        case 1: return MacClippySourceRGB(red: q, green: brightness, blue: p)
+        case 2: return MacClippySourceRGB(red: p, green: brightness, blue: t)
+        case 3: return MacClippySourceRGB(red: p, green: q, blue: brightness)
+        case 4: return MacClippySourceRGB(red: t, green: p, blue: brightness)
+        default: return MacClippySourceRGB(red: brightness, green: p, blue: q)
+        }
+    }
+}
+
+struct MacClippySourceAppPresentation {
+    let displayName: String
+    let icon: NSImage?
+    let accent: NSColor
+
+    var accentRGB: MacClippySourceRGB {
+        guard let converted = accent.usingColorSpace(.deviceRGB) else {
+            return MacClippySourceAccent.neutralRGB
+        }
+        return MacClippySourceRGB(
+            red: converted.redComponent,
+            green: converted.greenComponent,
+            blue: converted.blueComponent
+        )
+    }
+
+    static let unknown = MacClippySourceAppPresentation(
+        displayName: "Unknown source",
+        icon: nil,
+        accent: NSColor(deviceRed: MacClippySourceAccent.neutralRGB.red, green: MacClippySourceAccent.neutralRGB.green, blue: MacClippySourceAccent.neutralRGB.blue, alpha: 1)
+    )
+}
+
+enum MacClippySourceAppResolver {
+    private final class CacheEntry: NSObject {
+        let presentation: MacClippySourceAppPresentation
+
+        init(_ presentation: MacClippySourceAppPresentation) {
+            self.presentation = presentation
+        }
+    }
+
+    private static let cache = NSCache<NSString, CacheEntry>()
+
+    static func presentation(for bundleIdentifier: String?) -> MacClippySourceAppPresentation {
+        guard let bundleIdentifier, !bundleIdentifier.isEmpty else {
+            return MacClippySourceAppPresentation.unknown
+        }
+
+        let key = bundleIdentifier as NSString
+        if let cached = cache.object(forKey: key) {
+            return cached.presentation
+        }
+
+        let presentation = resolve(bundleIdentifier: bundleIdentifier)
+        cache.setObject(CacheEntry(presentation), forKey: key)
+        return presentation
+    }
+
+    private static func resolve(bundleIdentifier: String) -> MacClippySourceAppPresentation {
+        guard let applicationURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) else {
+            return MacClippySourceAppPresentation(
+                displayName: bundleIdentifier,
+                icon: nil,
+                accent: MacClippySourceAppPresentation.unknown.accent
+            )
+        }
+
+        let icon = NSWorkspace.shared.icon(forFile: applicationURL.path)
+        let accentRGB = MacClippySourceAccent.representativeRGB(from: pixels(in: icon))
+        let displayName = (Bundle(url: applicationURL)?.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
+            ?? (Bundle(url: applicationURL)?.object(forInfoDictionaryKey: "CFBundleName") as? String)
+            ?? applicationURL.deletingPathExtension().lastPathComponent
+            .nonEmptyOr(bundleIdentifier)
+
+        return MacClippySourceAppPresentation(
+            displayName: displayName,
+            icon: icon,
+            accent: NSColor(deviceRed: accentRGB.red, green: accentRGB.green, blue: accentRGB.blue, alpha: 1)
+        )
+    }
+
+    private static func pixels(in image: NSImage) -> [MacClippySourceRGB] {
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            return []
+        }
+        let bitmap = NSBitmapImageRep(cgImage: cgImage)
+        guard bitmap.pixelsWide > 0, bitmap.pixelsHigh > 0 else {
+            return []
+        }
+
+        let sampleStride = max(1, max(bitmap.pixelsWide, bitmap.pixelsHigh) / 24)
+        var pixels: [MacClippySourceRGB] = []
+        pixels.reserveCapacity(24 * 24)
+        for y in stride(from: 0, to: bitmap.pixelsHigh, by: sampleStride) {
+            for x in stride(from: 0, to: bitmap.pixelsWide, by: sampleStride) {
+                guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                      color.alphaComponent > 0.15 else { continue }
+                pixels.append(MacClippySourceRGB(
+                    red: color.redComponent,
+                    green: color.greenComponent,
+                    blue: color.blueComponent
+                ))
+            }
+        }
+        return pixels
+    }
+}
+
+private extension String {
+    func nonEmptyOr(_ fallback: String) -> String {
+        isEmpty ? fallback : self
+    }
+}

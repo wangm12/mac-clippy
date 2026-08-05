@@ -1,0 +1,88 @@
+name: MacClippy
+
+options:
+  bundleIdPrefix: com.macallyouneed
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_ENABLE_EXPLICIT_MODULES: NO
+  configs:
+    Debug:
+      CODE_SIGNING_ALLOWED: NO
+      ENABLE_HARDENED_RUNTIME: YES
+    Release:
+      DEAD_CODE_STRIPPING: YES
+      ENABLE_HARDENED_RUNTIME: YES
+      CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+
+packages:
+  MacClippyKit:
+    path: MacClippyKit
+
+targets:
+  MacClippy:
+    type: application
+    platform: macOS
+    sources:
+      - path: MacClippy/MacClippyApp.swift
+      - path: MacClippy/MacClippySettings.swift
+      - path: MacClippy/MacClippyHotKeyRecorder.swift
+      - path: MacClippy/MacClippyRuntime.swift
+      - path: MacClippy/MacClippyPrivacyNotice.swift
+      - path: MacClippy/MacClippyDock.swift
+      - path: MacClippy/MacClippyMotion.swift
+      - path: MacClippy/MacClippyDockPanel.swift
+      - path: MacClippy/MacClippyDockPreview.swift
+      - path: MacClippy/MacClippyDetails.swift
+      - path: MacClippy/MacClippyDockController.swift
+      - path: MacClippy/MacClippySourceAppPresentation.swift
+      - path: MacClippy/MacClippyDiagnosticsExporter.swift
+      - path: MacClippy/Assets.xcassets
+    info:
+      path: MacClippy/Info.plist
+      properties:
+        LSUIElement: true
+        NSAccessibilityUsageDescription: Mac Clippy uses Accessibility access to paste clipboard items into the active app and expand Snippets.
+        NSInputMonitoringUsageDescription: Mac Clippy uses Input Monitoring to detect the global clipboard shortcut and Snippet trigger keystrokes.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.macallyouneed.macclippy
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_ENTITLEMENTS: MacClippy/MacClippy.entitlements
+        GENERATE_INFOPLIST_FILE: NO
+    dependencies:
+      - package: MacClippyKit
+        product: MacClippyCore
+      - package: MacClippyKit
+        product: MacClippyPlatform
+
+  MacClippyTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: MacClippyTests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: MacClippy
+      - package: MacClippyKit
+        product: MacClippyCore
+      - package: MacClippyKit
+        product: MacClippyPlatform
+
+schemes:
+  MacClippy:
+    build:
+      targets:
+        MacClippy: all
+        MacClippyTests: [test]
+    test:
+      targets:
+        - MacClippyTests

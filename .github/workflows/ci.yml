@@ -1,0 +1,65 @@
+name: MacClippy CI
+
+on:
+  push:
+    paths:
+      - "mac-clippy/**"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    paths:
+      - "mac-clippy/**"
+      - ".github/workflows/ci.yml"
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: mac-clippy
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+      - name: Generate project
+        run: xcodegen generate
+      - name: Package tests
+        run: swift test --package-path MacClippyKit
+      - name: Scale regression fixture
+        env:
+          MACCLIPPY_RUN_SCALE_TESTS: "1"
+        run: swift test --package-path MacClippyKit --filter MacClippyScaleTests
+      - name: Lifecycle stress fixture
+        env:
+          MACCLIPPY_RUN_STRESS_TESTS: "1"
+        run: swift test --package-path MacClippyKit --filter MacClippyLifecycleStressTests
+      - name: App build
+        run: >-
+          xcodebuild -project MacClippy.xcodeproj -scheme MacClippy
+          -configuration Debug -destination 'platform=macOS,arch=arm64'
+          -skipPackagePluginValidation CODE_SIGNING_ALLOWED=NO build
+      - name: Shipping configuration compile
+        run: >-
+          xcodebuild -project MacClippy.xcodeproj -scheme MacClippy
+          -configuration Release -destination 'platform=macOS,arch=arm64'
+          -derivedDataPath build/ci-shipping
+          -skipPackagePluginValidation CODE_SIGNING_ALLOWED=NO build
+      - name: Verify shipping build settings and metadata
+        run: |
+          set -euo pipefail
+          settings="$(xcodebuild -project MacClippy.xcodeproj -scheme MacClippy -configuration Release -showBuildSettings)"
+          hardened_runtime="$(printf '%s\n' "${settings}" | awk -F'= ' '/ENABLE_HARDENED_RUNTIME/ { print $2; exit }')"
+          if [[ "${hardened_runtime}" != "YES" ]]; then
+            echo "error: Release ENABLE_HARDENED_RUNTIME is not YES" >&2
+            exit 1
+          fi
+          ./scripts/verify-build-metadata.sh \
+            build/ci-shipping/Build/Products/Release/MacClippy.app
+      - name: App tests
+        run: >-
+          xcodebuild test -project MacClippy.xcodeproj -scheme MacClippy
+          -configuration Debug -destination 'platform=macOS,arch=arm64'
+          -skipPackagePluginValidation CODE_SIGNING_ALLOWED=NO

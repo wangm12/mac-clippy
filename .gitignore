@@ -1,0 +1,22 @@
+# Local build and package artifacts
+.build/
+MacClippyKit/.build/
+.swiftpm/
+MacClippyKit/.swiftpm/
+/build/
+MacClippyKit/build/
+/dist/
+*.xcresult
+DerivedData/
+
+# Finder metadata
+.DS_Store
+
+# Xcode user state
+MacClippy.xcodeproj/xcuserdata/
+MacClippy.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcuserstate
+
+# Generated Swift package resolution state
+MacClippyKit/Package.resolved
+MacClippy.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
