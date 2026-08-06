@@ -125,4 +125,15 @@ final class MacClippySettingsTests: XCTestCase {
             )
         )
     }
+
+    func testPresentationPolicyShowsDockIconByDefaultAndCanHideIt() {
+        XCTAssertEqual(
+            MacClippyPresentationPolicy.activationPolicy(hideDockIcon: false),
+            .regular
+        )
+        XCTAssertEqual(
+            MacClippyPresentationPolicy.activationPolicy(hideDockIcon: true),
+            .accessory
+        )
+    }
 }

@@ -75,6 +75,11 @@ final class MacClippyDockTests: XCTestCase {
         )
     }
 
+    func testMenuBarToggleUsesAppKitVisibilityDuringCloseAnimation() {
+        XCTAssertTrue(MacClippyDockTogglePolicy.shouldHide(panelIsVisible: true))
+        XCTAssertFalse(MacClippyDockTogglePolicy.shouldHide(panelIsVisible: false))
+    }
+
     @MainActor
     func testPresentRenameCategoryUsesPinboardDetailsAndFreshToken() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("MacClippyDockTests-\(UUID().uuidString)", isDirectory: true)
@@ -187,6 +192,27 @@ final class MacClippyDockTests: XCTestCase {
             MacClippyDockKeyRouterPolicy.action(
                 for: .keyDown(keyCode: 49, characters: " ", modifiers: [], isRepeat: false),
                 mode: .search,
+                hasCardFocus: true,
+                hasMultipleSelection: false
+            ),
+            .native
+        )
+    }
+
+    func testModalRoutingLeavesPrintableInputToModalTextField() {
+        XCTAssertEqual(
+            MacClippyDockKeyRouterPolicy.action(
+                for: .keyDown(keyCode: 35, characters: "p", modifiers: [], isRepeat: false),
+                mode: .modal,
+                hasCardFocus: true,
+                hasMultipleSelection: false
+            ),
+            .native
+        )
+        XCTAssertEqual(
+            MacClippyDockKeyRouterPolicy.action(
+                for: .keyUp(keyCode: 35, modifiers: []),
+                mode: .modal,
                 hasCardFocus: true,
                 hasMultipleSelection: false
             ),

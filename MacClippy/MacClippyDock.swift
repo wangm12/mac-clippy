@@ -515,8 +515,23 @@ final class MacClippyDockModel: ObservableObject {
     private let workQueue = DispatchQueue(label: "com.macallyouneed.macclippy.dock", qos: .userInitiated)
     private let reloadQueue = DispatchQueue(label: "com.macallyouneed.macclippy.reload", qos: .userInitiated)
     private let previewQueue = DispatchQueue(label: "com.macallyouneed.macclippy.preview", qos: .userInitiated)
-    private let thumbnailQueue = DispatchQueue(label: "com.macallyouneed.macclippy.thumbnail", qos: .utility, attributes: .concurrent)
+    private let thumbnailQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.name = "com.macallyouneed.macclippy.thumbnail"
+        queue.qualityOfService = .utility
+        queue.maxConcurrentOperationCount = 2
+        return queue
+    }()
     private let thumbnailCache = NSCache<NSString, NSData>()
+    private struct ThumbnailRequestKey: Hashable {
+        let id: RecordID
+        let maxPixelSize: Int
+
+        var cacheKey: NSString {
+            "\(id.rawValue)#\(maxPixelSize)" as NSString
+        }
+    }
+    private var thumbnailCompletions: [ThumbnailRequestKey: [(Data?) -> Void]] = [:]
     private var requestID = 0
     private var reloadWorkItem: DispatchWorkItem?
     private var previewWorkItem: DispatchWorkItem?
@@ -839,23 +854,35 @@ final class MacClippyDockModel: ObservableObject {
         maxPixelSize: Int = 480,
         completion: @escaping (Data?) -> Void
     ) {
-        let cacheKey = id.rawValue
-        if let cached = thumbnailCache.object(forKey: cacheKey as NSString) {
+        let requestKey = ThumbnailRequestKey(id: id, maxPixelSize: max(1, maxPixelSize))
+        if let cached = thumbnailCache.object(forKey: requestKey.cacheKey) {
             completion(cached as Data)
             return
         }
+        if thumbnailCompletions[requestKey] != nil {
+            thumbnailCompletions[requestKey, default: []].append(completion)
+            return
+        }
+        thumbnailCompletions[requestKey] = [completion]
+
         let runtime = runtime
-        thumbnailQueue.async { [runtime] in
+        thumbnailQueue.addOperation { [weak self, runtime] in
             var thumbnailData: Data?
-            if let result = try? runtime.preview(id: id),
-               case let .image(data) = result {
-                thumbnailData = MacClippyThumbnailDownsampler.data(data, maxPixelSize: maxPixelSize)
+            if let data = try? runtime.imageData(id: id) {
+                thumbnailData = MacClippyThumbnailDownsampler.data(data, maxPixelSize: requestKey.maxPixelSize)
             }
+
             DispatchQueue.main.async {
+                guard let self else { return }
                 if let thumbnailData {
-                    self.thumbnailCache.setObject(thumbnailData as NSData, forKey: cacheKey as NSString, cost: thumbnailData.count)
+                    self.thumbnailCache.setObject(
+                        thumbnailData as NSData,
+                        forKey: requestKey.cacheKey,
+                        cost: thumbnailData.count
+                    )
                 }
-                completion(thumbnailData)
+                let completions = self.thumbnailCompletions.removeValue(forKey: requestKey) ?? []
+                completions.forEach { $0(thumbnailData) }
             }
         }
     }
@@ -1884,6 +1911,14 @@ struct MacClippyDockView: View {
             onLayoutHeightChange(hasMultipleSelection)
         }
         .onChange(of: model.modal) { _, modal in
+            // The modal is an in-panel overlay, so the search TextField can
+            // still be the AppKit first responder when the overlay appears.
+            // Release it before the modal editor requests focus; otherwise
+            // printable keys continue to land in the main search field.
+            if modal != nil {
+                isSearchFocused = false
+                onSearchModeChange(false)
+            }
             onModalPresentationChange(modal != nil)
         }
     }
@@ -2948,7 +2983,11 @@ struct MacClippyDockView: View {
         switch item.contentKind {
         case .text, .html, .rtf:
             if !item.preview.isEmpty {
-                parts.append(item.preview)
+                let previewLimit = 240
+                parts.append(String(item.preview.prefix(previewLimit)))
+                if item.preview.count > previewLimit {
+                    parts.append("preview shortened")
+                }
             }
         case .image:
             if let dimensions = item.typeMetadataSubtitle {
@@ -3503,7 +3542,7 @@ private struct MacClippyCreateCategoryEditor: View {
                                 }
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("Choose color")
+                        .accessibilityLabel("Choose \(colorName(for: color))")
                         .accessibilityAddTraits(selectedColor == color ? .isSelected : [])
                     }
                 }
@@ -3525,13 +3564,29 @@ private struct MacClippyCreateCategoryEditor: View {
                 .stroke(MacClippyDockTheme.lineColor, lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.18), radius: 24, y: 10)
-        .onAppear { isNameFocused = true }
+        .onAppear {
+            // Wait until the overlay is mounted in the existing Dock panel so
+            // this field wins focus over the field that opened the modal.
+            DispatchQueue.main.async { isNameFocused = true }
+        }
     }
 
     private func create() {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { return }
         onCreate(trimmedName, selectedColor)
+    }
+
+    private func colorName(for color: String) -> String {
+        switch MacClippyCategoryColorPolicy.palette.firstIndex(of: color) {
+        case 0: "blue"
+        case 1: "purple"
+        case 2: "orange"
+        case 3: "teal"
+        case 4: "ochre"
+        case 5: "green"
+        default: "custom color"
+        }
     }
 }
 
@@ -3647,6 +3702,7 @@ private struct SelectionBarButton: View {
     let role: ButtonRole?
     let emphasis: Emphasis
     let action: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @State private var isHovered = false
 
     init(_ title: String, systemImage: String, role: ButtonRole? = nil, emphasis: Emphasis = .default, action: @escaping () -> Void) {
@@ -3689,7 +3745,10 @@ private struct SelectionBarButton: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering in isHovered = hovering }
-        .animation(MacClippyMotion.animation(MacClippyMotion.focusAnimation, reduceMotion: false), value: isHovered)
+        .animation(
+            MacClippyMotion.animation(MacClippyMotion.focusAnimation, reduceMotion: accessibilityReduceMotion),
+            value: isHovered
+        )
     }
 }
 

@@ -58,6 +58,40 @@ final class MacClippyPasteInjectorTests: XCTestCase {
         XCTAssertEqual(pasteboard.changeCount, changeCountBefore)
         XCTAssertEqual(pasteboard.pasteboardItems?.first?.types, [.string])
     }
+
+    func testBeforePasteIsNotCalledWhenAutomaticPastePreflightFails() {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("MacClippyPasteBeforePasteFailure-\(UUID().uuidString)"))
+        XCTAssertTrue(pasteboard.setString("original", forType: .string))
+        let injector = MacClippyPasteInjector(
+            pasteboard: pasteboard,
+            isProcessTrusted: { false }
+        )
+        var didRun = false
+
+        XCTAssertEqual(
+            injector.inject(text: "replacement", beforePaste: { didRun = true }),
+            .manualPasteRequired
+        )
+        XCTAssertFalse(didRun)
+        XCTAssertEqual(pasteboard.string(forType: .string), "original")
+    }
+
+    func testBeforePasteRunsBeforeSuccessfulPasteEvents() {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("MacClippyPasteBeforePasteSuccess-\(UUID().uuidString)"))
+        XCTAssertTrue(pasteboard.setString("original", forType: .string))
+        var order: [String] = []
+        let injector = MacClippyPasteInjector(
+            pasteboard: pasteboard,
+            isProcessTrusted: { true },
+            postEvents: { _, _ in order.append("paste") }
+        )
+
+        XCTAssertEqual(
+            injector.inject(text: "replacement", beforePaste: { order.append("beforePaste") }),
+            .injected
+        )
+        XCTAssertEqual(order, ["beforePaste", "paste"])
+    }
 }
 
 private final class UnavailablePasteboardItemProvider: NSObject, NSPasteboardItemDataProvider {

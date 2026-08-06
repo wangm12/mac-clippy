@@ -18,14 +18,37 @@ public enum MacClippyOCRError: Error, Equatable, LocalizedError, Sendable {
 }
 
 public final class MacClippyOCRService {
+    // OCR accuracy does not improve enough from decoding a clipboard image at
+    // poster-sized resolution to justify the peak memory cost. Keep the full
+    // source data for paste/preview; only the Vision input is bounded.
+    public static let maxImagePixelSize = 2_048
+
     public init() {}
 
     public func recognize(data: Data) async throws -> String {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+        guard let image = Self.imageForRecognition(data: data) else {
             throw MacClippyOCRError.invalidImage
         }
         return try await recognize(image: image)
+    }
+
+    private static func imageForRecognition(data: Data) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            return nil
+        }
+
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxImagePixelSize,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true
+        ]
+        // Some formats do not expose a thumbnail through ImageIO. Falling
+        // back to the original decode preserves the previous invalid/valid
+        // behavior for those formats while still bounding common screenshots
+        // and camera images.
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+            ?? CGImageSourceCreateImageAtIndex(source, 0, nil)
     }
 
     public func recognize(image: CGImage) async throws -> String {

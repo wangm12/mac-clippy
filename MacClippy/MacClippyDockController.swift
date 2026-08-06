@@ -14,6 +14,12 @@ struct MacClippyDockAnimationTransaction: Equatable {
     let operation: Operation
 }
 
+enum MacClippyDockTogglePolicy {
+    static func shouldHide(panelIsVisible: Bool) -> Bool {
+        panelIsVisible
+    }
+}
+
 enum MacClippyDockAnimationLifecyclePolicy {
     static func nextGeneration(after generation: UInt) -> UInt {
         generation &+ 1
@@ -148,7 +154,12 @@ final class MacClippyDockController {
     var isVisible: Bool { panel?.isVisible == true && !isClosing }
 
     func toggle() {
-        if isVisible {
+        // The status-item click also passes through the dock's local outside-
+        // click monitor. That monitor starts the hide animation first, so
+        // `isVisible` is already false by the time this action is delivered.
+        // Use the AppKit presentation state here so the same click cannot
+        // immediately reopen a panel that is already on screen and closing.
+        if MacClippyDockTogglePolicy.shouldHide(panelIsVisible: panel?.isVisible == true) {
             hide()
         } else {
             show()

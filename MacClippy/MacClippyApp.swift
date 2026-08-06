@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var didStart = false
     private var hotKeyDescriptorObserver: NSObjectProtocol?
     private var hotKeyRecordingObserver: NSObjectProtocol?
+    private var presentationPreferencesObserver: NSObjectProtocol?
     private var isHotKeyRecording = false
     private var hotKeyWasRegisteredBeforeRecording = false
     private var registeredHotKeyDescriptor = MacClippyGlobalHotKeyDescriptor.load(from: .standard)
@@ -50,6 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         observeHotKeyDescriptorChanges()
         observeHotKeyRecordingChanges()
+        observePresentationPreferencesChanges()
         bundledApplicationIcon = loadBundledApplicationIcon()
         if let bundledApplicationIcon {
             NSApp.applicationIconImage = bundledApplicationIcon
@@ -71,6 +73,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NotificationCenter.default.removeObserver(hotKeyRecordingObserver)
             self.hotKeyRecordingObserver = nil
         }
+        if let presentationPreferencesObserver {
+            NotificationCenter.default.removeObserver(presentationPreferencesObserver)
+            self.presentationPreferencesObserver = nil
+        }
         clipboardHotKey.unregister()
         dockController?.cleanup()
         dockController = nil
@@ -81,9 +87,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = nil
     }
 
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        openSettingsWindow()
+        return true
+    }
+
+    func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool {
+        openSettingsWindow()
+        return true
+    }
+
     func applicationDidBecomeActive(_ notification: Notification) {
         guard didStart, !isHotKeyRecording else { return }
-        runtime?.refreshPermissionDependentFeatures()
+        refreshPermissionDependentFeatures()
 
         // Recreate the Carbon registration after the app returns from System
         // Settings. This gives a revoked/restored Input Monitoring grant a
@@ -102,21 +118,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func refreshPermissionDependentFeatures() {
+        runtime?.refreshPermissionDependentFeatures()
+    }
+
     private func start() throws {
         guard !didStart else { return }
 
-        let item: NSStatusItem
-        if let existingItem = statusItem {
-            item = existingItem
-        } else {
-            item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-            statusItem = item
+        applyDockIconVisibility()
+        if !shouldHideFromMenuBar {
+            try ensureStatusItem()
         }
-        guard let button = item.button else {
-            throw StartupError.statusItemUnavailable
-        }
-
-        configureStatusItem(button)
 
         do {
             let runtime = try MacClippyRuntime()
@@ -138,10 +150,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             try clipboardHotKey.register()
             didStart = true
-            // Do not enter a synchronous nested modal loop from
-            // applicationDidFinishLaunching. Menu-bar agents are not fully
-            // inside their normal event loop at this point, which can leave
-            // an NSAlert visible but unable to dispatch button clicks.
+            // Do not enter a synchronous nested modal loop directly from
+            // applicationDidFinishLaunching. The app is not fully inside its
+            // normal event loop at this point, which can leave an NSAlert
+            // visible but unable to dispatch button clicks.
             DispatchQueue.main.async { [weak self] in
                 self?.presentPrivacyNoticeIfNeeded()
             }
@@ -277,6 +289,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func observePresentationPreferencesChanges() {
+        presentationPreferencesObserver = NotificationCenter.default.addObserver(
+            forName: .macClippyPresentationPreferencesChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.applyPresentationPreferences()
+            }
+        }
+    }
+
+    private var shouldHideFromMenuBar: Bool {
+        UserDefaults.standard.bool(forKey: MacClippyPresentationPreferences.hideFromMenuBarKey)
+    }
+
+    private var shouldHideDockIcon: Bool {
+        UserDefaults.standard.bool(forKey: MacClippyPresentationPreferences.hideDockIconKey)
+    }
+
+    private func applyPresentationPreferences() {
+        applyDockIconVisibility()
+        if shouldHideFromMenuBar {
+            removeStatusItem()
+        } else {
+            try? ensureStatusItem()
+        }
+    }
+
+    private func applyDockIconVisibility() {
+        let policy = MacClippyPresentationPolicy.activationPolicy(hideDockIcon: shouldHideDockIcon)
+        guard NSApp.activationPolicy() != policy else { return }
+        _ = NSApp.setActivationPolicy(policy)
+    }
+
+    private func ensureStatusItem() throws {
+        if let button = statusItem?.button {
+            configureStatusItem(button)
+            return
+        }
+
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        guard let button = item.button else {
+            NSStatusBar.system.removeStatusItem(item)
+            throw StartupError.statusItemUnavailable
+        }
+        statusItem = item
+        configureStatusItem(button)
+    }
+
+    private func removeStatusItem() {
+        guard let statusItem else { return }
+        NSStatusBar.system.removeStatusItem(statusItem)
+        self.statusItem = nil
+    }
+
     func refreshStorageHealth(completion: @escaping ([String: MacClippyDatabaseHealthReport]) -> Void) {
         guard let runtime else {
             completion([:])
@@ -354,17 +422,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         clipboardHotKey.unregister()
 
-        guard let button = statusItem?.button else {
-            runtime?.stop()
-            runtime = nil
-            dockController?.cleanup()
-            dockController = nil
-            statusItem = nil
-            launchAtLogin.stop()
-            return
-        }
-
-        configureStatusItem(button)
         let alert = NSAlert()
         alert.messageText = "Mac Clippy could not start"
         alert.informativeText = "Mac Clippy could not initialize its local services. Retry now or close the app and try again."

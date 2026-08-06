@@ -18,8 +18,6 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
-	<key>LSUIElement</key>
-	<true/>
 	<key>NSAccessibilityUsageDescription</key>
 	<string>Mac Clippy uses Accessibility access to paste clipboard items into the active app and expand Snippets.</string>
 	<key>NSInputMonitoringUsageDescription</key>

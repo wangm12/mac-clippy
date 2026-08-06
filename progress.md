@@ -1,5 +1,24 @@
 # Progress
 
+## 2026-08-06 Deep review implementation
+
+- Restored the existing plan/findings context and confirmed the project has no
+  `.impeccable.md`; animation changes remain limited until design context is
+  confirmed.
+- Implemented retention preference snapshot comparison and a 750ms coalescing
+  job. Exclusion/pause updates remain immediate, while unrelated defaults
+  changes no longer enqueue retention sweeps.
+- Bounded OCR to two concurrent operations with eight pending jobs and added a
+  2048px Vision input downsample/fallback path while retaining the existing
+  error logging and record/index consistency checks.
+- Added a dedicated runtime image-data path, two-worker thumbnail decoding,
+  and same-record/size in-flight completion coalescing.
+- Reused `ClipboardStore.bodies(for:)` for history projection reads with a
+  per-record fallback when batch decryption encounters corrupt data.
+- Applied low-risk accessibility fixes for Reduce Motion in the selection bar,
+  bounded card VoiceOver preview text, and named category color choices.
+- Verification is pending; compile/test output will be appended below.
+
 ## 2026-07-21
 - Initialized scoped plan and findings.
 - Started source research for the MacClippy dock motion pass.

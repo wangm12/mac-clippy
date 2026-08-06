@@ -47,7 +47,6 @@ targets:
     info:
       path: MacClippy/Info.plist
       properties:
-        LSUIElement: true
         NSAccessibilityUsageDescription: Mac Clippy uses Accessibility access to paste clipboard items into the active app and expand Snippets.
         NSInputMonitoringUsageDescription: Mac Clippy uses Input Monitoring to detect the global clipboard shortcut and Snippet trigger keystrokes.
     settings:

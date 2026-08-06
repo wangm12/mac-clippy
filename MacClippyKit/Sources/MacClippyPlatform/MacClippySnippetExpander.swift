@@ -6,6 +6,8 @@ import Foundation
 import MacClippyCore
 
 public enum MacClippySnippetExpanderError: Error, Equatable, Sendable {
+    case accessibilityUnavailable
+    case inputMonitoringUnavailable
     case eventTapUnavailable
     case runLoopSourceUnavailable
 }
@@ -70,6 +72,30 @@ public final class MacClippySnippetExpander {
     @discardableResult
     public func start() -> Bool {
         guard !isInstalled else { return true }
+
+        guard injector.canInjectAutomatically else {
+            lastStartError = .accessibilityUnavailable
+            MacClippyLog.record(
+                category: .permission,
+                code: .permissionUnavailable,
+                operation: "snippet_accessibility_preflight",
+                recoveryAction: "open_accessibility_settings",
+                impact: "snippet_expansion_unavailable"
+            )
+            return false
+        }
+
+        guard CGPreflightListenEventAccess() else {
+            lastStartError = .inputMonitoringUnavailable
+            MacClippyLog.record(
+                category: .permission,
+                code: .permissionUnavailable,
+                operation: "snippet_input_monitoring_preflight",
+                recoveryAction: "open_input_monitoring_settings",
+                impact: "snippet_expansion_unavailable"
+            )
+            return false
+        }
 
         let context = Unmanaged.passUnretained(self).toOpaque()
         let callback: CGEventTapCallBack = { _, type, event, userInfo in
@@ -173,6 +199,13 @@ public final class MacClippySnippetExpander {
                 hasDisqualifyingModifiers: hasDisqualifyingModifiers
             ) else { continue }
 
+            // Do not suppress the delimiter if Accessibility disappeared
+            // after the event tap was installed. The trigger remains visible
+            // and the user can still paste it manually.
+            guard injector.canInjectAutomatically else {
+                return Unmanaged.passUnretained(event)
+            }
+
             DispatchQueue.main.async { [weak self] in
                 self?.expand(using: plan)
             }
@@ -183,10 +216,12 @@ public final class MacClippySnippetExpander {
     }
 
     private func expand(using plan: MacClippySnippetExpansionPlan) {
-        for _ in 0 ..< plan.charactersToDelete {
-            postKey(UInt16(kVK_Delete))
+        _ = injector.inject(text: plan.body) { [weak self] in
+            guard let self else { return }
+            for _ in 0 ..< plan.charactersToDelete {
+                postKey(UInt16(kVK_Delete))
+            }
         }
-        _ = injector.inject(text: plan.body)
     }
 
     private func postKey(_ keyCode: UInt16) {

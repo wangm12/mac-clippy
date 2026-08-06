@@ -1,5 +1,31 @@
 # Findings
 
+## 2026-08-06 Deep review implementation baseline
+
+- The continuation begins from an already dirty worktree; existing user
+  changes are preserved and the implementation stays within the current
+  SwiftUI/AppKit architecture.
+- `MacClippyRuntime.start()` currently schedules `enforceRetention()` for every
+  `UserDefaults.didChangeNotification`, including excluded-app and excluded-
+  text edits. The notification has no key in its payload, so the safe fix is a
+  retention-key snapshot comparison plus a coalesced delayed maintenance job;
+  capture exclusion/pause updates remain immediate.
+- `scheduleOCR` currently creates one `Task.detached` per captured image and
+  `MacClippyOCRService` decodes the source image at full size before Vision.
+  This is a boundedness and peak-memory risk during image-heavy capture.
+- Card thumbnails already downsample before SwiftUI, but the model uses an
+  unbounded concurrent queue and calls the general `preview(id:)` path. A
+  dedicated image-data path, a small decode queue, and same-record in-flight
+  completion coalescing are low-risk improvements.
+- `ClipboardStore.bodies(for:)` already provides a batch envelope read for
+  pinboard projections; history/search projection paths still call the
+  single-record `body(for:)` helper repeatedly. This is a later low-risk pass,
+  with care needed to preserve the existing skip-on-corrupt-record behavior.
+- `.impeccable.md` is absent. Animation changes are therefore held to the
+  existing restrained native macOS motion language until the creator confirms
+  audience, tone, and performance constraints; no speculative visual redesign
+  is being introduced.
+
 ## Initial Scope
 - The parent worktree contains unrelated dirty changes; target work is confined to `mac-clippy`.
 - No planning files existed in the target subtree before this task.

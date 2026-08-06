@@ -15,6 +15,28 @@
 - [completed] 发布验证的本地可执行部分：代码侧、规模夹具、生命周期压力、Debug bundle metadata 已验证
 - [blocked] 外部发布验证：真实 integration/soak、Developer ID 签名、公证与 Gatekeeper 需要外部环境/凭据
 
+## 2026-08-06 Deep review implementation follow-up
+
+### Scope
+
+- [in_progress] P1 performance: retention coalescing, bounded/downsampled OCR,
+  thumbnail-specific loading and in-flight deduplication.
+- [pending] Low-risk P2/P3: batch body resolution, Reduce Motion consistency,
+  accessibility labels, bounded accessibility text, and async source-app
+  presentation work.
+- [pending] Animation pass after design context is confirmed; preserve the
+  existing restrained native macOS motion language and reduced-motion behavior.
+- [pending] Package tests, App build, and static verification; record any
+  live/Instruments/XCTest environment limits without overstating evidence.
+
+### Assumptions for this continuation
+
+- Keep the current native SwiftUI/AppKit architecture and existing user dirty
+  changes intact.
+- Prefer bounded/coalesced work over broad refactors or speculative caching.
+- Do not claim frame-time or memory improvements without Instruments/live
+  evidence; code-level tests can verify boundedness and coalescing semantics.
+
 ## 2026-08-03 P1-A 生命周期补强
 
 - Added a dedicated runtime lifecycle lock to close the start/stop resource

@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import CoreGraphics
 import Foundation
 
 import MacClippyCore
@@ -276,6 +277,20 @@ enum MacClippySnippetCreationError: Error, Equatable {
     case duplicateTrigger
 }
 
+private struct MacClippyRetentionPreferencesSnapshot: Equatable {
+    let maxItems: Int?
+    let maxAgeDays: Int?
+    let maxImageMegabytes: Int?
+    let maxHistoryMegabytes: Int?
+
+    init(defaults: UserDefaults) {
+        maxItems = defaults.object(forKey: MacClippyRetentionPreferences.maxItemsKey) as? Int
+        maxAgeDays = defaults.object(forKey: MacClippyRetentionPreferences.maxAgeDaysKey) as? Int
+        maxImageMegabytes = defaults.object(forKey: MacClippyRetentionPreferences.maxImageMegabytesKey) as? Int
+        maxHistoryMegabytes = defaults.object(forKey: MacClippyRetentionPreferences.maxHistoryMegabytesKey) as? Int
+    }
+}
+
 // The runtime is deliberately shared by the AppKit main actor, the dedicated
 // capture queue, OCR tasks, and the observer queue. All mutable runtime state
 // is either protected by `storeLock`, an owned serial queue, or an
@@ -317,7 +332,26 @@ final class MacClippyRuntime: @unchecked Sendable {
         label: "com.macallyouneed.macclippy.capture",
         qos: .userInitiated
     )
+    // Vision is expensive and image capture can arrive in bursts. Keep only a
+    // small amount of OCR work queued and run at most two recognizers at once;
+    // OCR is an enrichment pass, so dropping excess work is safer than
+    // retaining an unbounded set of large image Data values.
+    private let ocrQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.name = "com.macallyouneed.macclippy.ocr"
+        queue.qualityOfService = .utility
+        queue.maxConcurrentOperationCount = 2
+        return queue
+    }()
+    private var pendingOCRJobs = 0
+    private let maxPendingOCRJobs = 8
     private var retentionTimer: DispatchSourceTimer?
+    // UserDefaults.didChangeNotification does not identify the changed key.
+    // Keep the comparison on captureQueue and coalesce only actual retention
+    // preference changes, so typing an exclusion regex never schedules a full
+    // storage sweep for every keystroke.
+    private var retentionPreferencesSnapshot: MacClippyRetentionPreferencesSnapshot?
+    private var retentionDebounceWorkItem: DispatchWorkItem?
     private var defaultsObserver: NSObjectProtocol?
     private let usesRuntimeExclusionRules: Bool
     private var storageDegradedReasons = Set<String>()
@@ -417,8 +451,10 @@ final class MacClippyRuntime: @unchecked Sendable {
         // behind by a crash mid-capture. Best-effort; failures are logged and
         // never block capture from starting.
         captureQueue.async { [weak self] in
-            self?.reconcileStorage()
-            self?.enforceRetention()
+            guard let self else { return }
+            self.retentionPreferencesSnapshot = MacClippyRetentionPreferencesSnapshot(defaults: .standard)
+            self.reconcileStorage()
+            self.enforceRetention()
         }
         let retentionTimer = DispatchSource.makeTimerSource(queue: captureQueue)
         retentionTimer.schedule(deadline: .now() + 3_600, repeating: 3_600)
@@ -430,15 +466,8 @@ final class MacClippyRuntime: @unchecked Sendable {
             object: UserDefaults.standard,
             queue: nil
         ) { [weak self] _ in
-            guard let self else { return }
-            if self.usesRuntimeExclusionRules {
-                self.observer.updateExclusionRules(MacClippyRetentionPreferences.exclusionRules())
-                self.observer.setCapturePaused(
-                    UserDefaults.standard.bool(forKey: MacClippyRetentionPreferences.privacyPauseKey)
-                )
-            }
-            self.captureQueue.async {
-                self.enforceRetention()
+            self?.captureQueue.async { [weak self] in
+                self?.handleDefaultsChange()
             }
         }
         if usesRuntimeExclusionRules {
@@ -465,6 +494,10 @@ final class MacClippyRuntime: @unchecked Sendable {
         retentionTimer?.setEventHandler {}
         retentionTimer?.cancel()
         retentionTimer = nil
+        captureQueue.async { [weak self] in
+            self?.retentionDebounceWorkItem?.cancel()
+            self?.retentionDebounceWorkItem = nil
+        }
         if let defaultsObserver {
             NotificationCenter.default.removeObserver(defaultsObserver)
             self.defaultsObserver = nil
@@ -477,7 +510,7 @@ final class MacClippyRuntime: @unchecked Sendable {
         defer { lifecycleLock.unlock() }
 
         guard withStoreLock({ running }) else { return }
-        if AXIsProcessTrusted() {
+        if AXIsProcessTrusted(), CGPreflightListenEventAccess() {
             _ = snippetExpander.start()
         } else {
             snippetExpander.stop()
@@ -549,15 +582,12 @@ final class MacClippyRuntime: @unchecked Sendable {
                 let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
                 if trimmedQuery.isEmpty {
                     let metas = try clipboardStore.list(limit: limit)
-                    var entries: [MacClippyHistoryEntry] = []
-                    entries.reserveCapacity(metas.count)
-                    for meta in metas {
-                        guard !shouldCancel() else { return entries }
-                        if let entry = entry(for: meta) {
-                            entries.append(entry)
-                        }
+                    guard !shouldCancel() else { return [] }
+                    let entriesByID = entries(for: metas)
+                    return metas.compactMap { meta in
+                        guard !shouldCancel() else { return nil }
+                        return entriesByID[meta.id]
                     }
-                    return entries
                 }
 
                 // P2b: parse the structured search grammar. Bare terms keep the
@@ -605,12 +635,13 @@ final class MacClippyRuntime: @unchecked Sendable {
                     let knownKinds = requestedKind.map { kind in
                         Dictionary(uniqueKeysWithValues: metas.map { ($0.id, kind) })
                     } ?? [:]
+                    let entriesByID = entries(for: metas)
                     for meta in metas {
                         guard !shouldCancel() else { return collected }
                         guard collected.count < limit else { break }
                         let record = searchRecord(for: meta, needsKind: needsKind, knownKinds: knownKinds)
                         if MacClippySearchGrammar.matches(parsed, record: record),
-                           let entry = entry(for: meta) {
+                           let entry = entriesByID[meta.id] {
                             collected.append(entry)
                         }
                     }
@@ -648,12 +679,13 @@ final class MacClippyRuntime: @unchecked Sendable {
                     let metas = try clipboardStore.metas(for: hits.map(\.id))
                     let metasByID = Dictionary(uniqueKeysWithValues: metas.map { ($0.id, $0) })
                     let knownKinds = needsKind ? try clipboardStore.contentKinds(for: hits.map(\.id)) : [:]
+                    let entriesByID = entries(for: metas)
                     for hit in hits {
                         guard collected.count < boundedLimit else { break }
                         guard let meta = metasByID[hit.id] else { continue }
                         let record = searchRecord(for: meta, needsKind: needsKind, knownKinds: knownKinds)
                         guard MacClippySearchGrammar.matches(parsed, record: record) else { continue }
-                        guard let entry = entry(for: meta) else { continue }
+                        guard let entry = entriesByID[meta.id] else { continue }
                         // Preserve the type-aware file/image metadata from entry(for:)
                         // so a search result card shows the same file names / image
                         // dimensions as a history card; only the preview text is
@@ -714,11 +746,12 @@ final class MacClippyRuntime: @unchecked Sendable {
     ) throws -> [MacClippyHistoryEntry] {
         let metas = try clipboardStore.metas(for: hits.map(\.id))
         let metasByID = Dictionary(uniqueKeysWithValues: metas.map { ($0.id, $0) })
+        let entriesByID = entries(for: metas)
         var entries: [MacClippyHistoryEntry] = []
         entries.reserveCapacity(hits.count)
         for hit in hits {
             guard !shouldCancel() else { return [] }
-            guard let meta = metasByID[hit.id], let entry = entry(for: meta) else { continue }
+            guard let meta = metasByID[hit.id], let entry = entriesByID[hit.id] else { continue }
             entries.append(MacClippyHistoryEntry(
                 meta: meta,
                 contentKind: entry.contentKind,
@@ -728,6 +761,45 @@ final class MacClippyRuntime: @unchecked Sendable {
             ))
         }
         return entries
+    }
+
+    // Resolve uncached history projections in one envelope read. The fallback
+    // keeps the previous per-record skip behavior if one damaged envelope
+    // makes the batch decode fail; a corrupt card must not hide healthy cards.
+    private func entries(for metas: [ClipboardItemMeta]) -> [RecordID: MacClippyHistoryEntry] {
+        var entriesByID: [RecordID: MacClippyHistoryEntry] = [:]
+        var uncachedMetas: [ClipboardItemMeta] = []
+        entriesByID.reserveCapacity(metas.count)
+
+        for meta in metas {
+            if let cached = historyEntryCache.object(forKey: cacheKey(for: meta)) {
+                entriesByID[meta.id] = cached.entry
+            } else {
+                uncachedMetas.append(meta)
+            }
+        }
+
+        guard !uncachedMetas.isEmpty else { return entriesByID }
+        if let bodies = try? clipboardStore.bodies(for: uncachedMetas.map(\.id)) {
+            for meta in uncachedMetas {
+                guard let body = bodies[meta.id] else { continue }
+                let entry = entry(for: meta, body: body)
+                historyEntryCache.setObject(
+                    MacClippyHistoryEntryCacheBox(entry),
+                    forKey: cacheKey(for: meta),
+                    cost: entry.preview.utf8.count
+                )
+                entriesByID[meta.id] = entry
+            }
+            return entriesByID
+        }
+
+        for meta in uncachedMetas {
+            if let entry = entry(for: meta) {
+                entriesByID[meta.id] = entry
+            }
+        }
+        return entriesByID
     }
 
     // P2b: build a SearchRecord for a meta. The predicate needs contentKind
@@ -830,6 +902,20 @@ final class MacClippyRuntime: @unchecked Sendable {
                 return .image(try blobStore.read(id: blobID))
             case let .files(urls):
                 return .files(urls)
+            }
+        }
+    }
+
+    // Thumbnail callers only need the primary image bytes. Keep this separate
+    // from the general preview enum so card rendering does not construct or
+    // retain text/file preview values on the image path.
+    func imageData(id: RecordID) throws -> Data {
+        try withStoreLock {
+            switch try clipboardStore.body(for: id) {
+            case let .image(blobID, _, _), let .encryptedImage(blobID, _, _):
+                return try blobStore.read(id: blobID)
+            case .text, .html, .rtf, .files:
+                throw MacClippyStoreError.invalidStoredRecord
             }
         }
     }
@@ -2018,44 +2104,67 @@ final class MacClippyRuntime: @unchecked Sendable {
     }
 
     private func scheduleOCR(for data: Data, recordID: RecordID) {
-        let clipboardStore = clipboardStore
-        let searchStore = searchStore
+        guard pendingOCRJobs < maxPendingOCRJobs else {
+            MacClippyLog.record(
+                category: .capture,
+                code: .ocrFailed,
+                operation: "ocr_enqueue",
+                recoveryAction: "retry_ocr_from_record",
+                impact: "ocr_queue_full"
+            )
+            return
+        }
 
-        Task.detached(priority: .utility) {
-            do {
-                let text = try await MacClippyOCRService().recognize(data: data)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !text.isEmpty else { return }
+        pendingOCRJobs += 1
+        let operation = BlockOperation { [weak self] in
+            guard let self else { return }
+            let group = DispatchGroup()
+            group.enter()
+            Task.detached(priority: .utility) { [weak self] in
+                defer { group.leave() }
+                guard let self else { return }
+                do {
+                    let text = try await MacClippyOCRService().recognize(data: data)
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !text.isEmpty else { return }
 
-                try self.withStoreLock {
-                    guard try !clipboardStore.metas(for: [recordID]).isEmpty else { return }
-                    try clipboardStore.setOCRText(id: recordID, text: text)
+                    try self.withStoreLock {
+                        guard try !self.clipboardStore.metas(for: [recordID]).isEmpty else { return }
+                        try self.clipboardStore.setOCRText(id: recordID, text: text)
 
-                    // Recheck after the record update so deletion during OCR cannot
-                    // leave an index row for a record that is already gone.
-                    guard try !clipboardStore.metas(for: [recordID]).isEmpty else {
-                        try searchStore.remove(id: recordID)
-                        return
+                        // Recheck after the record update so deletion during OCR
+                        // cannot leave an index row for a record that is already
+                        // gone.
+                        guard try !self.clipboardStore.metas(for: [recordID]).isEmpty else {
+                            try self.searchStore.remove(id: recordID)
+                            return
+                        }
+                        try self.searchStore.upsert(id: recordID, text: text)
+
+                        if try self.clipboardStore.metas(for: [recordID]).isEmpty {
+                            try self.searchStore.remove(id: recordID)
+                        }
                     }
-                    try searchStore.upsert(id: recordID, text: text)
-
-                    if try clipboardStore.metas(for: [recordID]).isEmpty {
-                        try searchStore.remove(id: recordID)
-                    }
+                } catch {
+                    MacClippyLog.record(
+                        category: .capture,
+                        code: .ocrFailed,
+                        operation: "ocr_update",
+                        recoveryAction: "retry_ocr_from_record",
+                        impact: "ocr_search_text_unavailable"
+                    )
                 }
-            } catch {
-                MacClippyLog.record(
-                    category: .capture,
-                    code: .ocrFailed,
-                    operation: "ocr_update",
-                    recoveryAction: "retry_ocr_from_record",
-                    impact: "ocr_search_text_unavailable"
-                )
+            }
+            group.wait()
+            self.captureQueue.async { [weak self] in
+                self?.pendingOCRJobs = max(0, (self?.pendingOCRJobs ?? 1) - 1)
             }
         }
+        ocrQueue.addOperation(operation)
     }
 
     private func enforceRetention() {
+        guard withStoreLock({ running }) else { return }
         let policy = MacClippyRetentionPreferences.policy()
         do {
             try withStoreLock {
@@ -2075,6 +2184,28 @@ final class MacClippyRuntime: @unchecked Sendable {
                 impact: "history_cleanup_incomplete"
             )
         }
+    }
+
+    private func handleDefaultsChange() {
+        if usesRuntimeExclusionRules {
+            observer.updateExclusionRules(MacClippyRetentionPreferences.exclusionRules())
+            observer.setCapturePaused(
+                UserDefaults.standard.bool(forKey: MacClippyRetentionPreferences.privacyPauseKey)
+            )
+        }
+
+        let nextSnapshot = MacClippyRetentionPreferencesSnapshot(defaults: .standard)
+        guard nextSnapshot != retentionPreferencesSnapshot else { return }
+        retentionPreferencesSnapshot = nextSnapshot
+
+        retentionDebounceWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.retentionDebounceWorkItem = nil
+            self.enforceRetention()
+        }
+        retentionDebounceWorkItem = workItem
+        captureQueue.asyncAfter(deadline: .now() + 0.75, execute: workItem)
     }
 
     // Best-effort startup reconciliation: trim orphan blobs (no record

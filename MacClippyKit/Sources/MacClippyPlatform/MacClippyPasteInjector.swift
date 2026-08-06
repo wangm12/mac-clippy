@@ -36,6 +36,13 @@ public final class MacClippyPasteInjector {
         self.writeSentinel = writeSentinel
     }
 
+    /// Whether the process can post the keystrokes required for automatic
+    /// paste. Snippet expansion uses this as a preflight so it never removes
+    /// the user's trigger when Accessibility has been revoked.
+    public var canInjectAutomatically: Bool {
+        isProcessTrusted()
+    }
+
     @discardableResult
     public func prepareText(_ text: String) -> Bool {
         prepare(.text(text))
@@ -53,11 +60,17 @@ public final class MacClippyPasteInjector {
         return MacClippyPasteboardPreparer.prepare(content, on: pasteboard)
     }
 
-    public func inject(text: String) -> MacClippyPasteInjectionResult {
-        inject(content: .text(text))
+    public func inject(
+        text: String,
+        beforePaste: (() -> Void)? = nil
+    ) -> MacClippyPasteInjectionResult {
+        inject(content: .text(text), beforePaste: beforePaste)
     }
 
-    public func inject(content: MacClippyPasteboardContent) -> MacClippyPasteInjectionResult {
+    public func inject(
+        content: MacClippyPasteboardContent,
+        beforePaste: (() -> Void)? = nil
+    ) -> MacClippyPasteInjectionResult {
         let original = snapshotPasteboard()
         // A promised pasteboard item can expose its UTI before its provider
         // can materialize bytes. Do not clear or replace an incomplete
@@ -86,6 +99,10 @@ public final class MacClippyPasteInjector {
 
         keyDown.flags = .maskCommand
         keyUp.flags = .maskCommand
+        // Callers such as Snippet expansion use this hook to remove the
+        // trigger immediately before Cmd+V. All failure paths above return
+        // before the hook, preserving the original user input.
+        beforePaste?()
         postEvents(keyDown, keyUp)
         return .injected
     }

@@ -1,5 +1,6 @@
 import ApplicationServices
 import AppKit
+import CoreGraphics
 import ServiceManagement
 import SwiftUI
 import UniformTypeIdentifiers
@@ -13,6 +14,7 @@ extension Notification.Name {
     static let macClippyHotKeyRecordingEvent = Notification.Name("macClippyHotKeyRecordingEvent")
     static let macClippyHotKeyUpdateFailed = Notification.Name("macClippyHotKeyUpdateFailed")
     static let macClippyHotKeyUpdateSucceeded = Notification.Name("macClippyHotKeyUpdateSucceeded")
+    static let macClippyPresentationPreferencesChanged = Notification.Name("macClippyPresentationPreferencesChanged")
 }
 
 enum MacClippyHotKeyNotificationUserInfo {
@@ -85,6 +87,17 @@ enum MacClippyRetentionPreferences {
     }
 }
 
+enum MacClippyPresentationPreferences {
+    static let hideFromMenuBarKey = "com.macallyouneed.macclippy.presentation.hideFromMenuBar"
+    static let hideDockIconKey = "com.macallyouneed.macclippy.presentation.hideDockIcon"
+}
+
+enum MacClippyPresentationPolicy {
+    static func activationPolicy(hideDockIcon: Bool) -> NSApplication.ActivationPolicy {
+        hideDockIcon ? .accessory : .regular
+    }
+}
+
 enum MacClippyHistoryCapacity: Int, CaseIterable {
     case day
     case week
@@ -142,6 +155,10 @@ struct MacClippySettingsView: View {
     private var captureAll = false
     @AppStorage(MacClippyRetentionPreferences.launchAtLoginKey)
     private var launchAtLogin = false
+    @AppStorage(MacClippyPresentationPreferences.hideFromMenuBarKey)
+    private var hideFromMenuBar = false
+    @AppStorage(MacClippyPresentationPreferences.hideDockIconKey)
+    private var hideDockIcon = false
     @AppStorage(MacClippySnippetExpansionSettings.modeKey)
     private var snippetExpansionMode = MacClippySnippetExpansionSettings.defaultMode.rawValue
 
@@ -162,6 +179,7 @@ struct MacClippySettingsView: View {
     @State private var isCaptureRulesExpanded = false
     @State private var isAdvancedExpanded = false
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+    private let permissionRefreshTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     private var reduceMotion: Bool {
         MacClippyMotion.shouldReduceMotion(swiftUI: accessibilityReduceMotion)
@@ -176,8 +194,9 @@ struct MacClippySettingsView: View {
                 snippetsSection.modifier(MacClippySettingsReveal(index: 3, reduceMotion: reduceMotion))
                 permissionsSection.modifier(MacClippySettingsReveal(index: 4, reduceMotion: reduceMotion))
                 startupSection.modifier(MacClippySettingsReveal(index: 5, reduceMotion: reduceMotion))
-                privacySection.modifier(MacClippySettingsReveal(index: 6, reduceMotion: reduceMotion))
-                advancedSection.modifier(MacClippySettingsReveal(index: 7, reduceMotion: reduceMotion))
+                presentationSection.modifier(MacClippySettingsReveal(index: 6, reduceMotion: reduceMotion))
+                privacySection.modifier(MacClippySettingsReveal(index: 7, reduceMotion: reduceMotion))
+                advancedSection.modifier(MacClippySettingsReveal(index: 8, reduceMotion: reduceMotion))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 28)
@@ -192,7 +211,16 @@ struct MacClippySettingsView: View {
             launchAtLogin = SMAppService.mainApp.status == .enabled
             refreshStorageHealth()
         }
+        .onChange(of: hideFromMenuBar) { _, _ in
+            notifyPresentationPreferencesChanged()
+        }
+        .onChange(of: hideDockIcon) { _, _ in
+            notifyPresentationPreferencesChanged()
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshPermissionStatus()
+        }
+        .onReceive(permissionRefreshTimer) { _ in
             refreshPermissionStatus()
         }
         .onReceive(NotificationCenter.default.publisher(for: .macClippyHotKeyUpdateFailed)) { notification in
@@ -265,6 +293,40 @@ struct MacClippySettingsView: View {
         }
     }
 
+    private var presentationSection: some View {
+        MacClippySettingsGroup(
+            title: "App visibility",
+            subtitle: "Choose where MacClippy stays available. The global shortcut always remains available."
+        ) {
+            MacClippySettingsRow(
+                title: "Hide from menu bar",
+                detail: hideFromMenuBar ? "Open the dock with the global shortcut" : "Keep the MacClippy icon in the menu bar"
+            ) {
+                Toggle("Hide from menu bar", isOn: $hideFromMenuBar)
+                    .labelsHidden()
+            }
+            Divider()
+            MacClippySettingsRow(
+                title: "Hide Dock icon",
+                detail: hideDockIcon ? "MacClippy runs as a menu bar app" : "Show MacClippy in the Dock"
+            ) {
+                Toggle("Hide Dock icon", isOn: $hideDockIcon)
+                    .labelsHidden()
+            }
+            if hideFromMenuBar && hideDockIcon {
+                Divider()
+                Label(
+                    "MacClippy will be accessible through the global shortcut only.",
+                    systemImage: "info.circle"
+                )
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+            }
+        }
+    }
+
     private var shortcutSection: some View {
         MacClippySettingsGroup(
             title: "Shortcut",
@@ -301,6 +363,18 @@ struct MacClippySettingsView: View {
                 .labelsHidden()
                 .frame(width: 190)
             }
+            if snippetExpansionMode != MacClippySnippetExpansionMode.disabled.rawValue,
+               !accessibilityTrusted || !inputMonitoringTrusted {
+                Label(
+                    "Enable Accessibility and Input Monitoring below to expand snippets while typing.",
+                    systemImage: "exclamationmark.triangle"
+                )
+                .font(.footnote)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
+            }
         }
     }
 
@@ -322,6 +396,26 @@ struct MacClippySettingsView: View {
                 enabled: inputMonitoringTrusted,
                 action: openInputMonitoringSettings
             )
+            Divider()
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Permissions apply to this exact app copy")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(Bundle.main.bundleURL.path)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                HStack(spacing: 8) {
+                    Button("Refresh") { refreshPermissionStatus() }
+                    if !accessibilityTrusted || !inputMonitoringTrusted {
+                        Text("After changing access, quit and reopen MacClippy if macOS does not update the status.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
         }
     }
 
@@ -598,20 +692,45 @@ struct MacClippySettingsView: View {
     }
 
     private func openAccessibilitySettings() {
+        if !accessibilityTrusted {
+            let options = [
+                kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true
+            ] as CFDictionary
+            _ = AXIsProcessTrustedWithOptions(options)
+        }
         let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
         NSWorkspace.shared.open(url)
         refreshPermissionStatus()
     }
 
     private func openInputMonitoringSettings() {
+        // Ask macOS to register this app for Input Monitoring before opening
+        // the pane. Without this request, MacClippy may be missing from the
+        // list entirely and its global Snippet event tap can never start.
+        if !CGPreflightListenEventAccess() {
+            _ = CGRequestListenEventAccess()
+        }
         let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!
         NSWorkspace.shared.open(url)
         refreshPermissionStatus()
     }
 
     private func refreshPermissionStatus() {
-        accessibilityTrusted = AXIsProcessTrusted()
-        inputMonitoringTrusted = CGPreflightListenEventAccess()
+        let nextAccessibilityTrusted = AXIsProcessTrusted()
+        let nextInputMonitoringTrusted = CGPreflightListenEventAccess()
+        let didChange = accessibilityTrusted != nextAccessibilityTrusted
+            || inputMonitoringTrusted != nextInputMonitoringTrusted
+
+        accessibilityTrusted = nextAccessibilityTrusted
+        inputMonitoringTrusted = nextInputMonitoringTrusted
+
+        if didChange {
+            (NSApp.delegate as? AppDelegate)?.refreshPermissionDependentFeatures()
+        }
+    }
+
+    private func notifyPresentationPreferencesChanged() {
+        NotificationCenter.default.post(name: .macClippyPresentationPreferencesChanged, object: nil)
     }
 
     private func updateLaunchAtLogin(_ enabled: Bool) {
@@ -724,29 +843,63 @@ private struct MacClippySettingsRow<Control: View>: View {
 }
 
 @MainActor
-final class MacClippySettingsWindowCoordinator {
+final class MacClippySettingsWindowCoordinator: NSObject, NSWindowDelegate {
     static let shared = MacClippySettingsWindowCoordinator()
 
     private weak var window: NSWindow?
-    private var shouldBringToFrontWhenRegistered = false
+    private var fallbackWindow: NSWindow?
+    private var fallbackHostingView: NSHostingView<MacClippySettingsView>?
 
     func register(_ window: NSWindow) {
         self.window = window
-        if shouldBringToFrontWhenRegistered {
-            shouldBringToFrontWhenRegistered = false
-            bringToFront()
-        }
     }
 
     func bringToFront() {
         NSApp.activate(ignoringOtherApps: true)
-        guard let window else {
-            shouldBringToFrontWhenRegistered = true
+        if let window {
+            window.makeKeyAndOrderFront(nil)
+            window.orderFrontRegardless()
+            window.makeKey()
             return
         }
-        window.makeKeyAndOrderFront(nil)
-        window.orderFrontRegardless()
-        window.makeKey()
+        if let fallbackWindow {
+            fallbackWindow.makeKeyAndOrderFront(nil)
+            fallbackWindow.orderFrontRegardless()
+            fallbackWindow.makeKey()
+            return
+        }
+        presentFallbackWindow()
+    }
+
+    private func presentFallbackWindow() {
+        let hostingView = NSHostingView(rootView: MacClippySettingsView())
+        let fallbackWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 700, height: 760),
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        fallbackWindow.title = "MacClippy Settings"
+        fallbackWindow.contentView = hostingView
+        fallbackWindow.isReleasedWhenClosed = false
+        fallbackWindow.delegate = self
+        fallbackWindow.minSize = NSSize(width: 560, height: 520)
+        fallbackWindow.level = .normal
+        fallbackWindow.collectionBehavior = [.moveToActiveSpace, .fullScreenNone]
+        self.fallbackHostingView = hostingView
+        self.fallbackWindow = fallbackWindow
+        fallbackWindow.center()
+        fallbackWindow.makeKeyAndOrderFront(nil)
+        fallbackWindow.orderFrontRegardless()
+        fallbackWindow.makeKey()
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let closedWindow = notification.object as? NSWindow,
+              closedWindow === fallbackWindow else { return }
+        window = nil
+        fallbackHostingView = nil
+        fallbackWindow = nil
     }
 }
 
