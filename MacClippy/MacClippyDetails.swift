@@ -5,7 +5,7 @@ import MacClippyCore
 enum MacClippyDetailsEditing: Equatable {
     case none
     case content
-    case label
+    case name
 }
 
 struct MacClippyDetailsView: View {
@@ -15,7 +15,7 @@ struct MacClippyDetailsView: View {
     let onEdit: () -> Void
     let onRename: () -> Void
     let onSaveContent: (String) -> Void
-    let onSaveLabel: (String) -> Void
+    let onSaveName: (String) -> Void
     let onCancelEdit: () -> Void
     let onPreview: () -> Void
     let onCopy: () -> Void
@@ -28,7 +28,13 @@ struct MacClippyDetailsView: View {
     let onClose: () -> Void
 
     @State private var contentDraft: String
-    @State private var labelDraft: String
+    @State private var nameDraft: String
+    @FocusState private var focusedField: DetailsFocusedField?
+
+    private enum DetailsFocusedField: Hashable {
+        case content
+        case name
+    }
 
     init(
         details: MacClippyItemDetails,
@@ -37,7 +43,7 @@ struct MacClippyDetailsView: View {
         onEdit: @escaping () -> Void = {},
         onRename: @escaping () -> Void = {},
         onSaveContent: @escaping (String) -> Void = { _ in },
-        onSaveLabel: @escaping (String) -> Void = { _ in },
+        onSaveName: @escaping (String) -> Void = { _ in },
         onCancelEdit: @escaping () -> Void = {},
         onPreview: @escaping () -> Void = {},
         onCopy: @escaping () -> Void = {},
@@ -55,7 +61,7 @@ struct MacClippyDetailsView: View {
         self.onEdit = onEdit
         self.onRename = onRename
         self.onSaveContent = onSaveContent
-        self.onSaveLabel = onSaveLabel
+        self.onSaveName = onSaveName
         self.onCancelEdit = onCancelEdit
         self.onPreview = onPreview
         self.onCopy = onCopy
@@ -67,7 +73,7 @@ struct MacClippyDetailsView: View {
         self.onDelete = onDelete
         self.onClose = onClose
         _contentDraft = State(initialValue: details.textContent ?? "")
-        _labelDraft = State(initialValue: details.customLabel ?? "")
+        _nameDraft = State(initialValue: details.customLabel ?? "")
     }
 
     var body: some View {
@@ -85,10 +91,17 @@ struct MacClippyDetailsView: View {
             Divider()
             footer
         }
-        .frame(minWidth: 520, minHeight: 560)
+        .frame(minWidth: 320, minHeight: 360)
         .background(.regularMaterial)
         .onAppear { onEditingChanged(editing != .none) }
-        .onChange(of: editing) { _, value in onEditingChanged(value != .none) }
+        .onChange(of: editing) { _, value in
+            onEditingChanged(value != .none)
+            resetDrafts(for: value)
+            focusField(for: value)
+        }
+        .onChange(of: details.id) { _, _ in
+            resetDrafts(for: editing)
+        }
     }
 
     private var header: some View {
@@ -99,6 +112,11 @@ struct MacClippyDetailsView: View {
                 Text(details.title.isEmpty ? "Untitled item" : details.title)
                     .font(.headline)
                     .lineLimit(1)
+                    .accessibilityLabel(
+                        details.customLabel?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                            ? (details.customLabel ?? "Named clipboard item")
+                            : "Clipboard \(details.contentKind.rawValue) item"
+                    )
                 Text(details.contentKind.rawValue.uppercased())
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.secondary)
@@ -108,6 +126,7 @@ struct MacClippyDetailsView: View {
                 .buttonStyle(.bordered)
             Button { onClose() } label: { Image(systemName: "xmark") }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Close details")
                 .keyboardShortcut(.cancelAction)
         }
         .padding(.horizontal, 18)
@@ -122,10 +141,13 @@ struct MacClippyDetailsView: View {
                     .font(.body)
                     .frame(minHeight: 180)
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(.quaternary))
-                HStack {
-                    Button("Cancel", action: onCancelEdit)
-                    Spacer()
-                    Button("Save") { onSaveContent(contentDraft) }
+                    .focused($focusedField, equals: .content)
+                    .accessibilityLabel("Clipboard content")
+                    .accessibilityHint("Edit the saved clipboard content")
+                    HStack {
+                        Button("Cancel", action: onCancelEdit)
+                        Spacer()
+                        Button("Save") { onSaveContent(contentDraft) }
                         .keyboardShortcut(.defaultAction)
                 }
             } else {
@@ -155,16 +177,19 @@ struct MacClippyDetailsView: View {
             metadataRow("Accessed", details.lastAccessed?.formatted(date: .abbreviated, time: .shortened) ?? "Never")
             metadataRow("Access count", "\(details.frequency)")
             HStack {
-                Text("Label").foregroundStyle(.secondary)
+                Text("Name").foregroundStyle(.secondary)
                 Spacer()
-                if editing == .label {
-                    TextField("Label", text: $labelDraft)
+                if editing == .name {
+                    TextField("Name", text: $nameDraft)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 220)
-                    Button("Save") { onSaveLabel(labelDraft) }
+                        .focused($focusedField, equals: .name)
+                        .onSubmit { onSaveName(nameDraft) }
+                    Button("Save") { onSaveName(nameDraft) }
+                        .keyboardShortcut(.defaultAction)
                     Button("Cancel", action: onCancelEdit)
                 } else {
-                    Text(details.customLabel ?? "None")
+                    Text(details.customLabel ?? "Not set")
                         .lineLimit(1)
                     Button("Rename", action: onRename)
                         .keyboardShortcut("r", modifiers: .command)
@@ -185,6 +210,30 @@ struct MacClippyDetailsView: View {
                     Text(url.path).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                 }
             }
+        }
+    }
+
+    private func focusField(for editing: MacClippyDetailsEditing) {
+        let target: DetailsFocusedField?
+        switch editing {
+        case .content: target = .content
+        case .name: target = .name
+        case .none: target = nil
+        }
+        DispatchQueue.main.async {
+            focusedField = target
+        }
+    }
+
+    private func resetDrafts(for editing: MacClippyDetailsEditing) {
+        switch editing {
+        case .content:
+            contentDraft = details.textContent ?? ""
+        case .name:
+            nameDraft = details.customLabel ?? ""
+        case .none:
+            contentDraft = details.textContent ?? ""
+            nameDraft = details.customLabel ?? ""
         }
     }
 
@@ -218,8 +267,12 @@ struct MacClippyDetailsView: View {
         HStack(spacing: 8) {
             Button("Copy", action: onCopy)
             if let onPlainCopy { Button("Plain Text", action: onPlainCopy) }
-            Button("Paste", action: onPaste)
-                .keyboardShortcut(.defaultAction)
+            if editing == .none {
+                Button("Paste", action: onPaste)
+                    .keyboardShortcut(.defaultAction)
+            } else {
+                Button("Paste", action: onPaste)
+            }
             if let onTransformCopy, let onTransformPaste {
                 Menu("Transform") {
                     ForEach(TextTransform.allCases, id: \.self) { transform in
@@ -239,8 +292,8 @@ struct MacClippyDetailsView: View {
 
     private var contentDisplay: String {
         let fullText: String
-        if let textContent = details.textContent {
-            fullText = textContent.isEmpty ? "(empty)" : textContent
+        if let textContentPreview = details.textContentPreview {
+            fullText = textContentPreview.isEmpty ? "(empty)" : textContentPreview
         } else if !details.fileURLs.isEmpty {
             fullText = details.fileURLs.map(\.path).joined(separator: "\n")
         } else if let dimensions = details.imageDimensions {
@@ -266,18 +319,62 @@ struct MacClippyDetailsView: View {
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.subheadline.weight(.semibold))
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .accessibilityAddTraits(.isHeader)
             content()
         }
     }
 
-    private func metadataRow(_ label: String, _ value: String) -> some View {
+    private func metadataRow(_ title: String, _ value: String) -> some View {
         HStack(alignment: .top) {
-            Text(label).foregroundStyle(.secondary)
+            Text(title).foregroundStyle(.secondary)
             Spacer()
             Text(value).multilineTextAlignment(.trailing).textSelection(.enabled)
         }
         .font(.callout)
+    }
+}
+
+struct MacClippyDetailsLoadingView: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            ProgressView()
+            Text("Loading details…")
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Loading clipboard details")
+    }
+}
+
+struct MacClippyDetailsErrorView: View {
+    let message: String
+    let onRetry: () -> Void
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.title2)
+                .foregroundStyle(.orange)
+            Text("Could not load details")
+                .font(.headline)
+            Text(message)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            HStack(spacing: 10) {
+                Button("Retry", action: onRetry)
+                    .keyboardShortcut(.defaultAction)
+                Button("Close", action: onClose)
+                    .keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Could not load clipboard details. \(message)")
     }
 }
 

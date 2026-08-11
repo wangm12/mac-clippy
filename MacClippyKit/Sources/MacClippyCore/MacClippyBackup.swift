@@ -107,7 +107,17 @@ public enum MacClippyBackup {
             try fileManager.moveItem(at: temporaryURL, to: destinationURL)
             return manifest
         } catch {
-            try? fileManager.removeItem(at: temporaryURL)
+            do {
+                try fileManager.removeItem(at: temporaryURL)
+            } catch {
+                MacClippyLog.record(
+                    category: .storage,
+                    code: .backupFailed,
+                    operation: "backup_cleanup",
+                    recoveryAction: "remove_temporary_backup",
+                    impact: "temporary_backup_cleanup_failed"
+                )
+            }
             throw error
         }
     }
@@ -127,9 +137,10 @@ public enum MacClippyBackup {
             throw MacClippyBackupError.invalidManifest
         }
         guard manifest.formatVersion == formatVersion else { throw MacClippyBackupError.invalidManifest }
+        try validateNames(manifest.databaseNames)
 
         for file in manifest.files {
-            let url = snapshotURL.appendingPathComponent(file.relativePath)
+            let url = try validatedSnapshotURL(file.relativePath, root: snapshotURL)
             guard fileManager.fileExists(atPath: url.path) else {
                 throw MacClippyBackupError.missingComponent(file.relativePath)
             }
@@ -153,13 +164,13 @@ public enum MacClippyBackup {
         var health: [String: MacClippyDatabaseHealthReport] = [:]
         var counts: [String: Int64] = [:]
         for name in manifest.databaseNames {
-            let databaseURL = snapshotURL.appendingPathComponent(name + ".sqlite")
+            let databaseURL = try validatedSnapshotURL(name + ".sqlite", root: snapshotURL)
             guard fileManager.fileExists(atPath: databaseURL.path) else {
                 throw MacClippyBackupError.missingComponent(name + ".sqlite")
             }
             let database = try MacClippyDatabase(url: databaseURL)
             let requiredTables = requiredTables(for: name)
-            health[name] = database.healthCheck(requiredTables: requiredTables)
+            health[name] = database.healthCheck(requiredTables: requiredTables, mode: .full)
             counts[name] = try database.queue.read { connection in
                 try Int64.fetchOne(connection, sql: rowCountSQL(for: name)) ?? 0
             }
@@ -184,7 +195,17 @@ public enum MacClippyBackup {
             try fileManager.copyItem(at: snapshotURL, to: temporaryURL)
             try fileManager.moveItem(at: temporaryURL, to: destinationURL)
         } catch {
-            try? fileManager.removeItem(at: temporaryURL)
+            do {
+                try fileManager.removeItem(at: temporaryURL)
+            } catch {
+                MacClippyLog.record(
+                    category: .storage,
+                    code: .recoveryFailed,
+                    operation: "restore_cleanup",
+                    recoveryAction: "remove_temporary_restore",
+                    impact: "temporary_restore_cleanup_failed"
+                )
+            }
             throw error
         }
         return try validate(at: destinationURL, fileManager: fileManager)
@@ -198,6 +219,34 @@ public enum MacClippyBackup {
         }
     }
 
+    private static func validatedSnapshotURL(_ relativePath: String, root: URL) throws -> URL {
+        let components = relativePath.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard !relativePath.hasPrefix("/"),
+              !relativePath.hasSuffix("/"),
+              !components.isEmpty,
+              components.allSatisfy({ component in
+                  !component.isEmpty && component != "." && component != ".."
+                      && component.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" || $0 == ".") }
+              }) else {
+            throw MacClippyBackupError.invalidManifest
+        }
+
+        let rootURL = root.standardizedFileURL
+        let candidate = rootURL.appendingPathComponent(relativePath).standardizedFileURL
+        guard isInside(candidate, root: rootURL) else { throw MacClippyBackupError.invalidManifest }
+
+        // A manifest must not be able to follow a symlink out of the snapshot.
+        // Resolve only after the lexical check so a missing component remains a
+        // normal `missingComponent` error rather than changing path semantics.
+        let resolved = candidate.resolvingSymlinksInPath().standardizedFileURL
+        guard isInside(resolved, root: rootURL) else { throw MacClippyBackupError.invalidManifest }
+        return candidate
+    }
+
+    private static func isInside(_ candidate: URL, root: URL) -> Bool {
+        candidate.path == root.path || candidate.path.hasPrefix(root.path + "/")
+    }
+
     private static func backup(_ source: DatabaseQueue, to destinationURL: URL) throws {
         // Keep the destination queue in a small helper scope. In particular,
         // this closes the last writer before the snapshot is hashed and avoids
@@ -208,9 +257,9 @@ public enum MacClippyBackup {
                 try connection.execute(sql: "PRAGMA journal_mode = DELETE")
                 try connection.execute(sql: "PRAGMA synchronous = FULL")
             }
-            var destination: DatabaseQueue? = try DatabaseQueue(path: destinationURL.path, configuration: configuration)
-            defer { destination = nil }
-            try source.backup(to: destination!)
+            let destination = try DatabaseQueue(path: destinationURL.path, configuration: configuration)
+            try source.backup(to: destination)
+            try destination.close()
         }
         try normalize(destinationURL)
     }
@@ -221,21 +270,19 @@ public enum MacClippyBackup {
         // mode. Reopen after the backup queue has closed, checkpoint it, and
         // switch the portable snapshot to a single main database file. The
         // dedicated helper scope closes the queue before file hashing begins.
-        var checkpoint: DatabaseQueue? = try DatabaseQueue(path: destinationURL.path)
-        defer { checkpoint = nil }
-        try checkpoint!.writeWithoutTransaction { connection in
+        let checkpoint = try DatabaseQueue(path: destinationURL.path)
+        try checkpoint.writeWithoutTransaction { connection in
             try connection.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)")
             try connection.execute(sql: "PRAGMA journal_mode = DELETE")
             try connection.execute(sql: "PRAGMA synchronous = FULL")
         }
+        try checkpoint.close()
     }
 
     private static func copyBlobFiles(from source: URL, to destination: URL, fileManager: FileManager) throws -> [MacClippyBackupManifest.FileEntry] {
         let blobDestination = destination.appendingPathComponent("blobs", isDirectory: true)
         try fileManager.createDirectory(at: blobDestination, withIntermediateDirectories: true)
-        guard let urls = try? fileManager.contentsOfDirectory(at: source, includingPropertiesForKeys: [.fileSizeKey]) else {
-            return []
-        }
+        let urls = try fileManager.contentsOfDirectory(at: source, includingPropertiesForKeys: [.fileSizeKey])
         var entries: [MacClippyBackupManifest.FileEntry] = []
         for url in urls where url.pathExtension == "bin" {
             let target = blobDestination.appendingPathComponent(url.lastPathComponent)
@@ -248,7 +295,7 @@ public enum MacClippyBackup {
     }
 
     private static func fileEntries(in directory: URL, excluding: String, fileManager: FileManager) throws -> [MacClippyBackupManifest.FileEntry] {
-        guard let urls = try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.fileSizeKey]) else { return [] }
+        let urls = try fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.fileSizeKey])
         var entries: [MacClippyBackupManifest.FileEntry] = []
         for url in urls where url.lastPathComponent != excluding && url.pathExtension == "sqlite" {
             let values = try url.resourceValues(forKeys: [.fileSizeKey])
@@ -259,7 +306,19 @@ public enum MacClippyBackup {
 
     private static func sha256(for url: URL) throws -> String {
         let handle = try FileHandle(forReadingFrom: url)
-        defer { try? handle.close() }
+        defer {
+            do {
+                try handle.close()
+            } catch {
+                MacClippyLog.record(
+                    category: .storage,
+                    code: .backupFailed,
+                    operation: "backup_file_close",
+                    recoveryAction: "retry_backup",
+                    impact: "backup_file_close_failed"
+                )
+            }
+        }
         var hash = SHA256()
         while let chunk = try handle.read(upToCount: 1024 * 1024), !chunk.isEmpty {
             hash.update(data: chunk)

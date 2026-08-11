@@ -2,6 +2,19 @@ import CryptoKit
 import Foundation
 import GRDB
 
+private func isSkippableCollectionCorruption(_ error: Error) -> Bool {
+    if error is DecodingError { return true }
+    if let storeError = error as? MacClippyStoreError,
+       case .invalidStoredRecord = storeError {
+        return true
+    }
+    if let cipherError = error as? MacClippyCipherError,
+       case .invalidEnvelope = cipherError {
+        return true
+    }
+    return false
+}
+
 public final class MacClippyPinboardStore {
     public static let migrations: [MacClippyDatabaseMigration] = [
         MacClippyDatabaseMigration(identifier: "001-pinboard-core") { database in
@@ -27,8 +40,8 @@ public final class MacClippyPinboardStore {
         database.healthCheck(requiredTables: ["macclippy_pinboards", "grdb_migrations"])
     }
 
-    public func databaseRowCount() -> Int64? {
-        database.tableRowCount("macclippy_pinboards")
+    public func databaseRowCount() throws -> Int64? {
+        try database.tableRowCount("macclippy_pinboards")
     }
 
     @discardableResult
@@ -39,8 +52,42 @@ public final class MacClippyPinboardStore {
     }
 
     public func list() throws -> [Pinboard] {
+        let rows = try database.queue.read { connection in
+            let count = try Int.fetchOne(connection, sql: "SELECT COUNT(*) FROM macclippy_pinboards") ?? 0
+            guard count <= MacClippyCollectionLimits.maxPinboards else {
+                throw MacClippyStoreError.inputTooLarge
+            }
+            return try Row.fetchAll(connection, sql: "SELECT envelope FROM macclippy_pinboards ORDER BY sort_order ASC")
+        }
+        var boards: [Pinboard] = []
+        boards.reserveCapacity(rows.count)
+        for row in rows {
+            do {
+                boards.append(try decode(row))
+            } catch {
+                guard isSkippableCollectionCorruption(error) else { throw error }
+                MacClippyLog.record(
+                    category: .storage,
+                    code: .corruptStoredRecord,
+                    operation: "pinboard_list_decode",
+                    recoveryAction: "remove_or_restore_damaged_pinboard",
+                    impact: "damaged_pinboard_skipped"
+                )
+            }
+        }
+        return boards
+    }
+
+    /// Destructive recovery must not skip a damaged board: doing so could
+    /// leave stale record references while still completing a journal.
+    public func listStrict() throws -> [Pinboard] {
         try database.queue.read { connection in
-            try Row.fetchAll(connection, sql: "SELECT envelope FROM macclippy_pinboards ORDER BY sort_order ASC").map(decode)
+            let count = try Int.fetchOne(connection, sql: "SELECT COUNT(*) FROM macclippy_pinboards") ?? 0
+            guard count <= MacClippyCollectionLimits.maxPinboards else {
+                throw MacClippyStoreError.inputTooLarge
+            }
+            let rows = try Row.fetchAll(connection, sql: "SELECT envelope FROM macclippy_pinboards ORDER BY sort_order ASC")
+            return try rows.map(decode)
         }
     }
 
@@ -54,6 +101,7 @@ public final class MacClippyPinboardStore {
     }
 
     public func update(_ board: Pinboard) throws {
+        try validate(board)
         let envelope = try MacClippyCipher.seal(try JSONEncoder().encode(board), with: key)
         try database.queue.write { connection in
             try connection.execute(sql: "UPDATE macclippy_pinboards SET envelope = ?, modified = ? WHERE id = ?", arguments: [envelope.combined, board.modified.timeIntervalSince1970, board.id.rawValue])
@@ -106,13 +154,39 @@ public final class MacClippyPinboardStore {
     }
 
     public static func protectedIDs(from store: MacClippyPinboardStore) throws -> Set<RecordID> {
-        try store.list().reduce(into: Set<RecordID>()) { result, board in result.formUnion(board.itemIDs) }
+        // Retention and deletion are destructive operations. Unlike the
+        // user-facing list() path, they must fail closed if a board envelope
+        // cannot be decoded; silently skipping that board would make its
+        // pinned records eligible for cleanup.
+        let rows = try store.database.queue.read { connection in
+            let count = try Int.fetchOne(connection, sql: "SELECT COUNT(*) FROM macclippy_pinboards") ?? 0
+            guard count <= MacClippyCollectionLimits.maxPinboards else {
+                throw MacClippyStoreError.inputTooLarge
+            }
+            return try Row.fetchAll(connection, sql: "SELECT envelope FROM macclippy_pinboards ORDER BY sort_order ASC")
+        }
+        return try rows.reduce(into: Set<RecordID>()) { result, row in
+            result.formUnion(try store.decode(row).itemIDs)
+        }
     }
 
     private func persist(_ board: Pinboard, order: Int) throws {
+        try validate(board)
         let envelope = try MacClippyCipher.seal(try JSONEncoder().encode(board), with: key)
         try database.queue.write { connection in
+            let count = try Int.fetchOne(connection, sql: "SELECT COUNT(*) FROM macclippy_pinboards") ?? 0
+            guard count < MacClippyCollectionLimits.maxPinboards else {
+                throw MacClippyStoreError.inputTooLarge
+            }
             try connection.execute(sql: "INSERT INTO macclippy_pinboards(id, sort_order, envelope, modified) VALUES (?, ?, ?, ?)", arguments: [board.id.rawValue, order, envelope.combined, board.modified.timeIntervalSince1970])
+        }
+    }
+
+    private func validate(_ board: Pinboard) throws {
+        guard board.name.utf8.count <= MacClippyCollectionLimits.maxNameUTF8Bytes,
+              board.itemIDs.count <= MacClippyCollectionLimits.maxPinboardItems,
+              (board.color?.utf8.count ?? 0) <= MacClippyCollectionLimits.maxColorUTF8Bytes else {
+            throw MacClippyStoreError.inputTooLarge
         }
     }
 
@@ -153,8 +227,8 @@ public final class MacClippySnippetStore {
         database.healthCheck(requiredTables: ["macclippy_snippets", "grdb_migrations"])
     }
 
-    public func databaseRowCount() -> Int64? {
-        database.tableRowCount("macclippy_snippets")
+    public func databaseRowCount() throws -> Int64? {
+        try database.tableRowCount("macclippy_snippets")
     }
 
     @discardableResult
@@ -165,7 +239,41 @@ public final class MacClippySnippetStore {
     }
 
     public func list() throws -> [Snippet] {
-        try database.queue.read { connection in try Row.fetchAll(connection, sql: "SELECT envelope FROM macclippy_snippets ORDER BY modified DESC").map(decode) }
+        let rows = try database.queue.read { connection in
+            let count = try Int.fetchOne(connection, sql: "SELECT COUNT(*) FROM macclippy_snippets") ?? 0
+            guard count <= MacClippyCollectionLimits.maxSnippets else {
+                throw MacClippyStoreError.inputTooLarge
+            }
+            return try Row.fetchAll(connection, sql: "SELECT envelope FROM macclippy_snippets ORDER BY modified DESC")
+        }
+        var snippets: [Snippet] = []
+        snippets.reserveCapacity(rows.count)
+        for row in rows {
+            do {
+                snippets.append(try decode(row))
+            } catch {
+                guard isSkippableCollectionCorruption(error) else { throw error }
+                MacClippyLog.record(
+                    category: .storage,
+                    code: .corruptStoredRecord,
+                    operation: "snippet_list_decode",
+                    recoveryAction: "remove_or_restore_damaged_snippet",
+                    impact: "damaged_snippet_skipped"
+                )
+            }
+        }
+        return snippets
+    }
+
+    public func listStrict() throws -> [Snippet] {
+        try database.queue.read { connection in
+            let count = try Int.fetchOne(connection, sql: "SELECT COUNT(*) FROM macclippy_snippets") ?? 0
+            guard count <= MacClippyCollectionLimits.maxSnippets else {
+                throw MacClippyStoreError.inputTooLarge
+            }
+            let rows = try Row.fetchAll(connection, sql: "SELECT envelope FROM macclippy_snippets ORDER BY modified DESC")
+            return try rows.map(decode)
+        }
     }
 
     public func fetch(id: RecordID) throws -> Snippet {
@@ -192,6 +300,7 @@ public final class MacClippySnippetStore {
     }
 
     public func update(_ snippet: Snippet) throws {
+        try validate(snippet)
         let envelope = try MacClippyCipher.seal(try JSONEncoder().encode(snippet), with: key)
         try database.queue.write { connection in
             try connection.execute(sql: "UPDATE macclippy_snippets SET trigger_value = ?, envelope = ?, modified = ? WHERE id = ?", arguments: [snippet.trigger, envelope.combined, snippet.modified.timeIntervalSince1970, snippet.id.rawValue])
@@ -203,9 +312,22 @@ public final class MacClippySnippetStore {
     }
 
     private func persist(_ snippet: Snippet) throws {
+        try validate(snippet)
         let envelope = try MacClippyCipher.seal(try JSONEncoder().encode(snippet), with: key)
         try database.queue.write { connection in
+            let count = try Int.fetchOne(connection, sql: "SELECT COUNT(*) FROM macclippy_snippets") ?? 0
+            guard count < MacClippyCollectionLimits.maxSnippets else {
+                throw MacClippyStoreError.inputTooLarge
+            }
             try connection.execute(sql: "INSERT INTO macclippy_snippets(id, trigger_value, envelope, modified) VALUES (?, ?, ?, ?)", arguments: [snippet.id.rawValue, snippet.trigger, envelope.combined, snippet.modified.timeIntervalSince1970])
+        }
+    }
+
+    private func validate(_ snippet: Snippet) throws {
+        guard snippet.name.utf8.count <= MacClippyCollectionLimits.maxNameUTF8Bytes,
+              snippet.body.utf8.count <= MacClippyCollectionLimits.maxSnippetBodyUTF8Bytes,
+              (snippet.trigger?.utf8.count ?? 0) <= MacClippyCollectionLimits.maxSnippetTriggerUTF8Bytes else {
+            throw MacClippyStoreError.inputTooLarge
         }
     }
 

@@ -1,9 +1,8 @@
 import CryptoKit
 import Foundation
-import XCTest
-
 import GRDB
 import MacClippyCore
+import XCTest
 
 final class MacClippyCoreTests: XCTestCase {
     func testCoreVersion() {
@@ -14,12 +13,14 @@ final class MacClippyCoreTests: XCTestCase {
         let key = SymmetricKey(size: .bits256)
         let envelope = try Cipher.seal(Data("secret".utf8), with: key)
         XCTAssertEqual(try Cipher.open(envelope, with: key), Data("secret".utf8))
-        XCTAssertThrowsError(try Cipher.open(envelope, with: SymmetricKey(size: .bits256)))
+        XCTAssertThrowsError(try Cipher.open(envelope, with: SymmetricKey(size: .bits256))) { error in
+            XCTAssertEqual(error as? MacClippyCipherError, .openFailed)
+        }
     }
 
     func testClipboardAppendListAndBody() throws {
         let store = try clipboardStore()
-        let now = Date(timeIntervalSince1970: 10_000)
+        let now = Date(timeIntervalSince1970: 10000)
         let meta = try store.append(.text("hello world"), sourceAppBundleID: "com.example.Editor", detectedTypeJSON: "{\"type\":\"plain\"}", now: now)
 
         XCTAssertEqual(try store.list(limit: 10), [meta])
@@ -32,14 +33,14 @@ final class MacClippyCoreTests: XCTestCase {
         let matching = try store.append(
             .text("matching"),
             sourceAppBundleID: "com.example.Editor",
-            now: Date(timeIntervalSince1970: 20_000)
+            now: Date(timeIntervalSince1970: 20000)
         )
         _ = try store.append(
             .text("other app"),
             sourceAppBundleID: "com.example.Terminal",
-            now: Date(timeIntervalSince1970: 20_001)
+            now: Date(timeIntervalSince1970: 20001)
         )
-        try store.setCustomLabel(id: matching.id, label: "Project Alpha", now: Date(timeIntervalSince1970: 20_000))
+        try store.setCustomLabel(id: matching.id, label: "Project Alpha", now: Date(timeIntervalSince1970: 20000))
         try store.setOCRText(id: matching.id, text: "recognized")
 
         let filter = MacClippyClipboardMetadataFilter(
@@ -47,8 +48,8 @@ final class MacClippyCoreTests: XCTestCase {
             labelContains: ["project"],
             requiresLabel: true,
             requiresOCR: true,
-            modifiedBefore: [Date(timeIntervalSince1970: 20_001)],
-            modifiedAfter: [Date(timeIntervalSince1970: 19_999)]
+            modifiedBefore: [Date(timeIntervalSince1970: 20001)],
+            modifiedAfter: [Date(timeIntervalSince1970: 19999)]
         )
         XCTAssertEqual(try store.list(limit: 10, filter: filter).map(\.id), [matching.id])
     }
@@ -67,6 +68,35 @@ final class MacClippyCoreTests: XCTestCase {
         XCTAssertEqual(bodies.count, 2)
     }
 
+    func testClipboardBatchReadsChunkIDsAboveSQLiteVariableLimit() throws {
+        let store = try clipboardStore()
+        var records: [ClipboardItemMeta] = []
+        records.reserveCapacity(1005)
+        for index in 0 ..< 1005 {
+            try records.append(store.append(.text("value-\(index)")))
+        }
+
+        let missing = RecordID.generate()
+        let requestedIDs = [records[1004].id] + records.map(\.id) + [missing, records[0].id]
+
+        let kinds = try store.contentKinds(for: requestedIDs)
+        XCTAssertEqual(kinds.count, records.count)
+        XCTAssertEqual(kinds[records[1004].id], .text)
+        XCTAssertNil(kinds[missing])
+
+        let metas = try store.metas(for: requestedIDs)
+        XCTAssertEqual(metas.count, records.count + 2)
+        XCTAssertEqual(metas.first?.id, records[1004].id)
+        XCTAssertEqual(metas.last?.id, records[0].id)
+        XCTAssertFalse(metas.contains(where: { $0.id == missing }))
+
+        let bodies = try store.bodies(for: requestedIDs)
+        XCTAssertEqual(bodies.count, records.count)
+        XCTAssertEqual(bodies[records[0].id], .text("value-0"))
+        XCTAssertEqual(bodies[records[1004].id], .text("value-1004"))
+        XCTAssertNil(bodies[missing])
+    }
+
     func testStoreInitializersApplyDeclaredMigrations() throws {
         let clipboardDatabase = try MacClippyDatabase(inMemory: true)
         _ = try ClipboardStore(database: clipboardDatabase, deviceKey: testKey())
@@ -77,7 +107,10 @@ final class MacClippyCoreTests: XCTestCase {
 
         let searchDatabase = try MacClippyDatabase(inMemory: true)
         _ = try SearchStore(database: searchDatabase)
-        XCTAssertEqual(try appliedMigrations(in: searchDatabase), ["001-search-core", "002-search-repair-state"])
+        XCTAssertEqual(
+            try appliedMigrations(in: searchDatabase),
+            ["001-search-core", "002-search-repair-state", "003-search-index-revision"]
+        )
 
         let pinboardDatabase = try MacClippyDatabase(inMemory: true)
         _ = try PinboardStore(database: pinboardDatabase, deviceKey: testKey())
@@ -90,13 +123,54 @@ final class MacClippyCoreTests: XCTestCase {
 
     func testNewestOrderingUsesLamportTieBreak() throws {
         let store = try clipboardStore()
-        let sameDate = Date(timeIntervalSince1970: 20_000)
+        let sameDate = Date(timeIntervalSince1970: 20000)
         let first = try store.append(.text("first"), now: sameDate)
         let second = try store.append(.text("second"), now: sameDate)
 
         let listed = try store.list(limit: 10)
         XCTAssertEqual(listed.map(\.id), [second.id, first.id])
         XCTAssertEqual(listed.map(\.lamport), [2, 1])
+    }
+
+    func testOldestCursorPaginatesAndFiltersWithoutDuplicates() throws {
+        let store = try clipboardStore()
+        let first = try store.append(.text("first"), now: Date(timeIntervalSince1970: 1))
+        let image = try store.append(
+            .image(blobID: "image", width: 1, height: 1),
+            now: Date(timeIntervalSince1970: 2)
+        )
+        let last = try store.append(.text("last"), now: Date(timeIntervalSince1970: 3))
+
+        let firstPage = try store.listOldest(limit: 1)
+        XCTAssertEqual(firstPage.map(\.id), [first.id])
+        let firstMeta = try XCTUnwrap(firstPage.last)
+        let cursor = MacClippyClipboardHistoryCursor(
+            modified: firstMeta.modified,
+            lamport: firstMeta.lamport,
+            id: firstMeta.id
+        )
+        let secondPage = try store.listOldest(limit: 2, after: cursor)
+        XCTAssertEqual(secondPage.map(\.id), [image.id, last.id])
+
+        let imagePage = try store.listOldest(limit: 10, contentKind: .image)
+        XCTAssertEqual(imagePage.map(\.id), [image.id])
+    }
+
+    func testNegativePersistedLamportIsReportedAsCorruptStorage() throws {
+        let database = try MacClippyDatabase(inMemory: true)
+        let store = try ClipboardStore(database: database, deviceKey: testKey())
+        let meta = try store.append(.text("corrupt lamport"))
+
+        try database.queue.write { connection in
+            try connection.execute(
+                sql: "UPDATE clipboard_records SET lamport = -1 WHERE id = ?",
+                arguments: [meta.id.rawValue]
+            )
+        }
+
+        XCTAssertThrowsError(try store.list(limit: 10)) { error in
+            XCTAssertEqual(error as? MacClippyStoreError, .invalidStoredRecord)
+        }
     }
 
     func testSearchInsertAndRemoveEscapesQuery() throws {
@@ -111,196 +185,70 @@ final class MacClippyCoreTests: XCTestCase {
         XCTAssertTrue(try search.search(query: "hello", limit: 10).isEmpty)
     }
 
-    func testBlobReadDeleteAndRetentionRemovesBlobAndSearch() throws {
-        let store = try clipboardStore()
+    func testSearchIndexRevisionChangesOnlyWhenProjectionChanges() throws {
         let search = try searchStore()
-        let root = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let blobs = try BlobStore(rootURL: root, key: testKey())
-        let blobID = try blobs.write(Data(repeating: 7, count: 32))
-        let meta = try store.append(.image(blobID: blobID, width: 3, height: 4), now: Date(timeIntervalSince1970: 1))
-        try search.insert(id: meta.id, text: "image seven")
+        let id = RecordID.generate()
 
-        let policy = RetentionPolicy(maxItems: 0)
-        try policy.enforce(store: store, blobs: blobs, search: search)
+        XCTAssertEqual(try search.indexRevision(), 0)
+        try search.insert(id: id, text: "first")
+        let afterInsert = try search.indexRevision()
+        XCTAssertEqual(afterInsert, 1)
 
-        XCTAssertFalse(blobs.contains(id: blobID))
-        XCTAssertThrowsError(try store.body(for: meta.id))
-        XCTAssertTrue(try search.search(query: "image", limit: 10).isEmpty)
+        try search.upsert(id: id, text: "second")
+        let afterUpsert = try search.indexRevision()
+        XCTAssertEqual(afterUpsert, 2)
+
+        try search.remove(id: id)
+        XCTAssertEqual(try search.indexRevision(), 3)
+        try search.remove(id: id)
+        XCTAssertEqual(try search.indexRevision(), 3)
     }
 
-    func testPinboardItemsAreProtectedFromRetention() throws {
-        let store = try clipboardStore()
+    func testSearchKeysetCursorContinuesAfterRankAndRowID() throws {
         let search = try searchStore()
-        let root = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let blobs = try BlobStore(rootURL: root, key: testKey())
-        let protected = try store.append(.text("protected"), now: Date(timeIntervalSince1970: 1))
-        let removable = try store.append(.text("removable"), now: Date(timeIntervalSince1970: 2))
-        let pinboards = try PinboardStore(database: try MacClippyDatabase(inMemory: true), deviceKey: testKey())
-        let board = try pinboards.create(name: "Keep")
-        try pinboards.addItem(protected.id, to: board.id)
-
-        try RetentionPolicy(maxItems: 0).enforce(store: store, blobs: blobs, search: search, pinboards: pinboards)
-
-        XCTAssertEqual(try store.body(for: protected.id), .text("protected"))
-        XCTAssertThrowsError(try store.body(for: removable.id))
-    }
-
-    func testRetentionKeepsBlobReferencedByAnotherRecord() throws {
-        let store = try clipboardStore()
-        let search = try searchStore()
-        let root = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let blobs = try BlobStore(rootURL: root, key: testKey())
-        let blobID = try blobs.write(Data(repeating: 5, count: 24))
-        let old = try store.append(.image(blobID: blobID, width: 1, height: 1), now: Date(timeIntervalSince1970: 1))
-        let newest = try store.append(.image(blobID: blobID, width: 1, height: 1), now: Date(timeIntervalSince1970: 2))
-
-        try RetentionPolicy(maxItems: 1).enforce(store: store, blobs: blobs, search: search)
-
-        XCTAssertThrowsError(try store.body(for: old.id))
-        XCTAssertEqual(try store.body(for: newest.id), .image(blobID: blobID, width: 1, height: 1))
-        XCTAssertTrue(blobs.contains(id: blobID))
-    }
-
-    func testMaxAgeAndImageByteRetention() throws {
-        let store = try clipboardStore()
-        let search = try searchStore()
-        let root = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let blobs = try BlobStore(rootURL: root, key: testKey())
-        let old = try store.append(.text("old"), now: Date(timeIntervalSince1970: 1))
-        let imageBlob = try blobs.write(Data(repeating: 3, count: 100))
-        let image = try store.append(.image(blobID: imageBlob, width: 1, height: 1), now: Date(timeIntervalSince1970: 2))
-        let imageRecordBlob = try blobs.write(Data(repeating: 4, count: 100))
-        let newestImage = try store.append(.image(blobID: imageRecordBlob, width: 1, height: 1), now: Date(timeIntervalSince1970: 3))
-
-        try RetentionPolicy(maxAgeSeconds: 5, maxImageBytes: blobs.byteSize(id: imageRecordBlob)).enforce(
-            store: store, blobs: blobs, search: search, now: Date(timeIntervalSince1970: 7)
-        )
-
-        XCTAssertThrowsError(try store.body(for: old.id))
-        XCTAssertThrowsError(try store.body(for: image.id))
-        XCTAssertEqual(try store.body(for: newestImage.id), .image(blobID: imageRecordBlob, width: 1, height: 1))
-        XCTAssertFalse(blobs.contains(id: imageBlob))
-    }
-
-    func testRegexAndCaptureExclusionRules() throws {
-        let blocklist = try RegexBlocklist(patterns: ["password\\s*="])
-        XCTAssertTrue(blocklist.matches("password = secret"))
-        XCTAssertFalse(blocklist.matches("username = user"))
-        XCTAssertThrowsError(try RegexBlocklist(patterns: ["["]))
-
-        // Production default: sensitive pasteboard markers and common
-        // password-manager apps are excluded. Capture All is explicit and
-        // does not bypass an app exclusion.
-        let safeRules = CaptureExclusionRules(excludedAppBundleIDs: ["com.Example.Passwords"])
-        XCTAssertTrue(safeRules.shouldExclude(appBundleID: "com.example.passwords", pasteboardTypes: []))
-        XCTAssertTrue(safeRules.shouldExclude(appBundleID: nil, pasteboardTypes: ["org.nspasteboard.ConcealedType"]))
-        XCTAssertTrue(safeRules.shouldExclude(appBundleID: nil, pasteboardTypes: ["org.nspasteboard.TransientType"]))
-        XCTAssertTrue(safeRules.shouldExclude(appBundleID: nil, pasteboardTypes: ["org.nspasteboard.AutoGeneratedType"]))
-        XCTAssertFalse(safeRules.shouldExclude(appBundleID: "com.example.editor", pasteboardTypes: ["public.utf8-plain-text"]))
-        let privacyRules = CaptureExclusionRules(excludedTextPatterns: ["token\\s*="])
-        XCTAssertTrue(privacyRules.shouldExcludeText("token = secret"))
-        XCTAssertFalse(privacyRules.shouldExcludeText("username = user"))
-        let legacyRules = CaptureExclusionRules.legacyDefault()
-        XCTAssertTrue(legacyRules.shouldExclude(appBundleID: nil, pasteboardTypes: ["org.nspasteboard.ConcealedType"]))
-        XCTAssertTrue(legacyRules.shouldExclude(appBundleID: nil, pasteboardTypes: ["org.nspasteboard.TransientType"]))
-        XCTAssertFalse(legacyRules.shouldExclude(appBundleID: "com.example.editor", pasteboardTypes: ["public.utf8-plain-text"]))
-
-        let captureAllRules = CaptureExclusionRules(captureAll: true)
-        XCTAssertFalse(captureAllRules.shouldExclude(appBundleID: nil, pasteboardTypes: ["com.unknown.custom", "org.nspasteboard.ConcealedType"]))
-        XCTAssertTrue(captureAllRules.shouldExclude(appBundleID: "com.agilebits.onepassword7", pasteboardTypes: []))
-    }
-
-    func testSmartTextDetectionAndTransforms() throws {
-        XCTAssertEqual(SmartTextService.detect("https://example.com/a"), .url)
-        XCTAssertEqual(SmartTextService.detect("person@example.com"), .email)
-        XCTAssertEqual(SmartTextService.detect("#ff00aa"), .color)
-        XCTAssertEqual(SmartTextService.detect("SELECT * FROM users"), .code(language: .sql))
-
-        let cleaned = try XCTUnwrap(SmartTextService.cleanTrackingParameters("https://example.com?a=1&utm_source=test&gclid=x"))
-        XCTAssertEqual(cleaned.cleaned, "https://example.com?a=1")
-        XCTAssertEqual(cleaned.removedCount, 2)
-        XCTAssertEqual(TextTransform.uppercase.apply(to: "hello"), "HELLO")
-        XCTAssertEqual(TextTransform.trim.apply(to: "  hello \n"), "hello")
-        XCTAssertEqual(TextTransform.prettyJSON.apply(to: "{\"b\":2,\"a\":1}"), "{\n  \"a\" : 1,\n  \"b\" : 2\n}")
-        XCTAssertEqual(TextTransform.cleanTrackingURL.apply(to: "https://example.com?utm_medium=x"), "https://example.com")
-    }
-
-    func testTextTransformDisplayNameIsNonEmptyAndStable() throws {
-        // Every transform case must map to a non-empty human-readable label
-        // so the dock Transform submenu never shows a blank item, and the
-        // labels must match the user-facing names chosen for the feature.
-        let expected: [TextTransform: String] = [
-            .uppercase: "Uppercase",
-            .lowercase: "Lowercase",
-            .trim: "Trim whitespace",
-            .prettyJSON: "Pretty JSON",
-            .cleanTrackingURL: "Clean tracking URL"
-        ]
-        for transform in TextTransform.allCases {
-            let name = transform.displayName
-            XCTAssertFalse(name.isEmpty, "\(transform.rawValue) must have a non-empty displayName")
-            XCTAssertEqual(name, expected[transform], "\(transform.rawValue) displayName changed")
+        for index in 0..<40 {
+            try search.insert(id: RecordID.generate(), text: "keyset search \(index)")
         }
-        // The label set must stay in sync with CaseIterable so a future case
-        // is not silently missing a label.
-        XCTAssertEqual(TextTransform.allCases.count, expected.count)
-    }
 
-    func testCategoryColorUsesExplicitColorOrDeterministicFallback() throws {
-        let id = try XCTUnwrap(RecordID(rawValue: "0123456789ABCDEFGHJKMNPQRS"))
-        let board = Pinboard(id: id, name: "Work")
+        let firstPage = try search.search(query: "keyset search", limit: 16)
+        XCTAssertEqual(firstPage.count, 16)
+        guard let last = firstPage.last else {
+            XCTFail("expected a non-empty first page")
+            return
+        }
 
-        XCTAssertEqual(MacClippyCategoryColorPolicy.color(for: board), MacClippyCategoryColorPolicy.color(for: board))
-        XCTAssertEqual(
-            MacClippyCategoryColorPolicy.color(for: Pinboard(id: id, name: "Work", color: "#123456")),
-            "#123456"
+        let remaining = try search.search(
+            query: "keyset search",
+            limit: 40,
+            after: MacClippySearchCursor(rank: last.rank, rowID: last.rowID)
         )
-        XCTAssertEqual(
-            MacClippyCategoryColorPolicy.color(for: Pinboard(id: id, name: "Work", color: "  ")),
-            MacClippyCategoryColorPolicy.color(for: board)
-        )
+        XCTAssertEqual(remaining.count, 24)
+        XCTAssertTrue(Set(firstPage.map(\.id)).isDisjoint(with: Set(remaining.map(\.id))))
+
+        let complete = firstPage.map(\.id) + remaining.map(\.id)
+        XCTAssertEqual(complete.count, 40)
+        XCTAssertEqual(Set(complete).count, 40)
     }
 
-    func testClipboardDropPolicyParsesIDsAndTreatsDuplicatesAsSafeNoOp() throws {
-        let id = try XCTUnwrap(RecordID(rawValue: "0123456789ABCDEFGHJKMNPQRS"))
-
-        XCTAssertEqual(MacClippyClipboardDropPolicy.recordID(from: "  \(id.rawValue)\n"), id)
-        XCTAssertEqual(MacClippyClipboardDropPolicy.decision(for: id.rawValue, existingIDs: []), .accept)
-        XCTAssertEqual(MacClippyClipboardDropPolicy.decision(for: id.rawValue, existingIDs: [id]), .duplicate)
-        XCTAssertEqual(MacClippyClipboardDropPolicy.decision(for: "invalid", existingIDs: []), .invalid)
-    }
-
-    func testDeviceKeyUsesInjectedKeychain() throws {
-        let keychain = InMemoryKeychain()
-        let first = try MacClippyDeviceKey(keychain: keychain).deviceKey()
-        let second = try MacClippyDeviceKey(keychain: keychain).deviceKey()
-        XCTAssertEqual(first.withUnsafeBytes { Data($0) }, second.withUnsafeBytes { Data($0) })
-        XCTAssertEqual(MacClippySystemKeychain.service, "com.macallyouneed.macclippy.device-key")
-    }
-
-    private func clipboardStore() throws -> ClipboardStore {
+    func clipboardStore() throws -> ClipboardStore {
         try ClipboardStore(database: MacClippyDatabase(inMemory: true), deviceKey: testKey(), deviceID: XCTUnwrap(DeviceID(rawValue: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")))
     }
 
-    private func searchStore() throws -> SearchStore {
+    func searchStore() throws -> SearchStore {
         try SearchStore(database: MacClippyDatabase(inMemory: true))
     }
 
-    private func appliedMigrations(in database: MacClippyDatabase) throws -> [String] {
+    func appliedMigrations(in database: MacClippyDatabase) throws -> [String] {
         try database.queue.read { connection in
             try String.fetchAll(connection, sql: "SELECT identifier FROM grdb_migrations ORDER BY identifier")
         }
     }
 
-    private func testKey() -> SymmetricKey {
+    func testKey() -> SymmetricKey {
         SymmetricKey(data: Data(repeating: 9, count: 32))
     }
 
-    private func temporaryDirectory() throws -> URL {
+    func temporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("MacClippyCoreTests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url

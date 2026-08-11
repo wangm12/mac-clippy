@@ -4,6 +4,23 @@ import XCTest
 import MacClippyCore
 import MacClippyPlatform
 
+private final class LockedCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage = 0
+
+    func increment() {
+        lock.lock()
+        storage += 1
+        lock.unlock()
+    }
+
+    var value: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+}
+
 final class MacClippySendableBoundaryTests: XCTestCase {
     func testSnippetLookupSnapshotSupportsConcurrentReplaceAndLookup() {
         let snapshot = MacClippySnippetLookupSnapshot()
@@ -48,17 +65,14 @@ final class MacClippySendableBoundaryTests: XCTestCase {
         }
         XCTAssertEqual(sentinel.pendingCount, 128)
 
-        let matchedLock = NSLock()
-        var matchedCount = 0
+        let matchedCount = LockedCounter()
         DispatchQueue.concurrentPerform(iterations: 128) { index in
             if sentinel.consume(changeCount: base + index) {
-                matchedLock.lock()
-                matchedCount += 1
-                matchedLock.unlock()
+                matchedCount.increment()
             }
         }
 
-        XCTAssertEqual(matchedCount, 128)
+        XCTAssertEqual(matchedCount.value, 128)
         XCTAssertEqual(sentinel.pendingCount, 0)
     }
 

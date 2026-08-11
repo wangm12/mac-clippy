@@ -39,6 +39,7 @@ struct MacClippyHotKeyRecorder: View {
             .buttonStyle(.borderless)
             .foregroundStyle(.secondary)
             .controlSize(.small)
+            .accessibilityLabel("Reset shortcut")
             .help("Reset shortcut")
         }
         .onDisappear {
@@ -99,17 +100,19 @@ struct MacClippyHotKeyRecorder: View {
 
     private func handle(_ event: NSEvent) -> NSEvent? {
         let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
-        handle(keyCode: UInt16(event.keyCode), modifiers: modifiers)
-        return nil
+        let consumed = handle(keyCode: UInt16(event.keyCode), modifiers: modifiers)
+        return consumed ? nil : event
     }
 
-    private func handle(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) {
+    @discardableResult
+    private func handle(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> Bool {
         if keyCode == 53, modifiers.isEmpty {
             stopRecording()
-            return
+            return true
         }
 
-        guard !modifiers.isEmpty else { return }
+        guard !isModifierKeyCode(keyCode) else { return false }
+        guard !modifiers.isEmpty else { return false }
 
         let newDescriptor = MacClippyGlobalHotKeyDescriptor(
             keyCode: UInt32(keyCode),
@@ -119,6 +122,16 @@ struct MacClippyHotKeyRecorder: View {
         MacClippyGlobalHotKeyDescriptor.save(newDescriptor)
         descriptor = newDescriptor
         onChange(newDescriptor)
+        return true
+    }
+
+    private func isModifierKeyCode(_ keyCode: UInt16) -> Bool {
+        [
+            UInt16(kVK_Command), UInt16(kVK_RightCommand),
+            UInt16(kVK_Shift), UInt16(kVK_RightShift),
+            UInt16(kVK_Option), UInt16(kVK_RightOption),
+            UInt16(kVK_Control), UInt16(kVK_RightControl)
+        ].contains(keyCode)
     }
 
     private func carbonModifiers(for modifiers: NSEvent.ModifierFlags) -> UInt32 {
@@ -216,6 +229,10 @@ private final class MacClippyHotKeyEventTap {
                 MacClippyHotKeyNotificationUserInfo.modifierFlags: NSNumber(value: event.flags.rawValue)
             ]
         )
+        if event.flags.isDisjoint(with: [.maskCommand, .maskAlternate, .maskControl, .maskShift]),
+           event.getIntegerValueField(.keyboardEventKeycode) != 53 {
+            return Unmanaged.passUnretained(event)
+        }
         return nil
     }
 }

@@ -38,6 +38,78 @@ final class MacClippyInputLimitTests: XCTestCase {
         XCTAssertTrue(try store.list(limit: 10).isEmpty)
     }
 
+    func testPinboardAndSnippetStoresBoundUserAuthoredPayloads() throws {
+        let key = SymmetricKey(data: Data(repeating: 4, count: 32))
+        let pinboards = try PinboardStore(
+            database: MacClippyDatabase(inMemory: true),
+            deviceKey: key
+        )
+        let oversizedName = String(
+            repeating: "n",
+            count: MacClippyCollectionLimits.maxNameUTF8Bytes + 1
+        )
+        XCTAssertThrowsError(try pinboards.create(name: oversizedName)) { error in
+            XCTAssertEqual(error as? MacClippyStoreError, .inputTooLarge)
+        }
+
+        let oversizedBoard = Pinboard(
+            name: "Large board",
+            itemIDs: (0...MacClippyCollectionLimits.maxPinboardItems).map { _ in .generate() }
+        )
+        XCTAssertThrowsError(try pinboards.update(oversizedBoard)) { error in
+            XCTAssertEqual(error as? MacClippyStoreError, .inputTooLarge)
+        }
+
+        let snippets = try SnippetStore(
+            database: MacClippyDatabase(inMemory: true),
+            deviceKey: key
+        )
+        let oversizedBody = String(
+            repeating: "b",
+            count: MacClippyCollectionLimits.maxSnippetBodyUTF8Bytes + 1
+        )
+        XCTAssertThrowsError(try snippets.create(name: "Large", body: oversizedBody)) { error in
+            XCTAssertEqual(error as? MacClippyStoreError, .inputTooLarge)
+        }
+        let oversizedTrigger = String(
+            repeating: "t",
+            count: MacClippyCollectionLimits.maxSnippetTriggerUTF8Bytes + 1
+        )
+        XCTAssertThrowsError(try snippets.create(name: "Trigger", body: "body", trigger: oversizedTrigger)) { error in
+            XCTAssertEqual(error as? MacClippyStoreError, .inputTooLarge)
+        }
+    }
+
+    func testClipboardStoreBoundsRepresentationMetadata() throws {
+        let limits = MacClippyPasteboardInputLimits(
+            maxUTIBytes: 8,
+            maxRepresentationsPerRecord: 1
+        )
+        let store = try ClipboardStore(
+            database: MacClippyDatabase(inMemory: true),
+            deviceKey: SymmetricKey(data: Data(repeating: 5, count: 32)),
+            inputLimits: limits
+        )
+
+        XCTAssertThrowsError(try store.append(
+            .text("bounded"),
+            representations: [
+                MacClippyClipboardRepresentation(uti: "text", payloadBytes: Data("one".utf8)),
+                MacClippyClipboardRepresentation(uti: "html", payloadBytes: Data("two".utf8))
+            ]
+        )) { error in
+            XCTAssertEqual(error as? MacClippyStoreError, .inputTooLarge)
+        }
+        XCTAssertThrowsError(try store.append(
+            .text("bounded"),
+            representations: [
+                MacClippyClipboardRepresentation(uti: "uti-too-long", payloadBytes: Data("one".utf8))
+            ]
+        )) { error in
+            XCTAssertEqual(error as? MacClippyStoreError, .inputTooLarge)
+        }
+    }
+
     func testTotalRetentionCapRemovesOldestUnpinnedPayloadAndPreservesPinboardItems() throws {
         let key = SymmetricKey(data: Data(repeating: 2, count: 32))
         let store = try ClipboardStore(database: MacClippyDatabase(inMemory: true), deviceKey: key)
@@ -59,7 +131,7 @@ final class MacClippyInputLimitTests: XCTestCase {
 
         XCTAssertThrowsError(try store.body(for: old.id))
         XCTAssertEqual(try store.body(for: protected.id), .image(blobID: protectedBlob, width: 1, height: 1))
-        XCTAssertTrue(blobs.contains(id: protectedBlob))
+        XCTAssertTrue(try blobs.contains(id: protectedBlob))
     }
 
     func testTotalRetentionCapSurfacesUnreadableRecordsInsteadOfSkippingThem() throws {

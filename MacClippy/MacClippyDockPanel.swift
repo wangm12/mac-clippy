@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 final class MacClippyDockPanelContentView: NSView {
     let backdropView: MacClippyDockBackdropView
@@ -24,11 +25,29 @@ final class MacClippyDockPanelContentView: NSView {
 
     override var acceptsFirstResponder: Bool { true }
 
+    // The dock is a nonactivating panel. Accept the first click when the panel
+    // is regaining key status so AppKit does not consume it only to activate
+    // the window; SwiftUI controls should receive that click immediately.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
     override func layout() {
         super.layout()
         backdropView.frame = bounds
         foregroundView.frame = bounds
     }
+}
+
+final class MacClippyDockHostingView: NSHostingView<MacClippyDockView> {
+    // NSHostingView is the actual hit-tested view for most SwiftUI controls,
+    // so the content container's first-mouse policy alone is not sufficient.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+final class MacClippyPreviewHostingView: NSHostingView<MacClippyDockPreviewView> {
+    // Preview is a non-activating panel. Accept the first click so starting a
+    // drag on a freshly shown screenshot does not get consumed by AppKit while
+    // the panel is becoming active.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
 final class MacClippyDockBackdropView: NSView {

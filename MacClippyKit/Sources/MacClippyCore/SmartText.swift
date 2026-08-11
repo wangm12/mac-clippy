@@ -298,7 +298,10 @@ public struct MacClippyCaptureExclusionRules: Sendable, Equatable {
 
     public func shouldExcludeText(_ text: String) -> Bool {
         excludedTextPatterns.contains { pattern in
-            guard let expression = try? NSRegularExpression(pattern: pattern) else { return false }
+            // A persisted pattern can outlive the validation path that wrote
+            // it (for example after a settings migration). Fail closed so a
+            // malformed privacy rule never silently permits capture.
+            guard let expression = try? NSRegularExpression(pattern: pattern) else { return true }
             return expression.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
         }
     }

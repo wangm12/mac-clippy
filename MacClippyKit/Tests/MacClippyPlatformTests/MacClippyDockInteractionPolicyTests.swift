@@ -71,6 +71,28 @@ final class MacClippyDockInteractionPolicyTests: XCTestCase {
         XCTAssertEqual(action(mode: .picker, keyCode: 36, hasCardFocus: false), .consume)
     }
 
+    func testCommandCCopiesFromPreviewAndDetails() {
+        XCTAssertEqual(action(mode: .preview, keyCode: 8, modifiers: .command, hasCardFocus: true), .copy)
+        XCTAssertEqual(action(mode: .details, keyCode: 8, modifiers: .command, hasCardFocus: true), .copy)
+        XCTAssertEqual(action(mode: .details, keyCode: 8, modifiers: .command, hasCardFocus: true, hasTextSelection: true), .native)
+        XCTAssertEqual(action(mode: .preview, keyCode: 8, modifiers: .command), .consume)
+    }
+
+    func testCommandCopyIgnoresNonSemanticEventFlags() {
+        XCTAssertTrue(
+            MacClippyDockKeyRouterPolicy.isCommandCopy(
+                keyCode: 8,
+                modifiers: .init(rawValue: NSEvent.ModifierFlags.command.rawValue | 1 << 8)
+            )
+        )
+        XCTAssertFalse(
+            MacClippyDockKeyRouterPolicy.isCommandCopy(
+                keyCode: 8,
+                modifiers: [.command, .shift]
+            )
+        )
+    }
+
     func testKeyUpIsConsumedByPickerSurfacesAndNativeInSearch() {
         XCTAssertEqual(keyUp(mode: .picker, keyCode: 49), .consume)
         XCTAssertEqual(keyUp(mode: .preview, keyCode: 124), .consume)
@@ -93,6 +115,18 @@ final class MacClippyDockInteractionPolicyTests: XCTestCase {
         XCTAssertEqual(
             action(mode: .picker, keyCode: 51, modifiers: .command, hasMultipleSelection: true),
             .deleteSelection
+        )
+        XCTAssertEqual(
+            action(mode: .picker, keyCode: 51, modifiers: .command, hasCardFocus: true),
+            .deleteSelection
+        )
+        XCTAssertEqual(
+            action(mode: .picker, keyCode: 117, modifiers: .command, hasCardFocus: true),
+            .deleteSelection
+        )
+        XCTAssertEqual(
+            action(mode: .picker, keyCode: 51, modifiers: .command),
+            .native
         )
         XCTAssertEqual(
             action(mode: .picker, keyCode: 35, modifiers: .command, hasMultipleSelection: true),
@@ -165,6 +199,14 @@ final class MacClippyDockInteractionPolicyTests: XCTestCase {
             action(mode: .details, keyCode: 53, hasCardFocus: true, detailsEditing: true),
             .cancelDetailsEdit
         )
+        XCTAssertEqual(
+            action(mode: .details, keyCode: 9, modifiers: [.command, .option], detailsEditing: true),
+            .native
+        )
+        XCTAssertEqual(
+            action(mode: .details, keyCode: 40, modifiers: .command, detailsEditing: true),
+            .native
+        )
     }
 
     func testModalOwnsEscapeButLeavesAllOtherEventsNative() {
@@ -182,7 +224,8 @@ final class MacClippyDockInteractionPolicyTests: XCTestCase {
         hasCardFocus: Bool = false,
         hasMultipleSelection: Bool = false,
         isRepeat: Bool = false,
-        detailsEditing: Bool = false
+        detailsEditing: Bool = false,
+        hasTextSelection: Bool = false
     ) -> MacClippyDockKeyAction {
         MacClippyDockKeyRouterPolicy.action(
             for: .keyDown(
@@ -194,7 +237,8 @@ final class MacClippyDockInteractionPolicyTests: XCTestCase {
             mode: mode,
             hasCardFocus: hasCardFocus,
             hasMultipleSelection: hasMultipleSelection,
-            detailsEditing: detailsEditing
+            detailsEditing: detailsEditing,
+            hasTextSelection: hasTextSelection
         )
     }
 

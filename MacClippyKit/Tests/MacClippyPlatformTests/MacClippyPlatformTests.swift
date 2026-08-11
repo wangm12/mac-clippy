@@ -299,6 +299,9 @@ final class MacClippyPlatformTests: XCTestCase {
         ))
         let observer = PasteboardObserver(reader: reader, pollInterval: 1)
         observer.start { _ in }
+        // start() is deliberately asynchronous so a provider read cannot
+        // block its caller; poll() is the serial-queue barrier for this test.
+        observer.poll()
 
         let readsAfterStart = reader.fullReadCount
         observer.poll()
@@ -334,6 +337,7 @@ final class MacClippyPlatformTests: XCTestCase {
         )
         var changes: [PasteboardChange] = []
         observer.start { changes.append($0) }
+        observer.poll()
 
         reader.change = PasteboardChange(
             changeCount: 2,
@@ -388,6 +392,7 @@ final class MacClippyPlatformTests: XCTestCase {
         )
         var changes: [PasteboardChange] = []
         observer.start { changes.append($0) }
+        observer.poll()
 
         reader.change = PasteboardChange(
             changeCount: 2,

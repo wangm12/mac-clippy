@@ -27,6 +27,12 @@ import MacClippyCore
 // without a database). It never filters content and never drops an ID; every
 // unsupported or unavailable ID is surfaced in the result.
 public enum MacClippyDockMultiPastePolicy {
+    private struct Payload {
+        let id: RecordID
+        let kind: Kind
+        let text: String?
+    }
+
     public enum Kind: Equatable, Sendable {
         case text
         case html
@@ -81,6 +87,33 @@ public enum MacClippyDockMultiPastePolicy {
         kindForID: (RecordID) -> Kind,
         textForID: (RecordID) -> String?
     ) -> Result {
+        resolvePayloads(orderedSelectedIDs.map { id in
+            Payload(id: id, kind: kindForID(id), text: textForID(id))
+        })
+    }
+
+    // Storage-backed callers need to preserve the distinction between a
+    // damaged record (which can be surfaced as an unavailable item) and an
+    // infrastructure failure (which must reach the caller). Keep the original
+    // non-throwing overload for pure policy tests and add this boundary-aware
+    // overload for Runtime.
+    public static func resolveThrowing(
+        orderedSelectedIDs: [RecordID],
+        kindForID: (RecordID) throws -> Kind,
+        textForID: (RecordID) throws -> String?
+    ) throws -> Result {
+        var payloads: [Payload] = []
+        payloads.reserveCapacity(orderedSelectedIDs.count)
+        for id in orderedSelectedIDs {
+            let kind = try kindForID(id)
+            let text = isTextCompatible(kind) ? try textForID(id) : nil
+            payloads.append(Payload(id: id, kind: kind, text: text))
+        }
+        return resolvePayloads(payloads)
+    }
+
+    private static func resolvePayloads(_ payloads: [Payload]) -> Result {
+        let orderedSelectedIDs = payloads.map(\.id)
         guard !orderedSelectedIDs.isEmpty else {
             return .mixed(supportedIDs: [], unsupportedIDs: [], unsupportedKinds: [])
         }
@@ -97,11 +130,12 @@ public enum MacClippyDockMultiPastePolicy {
         var unavailableKinds: [Kind] = []
         var mergedPieces: [String] = []
 
-        for id in orderedSelectedIDs {
-            let kind = kindForID(id)
+        for payload in payloads {
+            let id = payload.id
+            let kind = payload.kind
             if isTextCompatible(kind) {
                 supportedIDs.append(id)
-                if let text = textForID(id) {
+                if let text = payload.text {
                     // A non-nil String — including "" — is a real decodable
                     // payload. Empty real text is a valid empty piece; it is
                     // merged in visual order so nothing is silently dropped.
@@ -125,7 +159,11 @@ public enum MacClippyDockMultiPastePolicy {
         // is told about the kind mismatch first; a mixed selection never
         // pastes a subset regardless.
         if !unsupportedIDs.isEmpty {
-            return .mixed(supportedIDs: supportedIDs, unsupportedIDs: unsupportedIDs, unsupportedKinds: unsupportedKinds)
+            return .mixed(
+                supportedIDs: supportedIDs,
+                unsupportedIDs: unsupportedIDs,
+                unsupportedKinds: unsupportedKinds
+            )
         }
         if !unavailableIDs.isEmpty {
             return .textUnavailable(

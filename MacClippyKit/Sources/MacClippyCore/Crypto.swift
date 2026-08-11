@@ -10,7 +10,7 @@ public struct MacClippyEnvelope: Sendable, Equatable {
     }
 }
 
-public enum MacClippyCipherError: Error, Equatable {
+public enum MacClippyCipherError: Error, Equatable, Sendable {
     case invalidEnvelope
     case sealFailed
     case openFailed
@@ -30,10 +30,21 @@ public enum MacClippyCipher {
     }
 
     public static func open(_ envelope: MacClippyEnvelope, with key: SymmetricKey) throws -> Data {
+        let box: AES.GCM.SealedBox
         do {
-            let box = try AES.GCM.SealedBox(combined: envelope.combined)
+            box = try AES.GCM.SealedBox(combined: envelope.combined)
+        } catch {
+            // Parsing does not depend on the key. This is safe to classify as
+            // a malformed stored envelope, unlike authentication failure
+            // below, which can also mean the device key is wrong.
+            throw MacClippyCipherError.invalidEnvelope
+        }
+        do {
             return try AES.GCM.open(box, using: key)
         } catch {
+            // Do not collapse authentication failure into per-record
+            // corruption: a wrong or unavailable key would otherwise make
+            // healthy history look empty and get silently skipped.
             throw MacClippyCipherError.openFailed
         }
     }
@@ -48,7 +59,7 @@ public protocol MacClippyKeychainBackend: AnyObject {
     func delete(_ account: String) throws
 }
 
-public enum MacClippyKeychainError: Error {
+public enum MacClippyKeychainError: Error, Sendable {
     case read(OSStatus)
     case write(OSStatus)
     case delete(OSStatus)
@@ -138,11 +149,12 @@ public final class MacClippyDeviceKey {
         self.keychain = keychain
     }
 
-    public func deviceKey() throws -> SymmetricKey {
+    public func deviceKey(requireExistingStorage: Bool = false) throws -> SymmetricKey {
         if let data = try keychain.get(Self.account) { return SymmetricKey(data: data) }
         Self.lock.lock()
         defer { Self.lock.unlock() }
         if let data = try keychain.get(Self.account) { return SymmetricKey(data: data) }
+        guard !requireExistingStorage else { throw MacClippyKeychainError.missingKey }
         let key = SymmetricKey(size: .bits256)
         let data = key.withUnsafeBytes { Data($0) }
         try keychain.set(data, for: Self.account)

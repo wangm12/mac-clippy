@@ -2,8 +2,13 @@
 set -euo pipefail
 
 APP_PATH="${1:-}"
+EXPECTED_TEAM_ID="${EXPECTED_TEAM_ID:-}"
 if [[ -z "${APP_PATH}" || ! -d "${APP_PATH}" ]]; then
   echo "usage: $0 /path/to/MacClippy.app" >&2
+  exit 2
+fi
+if [[ -z "${EXPECTED_TEAM_ID}" ]]; then
+  echo "error: set EXPECTED_TEAM_ID to the release team's 10-character identifier" >&2
   exit 2
 fi
 
@@ -19,8 +24,13 @@ if ! grep -q 'Authority=Developer ID Application:' <<<"${SIGNATURE_DETAILS}"; th
   echo "error: application is not signed by a Developer ID Application identity" >&2
   exit 1
 fi
-if ! grep -q 'TeamIdentifier=' <<<"${SIGNATURE_DETAILS}"; then
+team_identifier="$(grep -Eo 'TeamIdentifier=[A-Z0-9]+' <<<"${SIGNATURE_DETAILS}" | head -1 | cut -d= -f2)"
+if [[ -z "${team_identifier}" ]]; then
   echo "error: application signature has no TeamIdentifier" >&2
+  exit 1
+fi
+if [[ "${team_identifier}" != "${EXPECTED_TEAM_ID}" ]]; then
+  echo "error: application TeamIdentifier ${team_identifier} does not match EXPECTED_TEAM_ID" >&2
   exit 1
 fi
 if ! grep -Eiq 'flags=.*runtime' <<<"${SIGNATURE_DETAILS}"; then
@@ -33,7 +43,10 @@ codesign --verify --deep --strict --verbose=2 "${APP_PATH}"
 
 ENTITLEMENTS_FILE="$(mktemp -t macclippy-entitlements.XXXXXX)"
 trap 'rm -f "${ENTITLEMENTS_FILE}"' EXIT
-codesign -d --entitlements :- "${APP_PATH}" >"${ENTITLEMENTS_FILE}" 2>/dev/null || true
+if ! codesign -d --entitlements :- "${APP_PATH}" >"${ENTITLEMENTS_FILE}" 2>/dev/null; then
+  echo "error: could not read signed entitlements" >&2
+  exit 1
+fi
 if plutil -extract com.apple.security.get-task-allow raw -o - "${ENTITLEMENTS_FILE}" 2>/dev/null | grep -q '^true$'; then
   echo "error: release application contains com.apple.security.get-task-allow" >&2
   exit 1
@@ -42,7 +55,6 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 "${SCRIPT_DIR}/verify-build-metadata.sh" "${APP_PATH}"
 
-echo "== Gatekeeper assessment =="
-spctl --assess --type execute --verbose=4 "${APP_PATH}"
-
-echo "Signature, hardened-runtime inputs, and Gatekeeper assessment passed."
+# Gatekeeper assessment belongs after notarization/stapling. A signed but
+# not-yet-notarized app is expected to fail this check on some release hosts.
+echo "Signature, hardened-runtime inputs, and bundle metadata passed."

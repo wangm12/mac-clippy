@@ -1,13 +1,15 @@
 import AppKit
 import AVFoundation
 import AVKit
+import MacClippyCore
+import MacClippyPlatform
 import SwiftUI
 import UniformTypeIdentifiers
 
 enum MacClippyDockPreviewContent {
     case loading
-    case text(String)
-    case image(Data)
+    case text(id: RecordID, value: String)
+    case image(id: RecordID, data: Data)
     case video(URL)
     case files([URL])
     case error
@@ -23,13 +25,15 @@ struct MacClippyDockPreviewMetadata: Equatable {
     let sourceAccent: NSColor
     let relativeTime: String?
     let characterCount: Int
+    let ocrText: String?
 
     static let unknown = MacClippyDockPreviewMetadata(
         sourceName: "Unknown",
         sourceIcon: nil,
         sourceAccent: NSColor.gray,
         relativeTime: nil,
-        characterCount: 0
+        characterCount: 0,
+        ocrText: nil
     )
 }
 
@@ -62,23 +66,6 @@ enum MacClippyDockPreviewContentPolicy {
     }
 }
 
-private enum MacClippyPreviewImageDownsampler {
-    static func data(_ data: Data, maxPixelSize: Int) -> Data? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
-        let options: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceShouldCacheImmediately: true
-        ]
-        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
-        let output = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(output, UTType.png.identifier as CFString, 1, nil) else { return nil }
-        CGImageDestinationAddImage(destination, image, nil)
-        return CGImageDestinationFinalize(destination) ? output as Data : nil
-    }
-}
-
 // Internal navigation direction for the preview header's prev/next chevrons.
 // The controller wires this callback to the single helper that moves model
 // focus and refreshes the preview, so the chevrons and the keyboard arrows
@@ -91,22 +78,39 @@ enum MacClippyPreviewNavigationDirection: Equatable, Sendable {
 struct MacClippyDockPreviewView: View {
     let content: MacClippyDockPreviewContent
     let metadata: MacClippyDockPreviewMetadata
+    let reduceMotion: Bool
     let onNavigate: ((MacClippyPreviewNavigationDirection) -> Void)?
     let onCopy: (() -> Void)?
+    let recognizeOCRLayout: (@Sendable (CGImage) async throws -> MacClippyOCRResult)?
+    let onCopyText: ((String) -> Void)?
     let onDismiss: (() -> Void)?
+
+    @State private var imageOCRText: String?
+    @State private var selectedImageText: String?
+
+    private let contentIdentity: String
 
     init(
         content: MacClippyDockPreviewContent,
         metadata: MacClippyDockPreviewMetadata = .unknown,
+        reduceMotion: Bool = false,
         onNavigate: ((MacClippyPreviewNavigationDirection) -> Void)? = nil,
         onCopy: (() -> Void)? = nil,
+        recognizeOCRLayout: (@Sendable (CGImage) async throws -> MacClippyOCRResult)? = nil,
+        onCopyText: ((String) -> Void)? = nil,
         onDismiss: (() -> Void)? = nil
     ) {
         self.content = content
         self.metadata = metadata
+        self.reduceMotion = reduceMotion
         self.onNavigate = onNavigate
         self.onCopy = onCopy
+        self.recognizeOCRLayout = recognizeOCRLayout
+        self.onCopyText = onCopyText
         self.onDismiss = onDismiss
+        contentIdentity = content.identity
+        _imageOCRText = State(initialValue: nil)
+        _selectedImageText = State(initialValue: nil)
     }
 
     var body: some View {
@@ -119,6 +123,7 @@ struct MacClippyDockPreviewView: View {
             Divider().opacity(0.5)
 
             contentView
+                .id(contentIdentity)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .padding(.horizontal, 18)
                 .padding(.vertical, 14)
@@ -137,6 +142,10 @@ struct MacClippyDockPreviewView: View {
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+        }
+        .onChange(of: contentIdentity) { _, _ in
+            imageOCRText = nil
+            selectedImageText = nil
         }
     }
 
@@ -173,7 +182,7 @@ struct MacClippyDockPreviewView: View {
                 .foregroundStyle(.primary)
                 .lineLimit(1)
             if let time = metadata.relativeTime {
-                Text("• \(time) ago")
+                Text("• \(MacClippyDockTimestampPolicy.displayLabel(for: time))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -189,6 +198,27 @@ struct MacClippyDockPreviewView: View {
                 .buttonStyle(.plain)
                 .keyboardShortcut("c", modifiers: .command)
             }
+            if let onCopyText,
+               let imageText = MacClippyDockPreviewTextCopyPolicy.textToCopy(
+                   selectedText: selectedImageText,
+                   fullText: imageOCRText ?? metadata.ocrText
+               ) {
+                let copyingSelection = MacClippyDockPreviewTextCopyPolicy.isSelection(
+                    selectedText: selectedImageText
+                )
+                Button {
+                    onCopyText(imageText)
+                } label: {
+                    Label(
+                        copyingSelection ? "Copy Selection" : "Copy Text",
+                        systemImage: copyingSelection ? "text.cursor" : "text.cursor"
+                    )
+                        .font(.caption.weight(.semibold))
+                        .labelStyle(.titleAndIcon)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(copyingSelection ? "Copy selected text" : "Copy recognized text")
+            }
             Button {
                 onDismiss?()
             } label: {
@@ -198,6 +228,7 @@ struct MacClippyDockPreviewView: View {
                     .frame(width: 22, height: 22)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Close preview")
             .help("Esc to close")
         }
     }
@@ -224,7 +255,9 @@ struct MacClippyDockPreviewView: View {
             ProgressView()
                 .controlSize(.small)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case let .text(value):
+                .accessibilityLabel("Loading preview")
+        case .text:
+            let value = content.textValue ?? ""
             // Use NSTextView for both modes. It keeps long clipboard payloads
             // in AppKit's native text layout path instead of asking SwiftUI to
             // repeatedly re-measure one very large Text during preview.
@@ -243,10 +276,24 @@ struct MacClippyDockPreviewView: View {
                     foregroundColor: .labelColor
                 )
             }
-        case let .image(data):
-            MacClippyDockPreviewImage(data: data)
+        case let .image(id, data):
+            MacClippyDockPreviewImage(
+                id: id,
+                data: data,
+                storedOCRText: metadata.ocrText,
+                recognizeOCRLayout: recognizeOCRLayout,
+                onOCRResult: { result in
+                    imageOCRText = result?.fullText
+                },
+                onSelectionChanged: { selectedText in
+                    selectedImageText = selectedText
+                },
+                onCopySelection: { selectedText in
+                    onCopyText?(selectedText)
+                }
+            )
         case let .video(url):
-            MacClippyVideoPreview(url: url)
+            MacClippyVideoPreview(url: url, reduceMotion: reduceMotion)
         case let .files(urls):
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
@@ -262,133 +309,7 @@ struct MacClippyDockPreviewView: View {
             }
         case .error:
             unavailableView
-    }
-}
-
-private struct MacClippyDockPreviewImage: View {
-    let data: Data
-
-    @State private var image: NSImage?
-    @State private var failed = false
-
-    var body: some View {
-        Group {
-            if let image {
-                Image(nsImage: image)
-                    .resizable()
-                    .interpolation(.high)
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if failed {
-                Image(systemName: "photo")
-                    .font(.largeTitle)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ProgressView()
-                    .controlSize(.small)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
         }
-        .task(id: data) {
-            image = nil
-            failed = false
-            let sourceData = data
-            let renderedData = await Task.detached(priority: .userInitiated) {
-                MacClippyPreviewImageDownsampler.data(sourceData, maxPixelSize: 1_600) ?? sourceData
-            }.value
-            guard !Task.isCancelled else { return }
-            guard let decoded = NSImage(data: renderedData) else {
-                failed = true
-                return
-            }
-            image = decoded
-        }
-    }
-}
-
-private struct MacClippyDockPreviewFileIcon: View {
-    let url: URL
-
-    @State private var icon: NSImage?
-
-    var body: some View {
-        Group {
-            if let icon {
-                Image(nsImage: icon)
-                    .resizable()
-            } else {
-                Image(systemName: "doc")
-                    .resizable()
-                    .padding(3)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .frame(width: 24, height: 24)
-        .task(id: url) {
-            let path = url.path
-            let iconData = await Task.detached(priority: .utility) {
-                NSWorkspace.shared.icon(forFile: path).tiffRepresentation
-            }.value
-            guard !Task.isCancelled else { return }
-            icon = iconData.flatMap(NSImage.init(data:))
-        }
-    }
-}
-
-private struct MacClippyDockPreviewTextView: NSViewRepresentable {
-    let text: String
-    let monospaced: Bool
-    let foregroundColor: NSColor
-
-    func makeNSView(context: Context) -> NSScrollView {
-        let textView = NSTextView(frame: .zero)
-        textView.isEditable = false
-        textView.isSelectable = true
-        textView.isRichText = false
-        textView.usesFontPanel = false
-        textView.drawsBackground = false
-        textView.textContainerInset = NSSize(width: 8, height: 8)
-        textView.textContainer?.lineFragmentPadding = 0
-        textView.textContainer?.widthTracksTextView = true
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.autoresizingMask = [.width]
-        textView.minSize = NSSize(width: 0, height: 0)
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        textView.layoutManager?.allowsNonContiguousLayout = true
-
-        let scrollView = NSScrollView(frame: .zero)
-        scrollView.drawsBackground = false
-        scrollView.borderType = .noBorder
-        scrollView.hasVerticalScroller = true
-        scrollView.scrollerStyle = .overlay
-        scrollView.documentView = textView
-        update(textView, with: text)
-        return scrollView
-    }
-
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? NSTextView else { return }
-        if textView.string != text {
-            update(textView, with: text)
-        }
-    }
-
-    private func update(_ textView: NSTextView, with text: String) {
-        let font = monospaced
-            ? NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-            : NSFont.systemFont(ofSize: NSFont.systemFontSize)
-        textView.textStorage?.setAttributedString(
-            NSAttributedString(
-                string: text,
-                attributes: [
-                    .font: font,
-                    .foregroundColor: foregroundColor
-                ]
-            )
-        )
-    }
 }
 
     private var unavailableView: some View {
@@ -400,6 +321,8 @@ private struct MacClippyDockPreviewTextView: NSViewRepresentable {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Preview unavailable")
     }
 
     // Small native chevron button. The tap fires onNavigate; navigation itself
@@ -428,6 +351,8 @@ private struct MacClippyDockPreviewTextView: NSViewRepresentable {
 // the store, so paste/storage behavior is unaffected.
 private struct MacClippyVideoPreview: View {
     let url: URL
+    let reduceMotion: Bool
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @State private var player: AVPlayer?
 
     var body: some View {
@@ -447,7 +372,17 @@ private struct MacClippyVideoPreview: View {
             player?.pause()
             let next = AVPlayer(url: url)
             player = next
-            next.play()
+            if !accessibilityReduceMotion && !reduceMotion {
+                next.play()
+            }
+        }
+        .onChange(of: accessibilityReduceMotion) { _, reduceMotion in
+            guard let player else { return }
+            if reduceMotion || accessibilityReduceMotion {
+                player.pause()
+            } else {
+                player.play()
+            }
         }
         .onDisappear {
             player?.pause()

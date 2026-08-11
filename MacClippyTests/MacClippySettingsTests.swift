@@ -1,9 +1,34 @@
+import AppKit
 import XCTest
 
 @testable import MacClippy
 import MacClippyCore
 
+private final class MacClippyBooleanStateBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [Bool] = []
+
+    func append(_ value: Bool) {
+        lock.lock()
+        values.append(value)
+        lock.unlock()
+    }
+
+    var snapshot: [Bool] {
+        lock.lock()
+        defer { lock.unlock() }
+        return values
+    }
+}
+
 final class MacClippySettingsTests: XCTestCase {
+    private struct PresentationCase {
+        let hideMenuBar: Bool
+        let hideDock: Bool
+        let showsMenuBar: Bool
+        let policy: NSApplication.ActivationPolicy
+    }
+
     func testPrivacyNoticeIsShownOnceAndCanBeAcknowledged() throws {
         let suiteName = "MacClippyPrivacyNoticeTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -66,7 +91,7 @@ final class MacClippySettingsTests: XCTestCase {
     func testHotKeyRecordingNotificationUsesActiveState() {
         let activeExpectation = expectation(description: "recording starts")
         let inactiveExpectation = expectation(description: "recording stops")
-        var states: [Bool] = []
+        let states = MacClippyBooleanStateBox()
         let observer = NotificationCenter.default.addObserver(
             forName: .macClippyHotKeyRecordingChanged,
             object: nil,
@@ -92,7 +117,7 @@ final class MacClippySettingsTests: XCTestCase {
         )
 
         wait(for: [activeExpectation, inactiveExpectation], timeout: 1)
-        XCTAssertEqual(states, [true, false])
+        XCTAssertEqual(states.snapshot, [true, false])
     }
 
     func testHotKeyRecordingOnlyRestoresPreviouslyRegisteredHotKey() {
@@ -135,5 +160,41 @@ final class MacClippySettingsTests: XCTestCase {
             MacClippyPresentationPolicy.activationPolicy(hideDockIcon: true),
             .accessory
         )
+    }
+
+    func testPresentationPolicyCoversAllMenuBarAndDockCombinations() {
+        let cases = [
+            PresentationCase(hideMenuBar: false, hideDock: false, showsMenuBar: true, policy: .regular),
+            PresentationCase(hideMenuBar: false, hideDock: true, showsMenuBar: true, policy: .accessory),
+            PresentationCase(hideMenuBar: true, hideDock: false, showsMenuBar: false, policy: .regular),
+            PresentationCase(hideMenuBar: true, hideDock: true, showsMenuBar: false, policy: .accessory)
+        ]
+
+        for item in cases {
+            let state = MacClippyPresentationPolicy.state(
+                hideFromMenuBar: item.hideMenuBar,
+                hideDockIcon: item.hideDock
+            )
+            XCTAssertEqual(state.showsMenuBarIcon, item.showsMenuBar)
+            XCTAssertEqual(state.activationPolicy, item.policy)
+        }
+    }
+
+    @MainActor
+    func testSettingsWindowRegisteredAfterBringToFrontRequestIsShown() {
+        let coordinator = MacClippySettingsWindowCoordinator()
+        coordinator.bringToFront()
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 700, height: 760),
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        defer { window.close() }
+
+        coordinator.register(window)
+
+        XCTAssertTrue(window.isVisible)
     }
 }

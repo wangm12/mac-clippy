@@ -43,21 +43,41 @@ public final class MacClippySnippetLookupSnapshot: @unchecked Sendable {
         defer { lock.unlock() }
         return bodiesByTrigger[trigger]
     }
+
+    public func remove(trigger: String?) {
+        guard let trigger, !trigger.isEmpty else { return }
+        lock.lock()
+        bodiesByTrigger.removeValue(forKey: trigger)
+        lock.unlock()
+    }
 }
 
-public final class MacClippySnippetExpander {
+// AppKit/CGEvent resources are owned by the main-thread lifecycle boundary;
+// the lifecycle lock protects the small state read by the event-tap callback.
+public final class MacClippySnippetExpander: @unchecked Sendable {
     public typealias Lookup = (String) -> String?
 
     private static let eventsOfInterest: CGEventMask = 1 << CGEventType.keyDown.rawValue
 
     private let modeProvider: () -> MacClippySnippetExpansionMode
     private let injector: MacClippyPasteInjector
+    private let lifecycleLock = NSLock()
     private var planner: MacClippySnippetExpansionPlanner
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private var installed = false
+    private var startError: MacClippySnippetExpanderError?
+    // Invalidates expansion plans that were queued by the event-tap callback
+    // but have not reached the main queue yet.
+    private var lifecycleGeneration: UInt64 = 0
 
-    public private(set) var isInstalled = false
-    public private(set) var lastStartError: MacClippySnippetExpanderError?
+    public var isInstalled: Bool {
+        withLifecycleLock { installed }
+    }
+
+    public var lastStartError: MacClippySnippetExpanderError? {
+        withLifecycleLock { startError }
+    }
 
     public init(
         modeProvider: @escaping () -> MacClippySnippetExpansionMode = { MacClippySnippetExpansionSettings.load() },
@@ -71,10 +91,35 @@ public final class MacClippySnippetExpander {
 
     @discardableResult
     public func start() -> Bool {
-        guard !isInstalled else { return true }
+        // Event taps and their CFRunLoop sources are AppKit lifecycle
+        // resources. Runtime normally calls this from the main actor, but the
+        // public platform API is also used by tests and permission refreshes;
+        // make the executor boundary explicit instead of relying on callers.
+        if Thread.isMainThread {
+            return startOnMainThread()
+        }
+        return DispatchQueue.main.sync { [self] in
+            startOnMainThread()
+        }
+    }
+
+    private func startOnMainThread() -> Bool {
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+
+        // Re-read the mode while holding the same lock used by install and
+        // uninstall. This closes the preference-change window where a stale
+        // enabled check could install an event tap after the user disabled
+        // Snippets.
+        if modeProvider() == .disabled {
+            stopLocked()
+            startError = nil
+            return true
+        }
+        guard !installed else { return true }
 
         guard injector.canInjectAutomatically else {
-            lastStartError = .accessibilityUnavailable
+            startError = .accessibilityUnavailable
             MacClippyLog.record(
                 category: .permission,
                 code: .permissionUnavailable,
@@ -86,7 +131,7 @@ public final class MacClippySnippetExpander {
         }
 
         guard CGPreflightListenEventAccess() else {
-            lastStartError = .inputMonitoringUnavailable
+            startError = .inputMonitoringUnavailable
             MacClippyLog.record(
                 category: .permission,
                 code: .permissionUnavailable,
@@ -112,7 +157,7 @@ public final class MacClippySnippetExpander {
             callback: callback,
             userInfo: context
         ) else {
-            lastStartError = .eventTapUnavailable
+            startError = .eventTapUnavailable
             MacClippyLog.record(
                 category: .permission,
                 code: .permissionUnavailable,
@@ -125,7 +170,7 @@ public final class MacClippySnippetExpander {
 
         guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0) else {
             CFMachPortInvalidate(eventTap)
-            lastStartError = .runLoopSourceUnavailable
+            startError = .runLoopSourceUnavailable
             MacClippyLog.record(
                 category: .hotkey,
                 code: .hotkeyRegistrationFailed,
@@ -141,14 +186,31 @@ public final class MacClippySnippetExpander {
         CGEvent.tapEnable(tap: eventTap, enable: true)
         self.eventTap = eventTap
         runLoopSource = source
-        isInstalled = true
-        lastStartError = nil
+        installed = true
+        startError = nil
         return true
     }
 
     public func stop() {
+        if Thread.isMainThread {
+            stopOnMainThread()
+            return
+        }
+        DispatchQueue.main.sync { [self] in
+            stopOnMainThread()
+        }
+    }
+
+    private func stopOnMainThread() {
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+        stopLocked()
+    }
+
+    private func stopLocked() {
+        lifecycleGeneration &+= 1
         planner.reset()
-        guard isInstalled else { return }
+        guard installed else { return }
 
         if let runLoopSource {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
@@ -159,7 +221,7 @@ public final class MacClippySnippetExpander {
         }
         runLoopSource = nil
         eventTap = nil
-        isInstalled = false
+        installed = false
     }
 
     deinit {
@@ -167,6 +229,9 @@ public final class MacClippySnippetExpander {
     }
 
     private func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let eventTap {
                 CGEvent.tapEnable(tap: eventTap, enable: true)
@@ -185,6 +250,7 @@ public final class MacClippySnippetExpander {
         let rawString = String(characters.prefix(actualLength).compactMap { Unicode.Scalar($0).map(Character.init) })
         let typedString = rawString.isEmpty && keyCode == UInt16(kVK_Tab) ? "\t" : rawString
         guard !typedString.isEmpty else { return Unmanaged.passUnretained(event) }
+        let generation = lifecycleGeneration
 
         let flags = event.flags
         let hasDisqualifyingModifiers = flags.contains(.maskCommand)
@@ -207,7 +273,7 @@ public final class MacClippySnippetExpander {
             }
 
             DispatchQueue.main.async { [weak self] in
-                self?.expand(using: plan)
+                self?.expand(using: plan, generation: generation)
             }
             return plan.suppressCurrentEvent ? nil : Unmanaged.passUnretained(event)
         }
@@ -215,7 +281,19 @@ public final class MacClippySnippetExpander {
         return Unmanaged.passUnretained(event)
     }
 
-    private func expand(using plan: MacClippySnippetExpansionPlan) {
+    private func withLifecycleLock<T>(_ body: () -> T) -> T {
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+        return body()
+    }
+
+    private func expand(using plan: MacClippySnippetExpansionPlan, generation: UInt64) {
+        let canExpand = withLifecycleLock {
+            lifecycleGeneration == generation
+                && installed
+                && modeProvider() != .disabled
+        }
+        guard canExpand, injector.canInjectAutomatically else { return }
         _ = injector.inject(text: plan.body) { [weak self] in
             guard let self else { return }
             for _ in 0 ..< plan.charactersToDelete {

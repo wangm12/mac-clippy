@@ -1,4 +1,5 @@
 import AppKit
+import Foundation
 import SwiftUI
 
 struct MacClippySourceRGB: Equatable {
@@ -120,7 +121,18 @@ enum MacClippySourceAppResolver {
         }
     }
 
-    private static let cache = NSCache<NSString, CacheEntry>()
+    private static let cache = Cache()
+
+    private static let resolutionQueue = DispatchQueue(
+        label: "com.macallyouneed.macclippy.source-app-resolution",
+        qos: .utility,
+        attributes: .concurrent
+    )
+    private static let inFlightLock = NSLock()
+    // Access is serialized by inFlightLock; `nonisolated(unsafe)` documents
+    // that this is an intentional lock-protected boundary for the utility
+    // resolution queue rather than an actor-owned UI state value.
+    nonisolated(unsafe) private static var inFlight = Set<String>()
 
     static func presentation(for bundleIdentifier: String?) -> MacClippySourceAppPresentation {
         guard let bundleIdentifier, !bundleIdentifier.isEmpty else {
@@ -128,13 +140,35 @@ enum MacClippySourceAppResolver {
         }
 
         let key = bundleIdentifier as NSString
-        if let cached = cache.object(forKey: key) {
+        if let cached = cache.object(for: key) {
             return cached.presentation
         }
 
-        let presentation = resolve(bundleIdentifier: bundleIdentifier)
-        cache.setObject(CacheEntry(presentation), forKey: key)
-        return presentation
+        scheduleResolution(for: bundleIdentifier)
+        return .unknown
+    }
+
+    private static func scheduleResolution(for bundleIdentifier: String) {
+        inFlightLock.lock()
+        guard inFlight.insert(bundleIdentifier).inserted else {
+            inFlightLock.unlock()
+            return
+        }
+        inFlightLock.unlock()
+
+        resolutionQueue.async {
+            let presentation = resolve(bundleIdentifier: bundleIdentifier)
+            cache.setObject(CacheEntry(presentation), forKey: bundleIdentifier)
+            inFlightLock.lock()
+            inFlight.remove(bundleIdentifier)
+            inFlightLock.unlock()
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: .macClippySourceAppPresentationDidResolve,
+                    object: bundleIdentifier
+                )
+            }
+        }
     }
 
     private static func resolve(bundleIdentifier: String) -> MacClippySourceAppPresentation {
@@ -185,6 +219,28 @@ enum MacClippySourceAppResolver {
         }
         return pixels
     }
+
+    private final class Cache: @unchecked Sendable {
+        private let storage: NSCache<NSString, CacheEntry> = {
+            let storage = NSCache<NSString, CacheEntry>()
+            storage.countLimit = 128
+            return storage
+        }()
+
+        func object(for key: NSString) -> CacheEntry? {
+            storage.object(forKey: key)
+        }
+
+        func setObject(_ entry: CacheEntry, forKey key: String) {
+            storage.setObject(entry, forKey: key as NSString)
+        }
+    }
+}
+
+extension Notification.Name {
+    static let macClippySourceAppPresentationDidResolve = Notification.Name(
+        "MacClippy.sourceAppPresentationDidResolve"
+    )
 }
 
 private extension String {

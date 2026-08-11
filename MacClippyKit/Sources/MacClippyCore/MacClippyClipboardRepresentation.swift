@@ -80,6 +80,25 @@ public struct MacClippyClipboardRepresentation: Codable, Equatable, Sendable {
 
 public typealias ClipboardRepresentation = MacClippyClipboardRepresentation
 
+public struct MacClippyClipboardRepresentationMetadata: Sendable, Equatable {
+    public let uti: String
+    public let payloadState: MacClippyClipboardRepresentationPayloadState
+    public let inlineByteCount: Int
+    public let blobID: String?
+
+    public init(
+        uti: String,
+        payloadState: MacClippyClipboardRepresentationPayloadState,
+        inlineByteCount: Int,
+        blobID: String?
+    ) {
+        self.uti = uti
+        self.payloadState = payloadState
+        self.inlineByteCount = max(0, inlineByteCount)
+        self.blobID = blobID
+    }
+}
+
 // Snapshot of every representation retained for a single clipboard record.
 // Codable so the ClipboardStore can seal the whole envelope once and keep the
 // migration story identical to the existing single-payload records.

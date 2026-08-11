@@ -58,10 +58,14 @@ final class MacClippyPasteboardWriteSentinelTests: XCTestCase {
     func testInjectorWithSentinelSuppressesRecaptureViaObserver() {
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("MacClippySentinelObserverTests-\(UUID().uuidString)"))
         let sentinel = MacClippyPasteboardWriteSentinel()
-        let reader = SystemPasteboardReader(pasteboard: pasteboard, sourceAppBundleID: { "com.macallyouneed.macclippy" })
+        let reader = SystemPasteboardReader(
+            pasteboard: pasteboard,
+            sourceAppBundleID: { "com.macallyouneed.macclippy" }
+        )
         let observer = PasteboardObserver(reader: reader, writeSentinel: sentinel, pollInterval: 1)
         var capturedChanges: [PasteboardChange] = []
         observer.start { capturedChanges.append($0) }
+        observer.poll()
 
         let injector = MacClippyPasteInjector(pasteboard: pasteboard, isProcessTrusted: { false }, writeSentinel: sentinel)
 
@@ -88,10 +92,14 @@ final class MacClippyPasteboardWriteSentinelTests: XCTestCase {
 
     func testInjectorWithoutSentinelDoesNotSuppressRecapture() {
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("MacClippyNoSentinelTests-\(UUID().uuidString)"))
-        let reader = SystemPasteboardReader(pasteboard: pasteboard, sourceAppBundleID: { "com.macallyouneed.macclippy" })
+        let reader = SystemPasteboardReader(
+            pasteboard: pasteboard,
+            sourceAppBundleID: { "com.macallyouneed.macclippy" }
+        )
         let observer = PasteboardObserver(reader: reader, pollInterval: 1)
         var capturedChanges: [PasteboardChange] = []
         observer.start { capturedChanges.append($0) }
+        observer.poll()
 
         let injector = MacClippyPasteInjector(pasteboard: pasteboard, isProcessTrusted: { false })
 
@@ -99,6 +107,37 @@ final class MacClippyPasteboardWriteSentinelTests: XCTestCase {
         observer.poll()
         XCTAssertEqual(capturedChanges.count, 1, "without a sentinel the injector write is recaptured")
 
+        observer.stop()
+    }
+
+    func testHistoryCopyWithSentinelIsRecapturedByObserver() {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("MacClippyHistoryCopyTests-\(UUID().uuidString)"))
+        let sentinel = MacClippyPasteboardWriteSentinel()
+        let reader = SystemPasteboardReader(
+            pasteboard: pasteboard,
+            sourceAppBundleID: { "com.macallyouneed.macclippy" }
+        )
+        let observer = PasteboardObserver(reader: reader, writeSentinel: sentinel, pollInterval: 1)
+        var capturedChanges: [PasteboardChange] = []
+        observer.start { capturedChanges.append($0) }
+        observer.poll()
+
+        let injector = MacClippyPasteInjector(
+            pasteboard: pasteboard,
+            isProcessTrusted: { false },
+            writeSentinel: sentinel
+        )
+
+        XCTAssertTrue(injector.prepareTextForHistory("OCR text"))
+        XCTAssertEqual(sentinel.pendingCount, 0, "history copies must not register an internal-write token")
+
+        observer.poll()
+
+        XCTAssertEqual(capturedChanges.count, 1)
+        XCTAssertEqual(
+            capturedChanges.first?.items.first?.string(forType: NSPasteboard.PasteboardType.string.rawValue),
+            "OCR text"
+        )
         observer.stop()
     }
 }

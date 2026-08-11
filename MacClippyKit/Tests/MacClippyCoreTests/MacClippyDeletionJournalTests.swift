@@ -25,7 +25,7 @@ final class MacClippyDeletionJournalTests: XCTestCase {
                 )
             ]
         )
-        defer { try? FileManager.default.removeItem(at: blobStore.encryptedURL(id: "0").deletingLastPathComponent()) }
+        defer { try? FileManager.default.removeItem(at: try blobStore.encryptedURL(id: "0").deletingLastPathComponent()) }
 
         let journal = try XCTUnwrap(store.beginDeletion(ids: [meta.id]))
         XCTAssertEqual(journal.recordIDs, [meta.id])
@@ -63,6 +63,24 @@ final class MacClippyDeletionJournalTests: XCTestCase {
         XCTAssertEqual(try store.pendingDeletions().first?.recordIDs, [meta.id])
 
         try store.completeDeletion(operationID: journal.operationID)
+        XCTAssertTrue(try store.pendingDeletions().isEmpty)
+    }
+
+    func testDeletionJournalFailsClosedWhenStoredKindDisagreesWithEnvelope() throws {
+        let database = try MacClippyDatabase(inMemory: true)
+        let store = try ClipboardStore(database: database, deviceKey: testKey())
+        let meta = try store.append(.image(blobID: "legacy-primary", width: 1, height: 1))
+
+        try database.queue.write { connection in
+            try connection.execute(
+                sql: "UPDATE clipboard_records SET content_kind = ? WHERE id = ?",
+                arguments: [MacClippyContentKind.text.rawValue, meta.id.rawValue]
+            )
+        }
+
+        XCTAssertThrowsError(try store.beginDeletion(ids: [meta.id])) { error in
+            XCTAssertEqual(error as? MacClippyStoreError, .invalidStoredRecord)
+        }
         XCTAssertTrue(try store.pendingDeletions().isEmpty)
     }
 

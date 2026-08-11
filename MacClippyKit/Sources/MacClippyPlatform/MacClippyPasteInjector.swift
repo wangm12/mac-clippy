@@ -20,6 +20,8 @@ public final class MacClippyPasteInjector {
     private let isProcessTrusted: () -> Bool
     private let postEvents: (CGEvent, CGEvent) -> Void
     private let writeSentinel: MacClippyPasteboardWriteSentinel?
+    private let prepareContent: (MacClippyPasteboardContent, NSPasteboard) -> Bool
+    private let operationLock = NSLock()
 
     public init(
         pasteboard: NSPasteboard = .general,
@@ -28,12 +30,14 @@ public final class MacClippyPasteInjector {
             keyDown.post(tap: .cghidEventTap)
             keyUp.post(tap: .cghidEventTap)
         },
-        writeSentinel: MacClippyPasteboardWriteSentinel? = nil
+        writeSentinel: MacClippyPasteboardWriteSentinel? = nil,
+        preparer: @escaping (MacClippyPasteboardContent, NSPasteboard) -> Bool = MacClippyPasteboardPreparer.prepare(_:on:)
     ) {
         self.pasteboard = pasteboard
         self.isProcessTrusted = isProcessTrusted
         self.postEvents = postEvents
         self.writeSentinel = writeSentinel
+        self.prepareContent = preparer
     }
 
     /// Whether the process can post the keystrokes required for automatic
@@ -44,32 +48,118 @@ public final class MacClippyPasteInjector {
     }
 
     @discardableResult
-    public func prepareText(_ text: String) -> Bool {
-        prepare(.text(text))
+    public func prepareText(
+        _ text: String,
+        gate: MacClippyPasteInjectionGate? = nil
+    ) -> Bool {
+        prepare(.text(text), gate: gate)
+    }
+
+    /// Writes text as a user-initiated copy so the pasteboard observer can
+    /// record it in clipboard history. Automatic paste, snippet expansion,
+    /// and regular in-app copy should continue using `prepareText`, which
+    /// suppresses recapture through the write sentinel.
+    @discardableResult
+    public func prepareTextForHistory(
+        _ text: String,
+        gate: MacClippyPasteInjectionGate? = nil
+    ) -> Bool {
+        prepareForHistory(.text(text), gate: gate)
     }
 
     @discardableResult
-    public func prepare(_ content: MacClippyPasteboardContent) -> Bool {
+    public func prepare(
+        _ content: MacClippyPasteboardContent,
+        gate: MacClippyPasteInjectionGate? = nil
+    ) -> Bool {
+        if let gate {
+            return gate.withOpenGate {
+                withOperationLock { prepareLocked(content, writeSentinel: writeSentinel) }
+            } ?? false
+        }
+        return withOperationLock { prepareLocked(content, writeSentinel: writeSentinel) }
+    }
+
+    @discardableResult
+    public func prepareForHistory(
+        _ content: MacClippyPasteboardContent,
+        gate: MacClippyPasteInjectionGate? = nil
+    ) -> Bool {
+        if let gate {
+            return gate.withOpenGate {
+                withOperationLock { prepareLocked(content, writeSentinel: nil) }
+            } ?? false
+        }
+        return withOperationLock { prepareLocked(content, writeSentinel: nil) }
+    }
+
+    @discardableResult
+    private func prepareLocked(
+        _ content: MacClippyPasteboardContent,
+        writeSentinel: MacClippyPasteboardWriteSentinel?
+    ) -> Bool {
+        let original = snapshotPasteboard()
+        // A promised item may expose its UTI before its provider can
+        // materialize bytes. Refuse to clear an incomplete snapshot because
+        // there is no lossless way to restore that item after a failed copy.
+        guard original.isComplete else { return false }
+
+        guard prepareContentLocked(content, writeSentinel: writeSentinel) else {
+            restore(original)
+            return false
+        }
+        return true
+    }
+
+    private func prepareContentLocked(
+        _ content: MacClippyPasteboardContent,
+        writeSentinel: MacClippyPasteboardWriteSentinel?
+    ) -> Bool {
         if let writeSentinel {
             return MacClippyPasteboardWriteCoordinator.write(
                 content,
                 on: pasteboard,
-                sentinel: writeSentinel
+                sentinel: writeSentinel,
+                preparer: prepareContent
             )
         }
-        return MacClippyPasteboardPreparer.prepare(content, on: pasteboard)
+        return prepareContent(content, pasteboard)
     }
 
     public func inject(
         text: String,
-        beforePaste: (() -> Void)? = nil
+        beforePaste: (() -> Void)? = nil,
+        gate: MacClippyPasteInjectionGate? = nil
     ) -> MacClippyPasteInjectionResult {
-        inject(content: .text(text), beforePaste: beforePaste)
+        inject(content: .text(text), beforePaste: beforePaste, gate: gate)
     }
 
     public func inject(
         content: MacClippyPasteboardContent,
-        beforePaste: (() -> Void)? = nil
+        beforePaste: (() -> Void)? = nil,
+        gate: MacClippyPasteInjectionGate? = nil
+    ) -> MacClippyPasteInjectionResult {
+        if let gate {
+            return gate.withOpenGate {
+                withOperationLock {
+                    injectLocked(content: content, beforePaste: beforePaste)
+                }
+            } ?? .manualPasteRequired
+        }
+        return withOperationLock {
+            injectLocked(content: content, beforePaste: beforePaste)
+        }
+    }
+
+    private func withOperationLock<T>(_ operation: () -> T) -> T {
+        operationLock.lock()
+        defer { operationLock.unlock() }
+        return operation()
+    }
+
+    private func injectLocked(
+        content: MacClippyPasteboardContent,
+        beforePaste: (() -> Void)?
     ) -> MacClippyPasteInjectionResult {
         let original = snapshotPasteboard()
         // A promised pasteboard item can expose its UTI before its provider
@@ -77,7 +167,7 @@ public final class MacClippyPasteInjector {
         // snapshot: restoring it would silently drop the promised item.
         guard original.isComplete else { return .manualPasteRequired }
         let expectedInjectedChangeCount = pasteboard.changeCount + 1
-        guard prepare(content) else {
+        guard prepareContentLocked(content, writeSentinel: writeSentinel) else {
             writeSentinel?.cancel(changeCount: expectedInjectedChangeCount)
             restore(original)
             return .manualPasteRequired
@@ -91,7 +181,8 @@ public final class MacClippyPasteInjector {
 
         guard let source = CGEventSource(stateID: .hidSystemState),
               let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else {
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false)
+        else {
             writeSentinel?.cancel(changeCount: expectedInjectedChangeCount)
             restore(original)
             return .manualPasteRequired

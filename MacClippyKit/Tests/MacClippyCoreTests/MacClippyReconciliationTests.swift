@@ -18,7 +18,7 @@ final class MacClippyReconciliationTests: XCTestCase {
 
         // Orphan blob: written to disk but never attached to any record.
         let orphanBlobID = try blobs.write(Data(repeating: 2, count: 16))
-        XCTAssertTrue(blobs.contains(id: orphanBlobID))
+        XCTAssertTrue(try blobs.contains(id: orphanBlobID))
 
         let detected = try MacClippyReconciliation.detect(store: store, search: search, blobs: blobs)
         XCTAssertEqual(detected.orphanBlobIDs, [orphanBlobID])
@@ -31,8 +31,8 @@ final class MacClippyReconciliationTests: XCTestCase {
             deleteBlob: { id in try blobs.delete(id: id) }
         )
         XCTAssertEqual(reconciled.orphanBlobIDs, [orphanBlobID])
-        XCTAssertFalse(blobs.contains(id: orphanBlobID))
-        XCTAssertTrue(blobs.contains(id: referencedBlobID))
+        XCTAssertFalse(try blobs.contains(id: orphanBlobID))
+        XCTAssertTrue(try blobs.contains(id: referencedBlobID))
     }
 
     func testDetectsAndRemovesOrphanFTSRows() throws {
@@ -66,6 +66,29 @@ final class MacClippyReconciliationTests: XCTestCase {
         XCTAssertEqual(try search.search(query: "live", limit: 10).map(\.id), [liveMeta.id])
     }
 
+    func testReconciliationDoesNotSkipOrphanFTSRowsWhenDeletingPages() throws {
+        let store = try clipboardStore()
+        let search = try searchStore()
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let blobs = try BlobStore(rootURL: root, key: testKey())
+
+        for _ in 0..<512 {
+            try search.insert(id: RecordID.generate(), text: "orphan")
+        }
+
+        let result = try MacClippyReconciliation.reconcile(
+            store: store,
+            search: search,
+            blobs: blobs,
+            deleteBlob: { _ in }
+        )
+
+        XCTAssertEqual(result.orphanFTSRecordCount, 512)
+        XCTAssertTrue(try search.search(query: "orphan", limit: 10).isEmpty)
+        XCTAssertEqual(try search.databaseRowCount(), 0)
+    }
+
     func testRepresentationBlobIDsAreCountedAsReferenced() throws {
         let store = try clipboardStore()
         let search = try searchStore()
@@ -85,7 +108,7 @@ final class MacClippyReconciliationTests: XCTestCase {
 
         let detected = try MacClippyReconciliation.detect(store: store, search: search, blobs: blobs)
         XCTAssertTrue(detected.orphanBlobIDs.isEmpty, "spilled representation blob should be referenced")
-        XCTAssertTrue(blobs.contains(id: spilledBlobID))
+        XCTAssertTrue(try blobs.contains(id: spilledBlobID))
     }
 
     func testDetectsReferencedBlobMissingFromDiskWithoutDeletingTheRecord() throws {
@@ -131,7 +154,29 @@ final class MacClippyReconciliationTests: XCTestCase {
         }
 
         XCTAssertThrowsError(try MacClippyReconciliation.detect(store: store, search: search, blobs: blobs))
-        XCTAssertTrue(blobs.contains(id: blobID), "a corrupt record must not make its Blob eligible for cleanup")
+        XCTAssertTrue(try blobs.contains(id: blobID), "a corrupt record must not make its Blob eligible for cleanup")
+    }
+
+    func testReconciliationFailsClosedWhenContentKindIsInvalid() throws {
+        let database = try MacClippyDatabase(inMemory: true)
+        let store = try ClipboardStore(database: database, deviceKey: testKey())
+        let search = try searchStore()
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let blobs = try BlobStore(rootURL: root, key: testKey())
+        let blobID = try blobs.write(Data(repeating: 9, count: 16))
+        let meta = try store.append(.image(blobID: blobID, width: 1, height: 1))
+
+        try database.queue.write { connection in
+            try connection.execute(
+                sql: "UPDATE clipboard_records SET content_kind = ? WHERE id = ?",
+                arguments: ["unknown", meta.id.rawValue]
+            )
+        }
+
+        XCTAssertThrowsError(try store.contentKinds(for: [meta.id]))
+        XCTAssertThrowsError(try MacClippyReconciliation.detect(store: store, search: search, blobs: blobs))
+        XCTAssertTrue(try blobs.contains(id: blobID), "an invalid discriminator must not make its Blob eligible for cleanup")
     }
 
     func testFailedOrphanCleanupIsReportedAndLeavesTheBlobForRetry() throws {
@@ -152,7 +197,32 @@ final class MacClippyReconciliationTests: XCTestCase {
         XCTAssertEqual(result.orphanBlobIDs, [orphanBlobID])
         XCTAssertEqual(result.failedBlobCleanupIDs, [orphanBlobID])
         XCTAssertTrue(result.failedFTSCleanupIDs.isEmpty)
-        XCTAssertTrue(blobs.contains(id: orphanBlobID))
+        XCTAssertTrue(try blobs.contains(id: orphanBlobID))
+    }
+
+    func testReconciliationRevalidatesOrphanBeforeReportingOrDeleting() throws {
+        let store = try clipboardStore()
+        let search = try searchStore()
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let blobs = try BlobStore(rootURL: root, key: testKey())
+        let candidateID = try blobs.write(Data(repeating: 5, count: 16))
+
+        var deleteCalled = false
+        let result = try MacClippyReconciliation.reconcile(
+            store: store,
+            search: search,
+            blobs: blobs,
+            deleteBlob: { _ in deleteCalled = true },
+            isBlobStillUnreferenced: { id in
+                XCTAssertEqual(id, candidateID)
+                return false
+            }
+        )
+
+        XCTAssertTrue(result.orphanBlobIDs.isEmpty)
+        XCTAssertFalse(deleteCalled)
+        XCTAssertTrue(try blobs.contains(id: candidateID))
     }
 
     func testEmptyStoreHasNoOrphans() throws {
@@ -164,6 +234,45 @@ final class MacClippyReconciliationTests: XCTestCase {
 
         let detected = try MacClippyReconciliation.detect(store: store, search: search, blobs: blobs)
         XCTAssertTrue(detected.isEmpty)
+    }
+
+    func testBlobEnumerationPropagatesUnavailableRoot() throws {
+        let root = try temporaryDirectory()
+        let blobs = try BlobStore(rootURL: root, key: testKey())
+        try FileManager.default.removeItem(at: root)
+
+        XCTAssertThrowsError(try blobs.forEachID { _ in })
+    }
+
+    func testLargeOrphanScanKeepsDiagnosticsBoundedAndCleansEveryCandidate() throws {
+        let store = try clipboardStore()
+        let search = try searchStore()
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let blobs = try BlobStore(rootURL: root, key: testKey())
+
+        for index in 0..<300 {
+            _ = try blobs.write(Data([UInt8(index % 255)]), id: "orphan-\(index)")
+        }
+
+        let detected = try MacClippyReconciliation.detect(store: store, search: search, blobs: blobs)
+        XCTAssertEqual(detected.orphanBlobCount, 300)
+        XCTAssertEqual(detected.orphanBlobIDs.count, 256)
+
+        var deletedIDs = Set<String>()
+        let reconciled = try MacClippyReconciliation.reconcile(
+            store: store,
+            search: search,
+            blobs: blobs,
+            deleteBlob: { id in
+                deletedIDs.insert(id)
+                try blobs.delete(id: id)
+            }
+        )
+        XCTAssertEqual(reconciled.orphanBlobCount, 300)
+        XCTAssertEqual(deletedIDs.count, 300)
+        XCTAssertFalse(try blobs.contains(id: "orphan-0"))
+        XCTAssertFalse(try blobs.contains(id: "orphan-299"))
     }
 
     private func clipboardStore() throws -> ClipboardStore {

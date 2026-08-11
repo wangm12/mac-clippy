@@ -22,12 +22,23 @@ public enum MacClippyPasteboardReadRetry {
         delay: TimeInterval = MacClippyPasteboardReadRetry.defaultDelay,
         _ operation: () -> T?
     ) -> T? {
+        read(attempts: attempts, delay: delay, shouldContinue: { true }, operation)
+    }
+
+    public static func read<T>(
+        attempts: Int = MacClippyPasteboardReadRetry.defaultAttempts,
+        delay: TimeInterval = MacClippyPasteboardReadRetry.defaultDelay,
+        shouldContinue: () -> Bool,
+        _ operation: () -> T?
+    ) -> T? {
         let safeAttempts = max(1, attempts)
         for attempt in 0..<safeAttempts {
+            guard shouldContinue() else { return nil }
             if let value = operation() {
                 return value
             }
             if attempt < safeAttempts - 1, delay > 0 {
+                guard shouldContinue() else { return nil }
                 Thread.sleep(forTimeInterval: delay)
             }
         }

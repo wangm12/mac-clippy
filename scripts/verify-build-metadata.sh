@@ -31,9 +31,32 @@ if [[ "${package_type}" != "APPL" ]]; then
   exit 1
 fi
 
-if [[ "$(read_plist_value LSUIElement)" != "true" ]]; then
-  echo "error: LSUIElement must be true for the menu-bar application" >&2
+short_version="$(read_plist_value CFBundleShortVersionString)"
+build_version="$(read_plist_value CFBundleVersion)"
+if [[ ! "${short_version}" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+  echo "error: invalid CFBundleShortVersionString: ${short_version}" >&2
   exit 1
+fi
+if [[ ! "${build_version}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "error: invalid CFBundleVersion: ${build_version}" >&2
+  exit 1
+fi
+
+# MacClippy selects its activation policy at runtime so users can independently
+# show or hide the menu-bar item and Dock icon. A static LSUIElement value would
+# make one of those user-selected modes impossible, so the runtime policy is
+# verified by App tests/manual integration instead of this bundle-only check.
+if static_lsui_element="$(read_plist_value LSUIElement 2>/dev/null)"; then
+  case "${static_lsui_element}" in
+    true|false|0|1) ;;
+    *)
+      echo "error: LSUIElement must be a Boolean when present: ${static_lsui_element}" >&2
+      exit 1
+      ;;
+  esac
+  echo "Static LSUIElement=${static_lsui_element}; runtime activation policy remains authoritative."
+else
+  echo "No static LSUIElement; runtime activation policy remains authoritative."
 fi
 
 for key in NSAccessibilityUsageDescription NSInputMonitoringUsageDescription; do

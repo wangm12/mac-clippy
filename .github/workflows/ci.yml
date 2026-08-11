@@ -3,44 +3,94 @@ name: MacClippy CI
 on:
   push:
     paths:
-      - "mac-clippy/**"
-      - ".github/workflows/ci.yml"
+      - "**"
   pull_request:
     paths:
-      - "mac-clippy/**"
-      - ".github/workflows/ci.yml"
+      - "**"
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macclippy-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
     runs-on: macos-14
-    defaults:
-      run:
-        working-directory: mac-clippy
+    # App tests plus package TSan and the opt-in fixtures can legitimately
+    # exceed an hour on a busy hosted runner. Keep the individual step limits
+    # as the tight failure boundaries and leave room for build/test startup.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+      - name: Verify checked-in build inputs
+        run: |
+          set -euo pipefail
+          test -f .swiftlint-baseline.yml
+          test -x scripts/lint.sh
+          test -x scripts/verify-dmg.sh
+          test -f MacClippyKit/Package.resolved
+          test -f MacClippy.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
       - name: Show toolchain
         run: |
           sw_vers
           xcodebuild -version
           swift --version
+      - name: Install pinned build tools
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          brew list swiftlint >/dev/null 2>&1 || brew install swiftlint
+          ./scripts/verify-tool-versions.sh
       - name: Generate project
         run: xcodegen generate
+      - name: Verify generated project is committed
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- MacClippy.xcodeproj
+          test -z "$(git status --porcelain --untracked-files=all -- MacClippy.xcodeproj)"
+      - name: SwiftLint baseline gate
+        run: ./scripts/lint.sh
       - name: Package tests
         run: swift test --package-path MacClippyKit
+      - name: Strict concurrency package tests
+        run: swift test --package-path MacClippyKit -Xswiftc -strict-concurrency=complete
       - name: Scale regression fixture
+        timeout-minutes: 10
         env:
           MACCLIPPY_RUN_SCALE_TESTS: "1"
         run: swift test --package-path MacClippyKit --filter MacClippyScaleTests
       - name: Lifecycle stress fixture
+        timeout-minutes: 10
         env:
           MACCLIPPY_RUN_STRESS_TESTS: "1"
         run: swift test --package-path MacClippyKit --filter MacClippyLifecycleStressTests
+      - name: Thread Sanitizer package tests
+        timeout-minutes: 15
+        run: swift test --package-path MacClippyKit --sanitize=thread
+      - name: Thread Sanitizer App tests
+        timeout-minutes: 20
+        run: >-
+          xcodebuild test -project MacClippy.xcodeproj -scheme MacClippy
+          -configuration Debug -destination 'platform=macOS,arch=arm64'
+          -derivedDataPath build/ci-app-tsan
+          -resultBundlePath build/ci-app-tsan.xcresult
+          -parallel-testing-enabled NO -maximum-parallel-testing-workers 1
+          -enableThreadSanitizer YES
+          -skipPackagePluginValidation CODE_SIGNING_ALLOWED=NO
       - name: App build
         run: >-
           xcodebuild -project MacClippy.xcodeproj -scheme MacClippy
           -configuration Debug -destination 'platform=macOS,arch=arm64'
           -skipPackagePluginValidation CODE_SIGNING_ALLOWED=NO build
+      - name: App Swift 6 warnings-as-errors build
+        run: >-
+          xcodebuild -project MacClippy.xcodeproj -scheme MacClippy
+          -configuration Debug -destination 'platform=macOS,arch=arm64'
+          -derivedDataPath build/ci-app-swift6
+          -skipPackagePluginValidation SWIFT_VERSION=6.0 CODE_SIGNING_ALLOWED=NO
+          build-for-testing
       - name: Shipping configuration compile
         run: >-
           xcodebuild -project MacClippy.xcodeproj -scheme MacClippy
@@ -59,7 +109,25 @@ jobs:
           ./scripts/verify-build-metadata.sh \
             build/ci-shipping/Build/Products/Release/MacClippy.app
       - name: App tests
+        timeout-minutes: 10
         run: >-
           xcodebuild test -project MacClippy.xcodeproj -scheme MacClippy
           -configuration Debug -destination 'platform=macOS,arch=arm64'
+          -derivedDataPath build/ci-tests
+          -resultBundlePath build/ci-app-tests.xcresult
+          -parallel-testing-enabled NO -maximum-parallel-testing-workers 1
           -skipPackagePluginValidation CODE_SIGNING_ALLOWED=NO
+      - name: Upload App XCTest result bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macclippy-app-tests
+          path: build/ci-app-tests.xcresult
+          if-no-files-found: warn
+      - name: Upload App TSan result bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macclippy-app-tsan
+          path: build/ci-app-tsan.xcresult
+          if-no-files-found: warn

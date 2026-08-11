@@ -62,6 +62,32 @@ final class MacClippySearchGrammarIntegrationTests: XCTestCase {
         XCTAssertEqual(results.map(\.id), [records[4].id, records[3].id])
     }
 
+    func testStructuredOnlyQueryPaginatesMetadataWithoutChangingOrder() throws {
+        var records: [ClipboardItemMeta] = []
+        records.reserveCapacity(130)
+        for index in 0..<130 {
+            records.append(
+                try runtime.appendTestRecord(
+                    .text("page-(index)"),
+                    sourceAppBundleID: nil,
+                    now: Date(timeIntervalSince1970: Double(10_000 + index))
+                )
+            )
+        }
+
+        let results = try runtime.history(limit: 130, query: "type:text")
+
+        XCTAssertEqual(results.count, 130)
+        XCTAssertEqual(results.map(\.id), records.reversed().map(\.id))
+    }
+
+    func testStructuredAndBareSearchWithZeroLimitDoesNoWork() throws {
+        _ = try runtime.appendTestRecord(.text("should not be returned"))
+
+        XCTAssertTrue(try runtime.history(limit: 0, query: "type:text").isEmpty)
+        XCTAssertTrue(try runtime.history(limit: 0, query: "should").isEmpty)
+    }
+
     func testStructuredOnlyAppQueryFiltersCaseInsensitivelyBySubstring() throws {
         let editor = try runtime.appendTestRecord(.text("body one"), sourceAppBundleID: "com.Example.Editor", now: Date(timeIntervalSince1970: 1_000))
         _ = try runtime.appendTestRecord(.text("body two"), sourceAppBundleID: "com.other.App", now: Date(timeIntervalSince1970: 2_000))
@@ -222,6 +248,35 @@ final class MacClippySearchGrammarIntegrationTests: XCTestCase {
         XCTAssertNotNil(results.first?.preview.range(of: "searchable"))
     }
 
+    func testBareOnlySearchPagesPastOrphanFTSHits() throws {
+        var orphanIDs: [RecordID] = []
+        for index in 0..<16 {
+            let orphan = try runtime.appendTestRecord(
+                .text("orphan commonterm \(index)"),
+                sourceAppBundleID: nil,
+                now: Date(timeIntervalSince1970: Double(index))
+            )
+            orphanIDs.append(orphan.id)
+            _ = try runtime.setCustomLabel(id: orphan.id, label: "orphan")
+        }
+        let target = try runtime.appendTestRecord(
+            .text("healthy commonterm target"),
+            sourceAppBundleID: nil,
+            now: Date(timeIntervalSince1970: 1_000)
+        )
+        _ = try runtime.setCustomLabel(id: target.id, label: "target")
+        // Delete only the clipboard rows through the store API. The runtime's
+        // FTS cleanup is intentionally not involved here, leaving orphan FTS
+        // hits for the pagination regression to exercise without crossing the
+        // MacClippyCore module's internal database boundary.
+        for id in orphanIDs {
+            try runtime.clipboardStore.delete(id: id)
+        }
+
+        let results = try runtime.history(limit: 1, query: "commonterm")
+        XCTAssertEqual(results.map(\.id), [target.id])
+    }
+
     // MARK: - Dock model: pinboard-tab grammar-aware filter
 
     @MainActor
@@ -242,13 +297,15 @@ final class MacClippySearchGrammarIntegrationTests: XCTestCase {
         }
         model.selectTab(.pinboard(board.id))
 
-        // Apply a structured query; visibleItems is a synchronous computed
-        // property that filters via the grammar-aware filter().
+        // Apply a structured query; the Dock now performs a bounded Runtime
+        // query so matches outside the initially loaded page are included.
         model.query = "type:image"
+        wait { model.visibleItems.map(\.id) == [imageMeta.id] }
         XCTAssertEqual(model.visibleItems.map(\.id), [imageMeta.id])
 
         // A bare-only query on the same pinboard preserves substring behavior.
         model.query = "alpha"
+        wait { model.visibleItems.map(\.id) == [textMeta.id] }
         XCTAssertEqual(model.visibleItems.map(\.id), [textMeta.id])
     }
 
@@ -270,7 +327,30 @@ final class MacClippySearchGrammarIntegrationTests: XCTestCase {
         model.query = "alpha"
 
         // Bare-only pinboard filter preserves the existing substring behavior.
+        wait { model.visibleItems.map(\.id) == [textMeta.id] }
         XCTAssertEqual(model.visibleItems.map(\.id), [textMeta.id])
+    }
+
+    @MainActor
+    func testDockPinboardSearchFindsMatchBeyondInitialPage() throws {
+        let board = try runtime.createPinboard(name: "Large", color: nil)
+        var records: [ClipboardItemMeta] = []
+        for index in 0..<70 {
+            let record = try runtime.appendTestRecord(.text(index == 69 ? "needle beyond first page" : "ordinary item"))
+            records.append(record)
+            try runtime.pin(recordID: record.id, to: board.id)
+        }
+
+        let model = MacClippyDockModel(runtime: runtime)
+        model.reload()
+        wait {
+            model.pinboards.first(where: { $0.id == board.id })?.items.count == 64
+        }
+        model.selectTab(.pinboard(board.id))
+        model.query = "needle beyond first page"
+
+        wait { model.visibleItems.map(\.id) == [records[69].id] }
+        XCTAssertEqual(model.visibleItems.map(\.id), [records[69].id])
     }
 
     // MARK: - Helpers

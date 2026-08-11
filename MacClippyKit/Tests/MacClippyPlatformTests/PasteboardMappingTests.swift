@@ -6,6 +6,31 @@ import MacClippyCore
 import MacClippyPlatform
 
 final class PasteboardMappingTests: XCTestCase {
+    func testCaptureProjectionReusesTheMappedPrimaryAndRepresentationSet() throws {
+        let change = PasteboardChange(
+            changeCount: 1,
+            items: [PasteboardItem(
+                types: [
+                    NSPasteboard.PasteboardType.html.rawValue,
+                    NSPasteboard.PasteboardType.string.rawValue
+                ],
+                representations: [
+                    NSPasteboard.PasteboardType.html.rawValue: Data("<b>Hello</b>".utf8),
+                    NSPasteboard.PasteboardType.string.rawValue: Data("Hello".utf8)
+                ]
+            )]
+        )
+
+        let projection = MacClippyCaptureMapper.projection(for: change)
+
+        XCTAssertEqual(projection.payload, MacClippyCaptureMapper.payload(for: change))
+        XCTAssertEqual(
+            projection.representations,
+            MacClippyCaptureMapper.representations(for: change)
+        )
+        XCTAssertEqual(projection.searchableText, "Hello")
+    }
+
     func testImageWinsOverOtherRepresentations() throws {
         let imageData = Data([0, 1, 2])
         let change = PasteboardChange(

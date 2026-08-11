@@ -26,6 +26,34 @@ final class MacClippyRepresentationsTests: XCTestCase {
         XCTAssertEqual(representations.first(where: { $0.uti == "com.example.custom" })?.payloadBytes, Data("keep me".utf8))
     }
 
+    func testReplaceRepresentationsRestoresSpilledPrimaryBlobReference() throws {
+        let store = try clipboardStore()
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let blobs = try BlobStore(rootURL: root, key: testKey())
+        let payload = Data(repeating: 0x07, count: MacClippyClipboardRepresentationLimits.inlineByteCeiling + 1)
+        let blobID = try blobs.write(payload)
+        let meta = try store.append(
+            .text("before"),
+            representations: [
+                MacClippyClipboardRepresentation(
+                    uti: "public.utf8-plain-text",
+                    payloadBytes: nil,
+                    blobID: blobID,
+                    payloadState: .spilled
+                )
+            ]
+        )
+        let snapshot = try store.representations(for: meta.id)
+
+        _ = try store.update(id: meta.id, with: .text("after"))
+        try store.replaceRepresentations(for: meta.id, with: snapshot)
+
+        let restored = try store.representations(for: meta.id)
+        XCTAssertEqual(restored, snapshot)
+        XCTAssertEqual(try blobs.read(id: blobID), payload)
+    }
+
     func testUpdateMissingRecordDoesNotCreateAnything() throws {
         let store = try clipboardStore()
         XCTAssertThrowsError(try store.update(id: .generate(), with: .text("new"))) { error in
@@ -191,6 +219,76 @@ final class MacClippyRepresentationsTests: XCTestCase {
         }
 
         XCTAssertThrowsError(try store.representations(for: meta.id)) { error in
+            XCTAssertEqual(error as? MacClippyCipherError, .invalidEnvelope)
+        }
+    }
+
+    func testInvalidRepresentationPayloadStateFailsClosed() throws {
+        let database = try MacClippyDatabase(inMemory: true)
+        let store = try ClipboardStore(database: database, deviceKey: testKey())
+        let meta = try store.append(
+            .text("visible record"),
+            representations: [
+                MacClippyClipboardRepresentation(
+                    uti: "public.utf8-plain-text",
+                    payloadBytes: Data("visible".utf8)
+                )
+            ]
+        )
+
+        try database.queue.write { connection in
+            try connection.execute(
+                sql: "UPDATE clipboard_representations SET payload_state = ?, payload = NULL, blob_id = NULL WHERE record_id = ?",
+                arguments: ["unknown-state", meta.id.rawValue]
+            )
+        }
+
+        XCTAssertThrowsError(try store.representations(for: meta.id)) { error in
+            XCTAssertEqual(error as? MacClippyStoreError, .invalidStoredRecord)
+        }
+        XCTAssertThrowsError(try store.representationUTIs(for: meta.id)) { error in
+            XCTAssertEqual(error as? MacClippyStoreError, .invalidStoredRecord)
+        }
+        XCTAssertThrowsError(try store.validateRepresentations()) { error in
+            XCTAssertEqual(error as? MacClippyStoreError, .invalidStoredRecord)
+        }
+    }
+
+    func testInvalidRepresentationPayloadCombinationIsDetectedByMaintenanceValidation() throws {
+        let database = try MacClippyDatabase(inMemory: true)
+        let store = try ClipboardStore(database: database, deviceKey: testKey())
+        let meta = try store.append(
+            .text("visible record"),
+            representations: [
+                MacClippyClipboardRepresentation(
+                    uti: "public.utf8-plain-text",
+                    payloadBytes: Data("visible".utf8)
+                )
+            ]
+        )
+
+        try database.queue.write { connection in
+            try connection.execute(
+                sql: "UPDATE clipboard_representations SET payload_state = 'present', payload = NULL, blob_id = NULL WHERE record_id = ?",
+                arguments: [meta.id.rawValue]
+            )
+        }
+
+        XCTAssertThrowsError(try store.validateRepresentations()) { error in
+            XCTAssertEqual(error as? MacClippyStoreError, .invalidStoredRecord)
+        }
+    }
+
+    func testInvalidRepresentationPayloadStateCombinationFailsOnAppend() throws {
+        let store = try clipboardStore()
+        let invalid = MacClippyClipboardRepresentation(
+            uti: "public.data",
+            payloadBytes: Data("unexpected".utf8),
+            blobID: "blob-id",
+            payloadState: .spilled
+        )
+
+        XCTAssertThrowsError(try store.append(.text("record"), representations: [invalid])) { error in
             XCTAssertEqual(error as? MacClippyStoreError, .invalidStoredRecord)
         }
     }
@@ -283,7 +381,7 @@ final class MacClippyRepresentationsTests: XCTestCase {
         // The compensating rollback deleted the spilled blob.
         XCTAssertEqual(deletedBlobIDs, [spilledID].compactMap { $0 })
         if let spilledID {
-            XCTAssertFalse(blobs.contains(id: spilledID))
+            XCTAssertFalse(try blobs.contains(id: spilledID))
         }
 
         // No record was committed (the transaction rolled back atomically).
@@ -334,7 +432,7 @@ final class MacClippyRepresentationsTests: XCTestCase {
 
         // The first spill's blob was cleaned up by the compensating rollback.
         XCTAssertEqual(deletedBlobIDs, [firstBlobID])
-        XCTAssertFalse(blobs.contains(id: firstBlobID))
+        XCTAssertFalse(try blobs.contains(id: firstBlobID))
         // No record and no representation rows were committed.
         XCTAssertTrue(try store.list(limit: 10).isEmpty)
         XCTAssertTrue(try store.allRepresentationBlobIDs().isEmpty)

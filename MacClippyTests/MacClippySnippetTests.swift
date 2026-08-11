@@ -2,6 +2,7 @@ import XCTest
 
 @testable import MacClippy
 import MacClippyCore
+import MacClippyPlatform
 
 final class MacClippySnippetTests: XCTestCase {
     private var tempRoot: URL!
@@ -76,5 +77,32 @@ final class MacClippySnippetTests: XCTestCase {
         XCTAssertThrowsError(try runtime.createSnippet(name: "Name", trigger: nil, body: " \n")) { error in
             XCTAssertEqual(error as? MacClippySnippetCreationError, .emptyBody)
         }
+    }
+
+    func testDisabledSnippetModeDoesNotInstallEventTap() {
+        let expander = MacClippySnippetExpander(
+            modeProvider: { .disabled },
+            lookup: { _ in nil }
+        )
+
+        XCTAssertTrue(expander.start())
+        XCTAssertFalse(expander.isInstalled)
+        XCTAssertNil(expander.lastStartError)
+    }
+
+    func testEnabledToDisabledTransitionStopsOrPreventsEventTap() {
+        var mode: MacClippySnippetExpansionMode = .autoExpand
+        let expander = MacClippySnippetExpander(
+            modeProvider: { mode },
+            lookup: { _ in nil }
+        )
+        defer { expander.stop() }
+
+        _ = expander.start()
+        mode = .disabled
+
+        XCTAssertTrue(expander.start())
+        XCTAssertFalse(expander.isInstalled)
+        XCTAssertNil(expander.lastStartError)
     }
 }

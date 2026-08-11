@@ -6,6 +6,8 @@ import MacClippyCore
 import MacClippyPlatform
 
 final class MacClippyDockMultiPastePolicyTests: XCTestCase {
+    private struct SyntheticStorageError: Error {}
+
     private func id() -> RecordID { RecordID.generate() }
 
     func testTextCompatibleKindsAreTextHtmlRtfOnly() {
@@ -215,6 +217,20 @@ final class MacClippyDockMultiPastePolicyTests: XCTestCase {
         XCTAssertEqual(MacClippyDockMultiPasteKindMapping.kind(for: .rtf), .rtf)
         XCTAssertEqual(MacClippyDockMultiPasteKindMapping.kind(for: .image), .image)
         XCTAssertEqual(MacClippyDockMultiPasteKindMapping.kind(for: .files), .files)
+    }
+
+    func testThrowingResolutionPropagatesInfrastructureFailure() {
+        let record = id()
+
+        XCTAssertThrowsError(
+            try MacClippyDockMultiPastePolicy.resolveThrowing(
+                orderedSelectedIDs: [record],
+                kindForID: { _ in .text },
+                textForID: { _ in throw SyntheticStorageError() }
+            )
+        ) { error in
+            XCTAssertTrue(error is SyntheticStorageError)
+        }
     }
 }
 

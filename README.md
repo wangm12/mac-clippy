@@ -67,6 +67,9 @@ make build
 # Run Swift package and app tests
 make test
 
+# Run SwiftLint with the checked-in no-new-violations baseline
+make lint
+
 # Build and launch the Debug app
 make run
 
@@ -80,16 +83,16 @@ Git.
 
 ## Release packaging
 
-`make dmg` creates an unsigned arm64 Release DMG. `make release` is an alias for
-the same command.
+`make dmg` creates an unsigned arm64 Release DMG. `make release` is the signed
+archive → final DMG → notarize/staple/Gatekeeper verification flow.
 
 To create a signed artifact, provide a Developer ID identity and team ID:
 
 ```sh
-CODE_SIGNING_ALLOWED=YES \
-CODE_SIGN_IDENTITY="Developer ID Application: Your Name" \
+DEVELOPER_IDENTITY="Developer ID Application: Your Name" \
 DEVELOPMENT_TEAM="TEAM_ID" \
-make dmg
+NOTARY_PROFILE="stored-keychain-profile" \
+make release
 ```
 
 Developer ID signing, notarization, and Gatekeeper verification require the
@@ -101,6 +104,7 @@ appropriate Apple certificates and credentials on the build machine.
 MacClippy/             macOS application and dock UI
 MacClippyKit/          Core storage, capture, search, paste, and platform code
 MacClippyTests/        Application-level XCTest target
+MacClippyUITests/      macOS UI XCTest smoke and interaction target
 scripts/               Build, signing, verification, and DMG packaging scripts
 project.yml            XcodeGen project definition
 ```

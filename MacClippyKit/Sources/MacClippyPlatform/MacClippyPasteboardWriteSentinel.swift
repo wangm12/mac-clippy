@@ -95,6 +95,10 @@ public enum MacClippyPasteboardWriteCoordinator {
     ) -> Bool {
         let expected = pasteboard.changeCount + 1
         sentinel.beginWrite(expectedChangeCount: expected)
-        return preparer(content, pasteboard)
+        let prepared = preparer(content, pasteboard)
+        if !prepared {
+            sentinel.cancel(changeCount: expected)
+        }
+        return prepared
     }
 }

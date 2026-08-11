@@ -1,10 +1,11 @@
 import AppKit
 import Foundation
+import ImageIO
 import UniformTypeIdentifiers
 
 import MacClippyCore
 
-public enum MacClippyCapturePayload: Equatable {
+public enum MacClippyCapturePayload: Equatable, Sendable {
     case text(String)
     case rtf(Data)
     case html(String)
@@ -25,6 +26,26 @@ public enum MacClippyCapturePayload: Equatable {
     }
 }
 
+/// Materialized once for a pasteboard generation and shared by filtering and
+/// persistence. Mapping HTML/RTF/image metadata and walking all advertised
+/// representations can be materially more expensive than the surrounding
+/// lifecycle bookkeeping, so callers should pass this projection across the
+/// observer/runtime boundary instead of rebuilding it.
+public struct MacClippyCaptureProjection: Equatable, Sendable {
+    public let payload: MacClippyCapturePayload?
+    public let representations: [MacClippyClipboardRepresentation]
+    public let searchableText: String?
+
+    public init(
+        payload: MacClippyCapturePayload?,
+        representations: [MacClippyClipboardRepresentation]
+    ) {
+        self.payload = payload
+        self.representations = representations
+        searchableText = payload?.searchableText
+    }
+}
+
 public enum MacClippyCaptureMapper {
     private static let pngType = NSPasteboard.PasteboardType.png.rawValue
     private static let tiffType = NSPasteboard.PasteboardType.tiff.rawValue
@@ -32,6 +53,13 @@ public enum MacClippyCaptureMapper {
     private static let rtfType = NSPasteboard.PasteboardType.rtf.rawValue
     private static let htmlType = NSPasteboard.PasteboardType.html.rawValue
     private static let fileURLType = NSPasteboard.PasteboardType.fileURL.rawValue
+
+    public static func projection(for change: PasteboardChange) -> MacClippyCaptureProjection {
+        MacClippyCaptureProjection(
+            payload: payload(for: change),
+            representations: representations(for: change)
+        )
+    }
 
     public static func payload(for change: PasteboardChange) -> MacClippyCapturePayload? {
         if let image = imagePayload(in: change.items) { return image }
@@ -229,12 +257,10 @@ public enum MacClippyCaptureMapper {
     }
 
     private static func imagePayload(data: Data) -> MacClippyCapturePayload {
-        let image = NSImage(data: data)
-        let representation = image?.representations.max { left, right in
-            left.pixelsWide * left.pixelsHigh < right.pixelsWide * right.pixelsHigh
-        }
-        let width = representation?.pixelsWide ?? Int(image?.size.width ?? 0)
-        let height = representation?.pixelsHigh ?? Int(image?.size.height ?? 0)
+        let properties = CGImageSourceCreateWithData(data as CFData, nil)
+            .flatMap { CGImageSourceCopyPropertiesAtIndex($0, 0, nil) as? [CFString: Any] }
+        let width = (properties?[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue ?? 0
+        let height = (properties?[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue ?? 0
         return .image(data: data, width: width, height: height)
     }
 

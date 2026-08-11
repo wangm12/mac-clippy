@@ -27,7 +27,7 @@ public struct MacClippyPaths: Sendable {
     }
 }
 
-public struct MacClippyDatabaseMigration {
+public struct MacClippyDatabaseMigration: Sendable {
     public let identifier: String
     public let migrate: @Sendable (GRDB.Database) throws -> Void
 
@@ -42,6 +42,11 @@ public enum MacClippyDatabaseHealthStatus: String, Codable, Sendable, Equatable 
     case degraded
     case repairable
     case unrecoverable
+}
+
+public enum MacClippyDatabaseHealthCheckMode: Sendable, Equatable {
+    case bounded
+    case full
 }
 
 public struct MacClippyDatabaseHealthReport: Codable, Sendable, Equatable {
@@ -73,7 +78,17 @@ public final class MacClippyDatabase {
         // GRDB's DatabaseQueue does not close its writer connection from
         // deinit. Close explicitly so AppKit/test teardown cannot unlink a
         // WAL database while SQLite still owns its file descriptors.
-        try? queue.close()
+        do {
+            try queue.close()
+        } catch {
+            MacClippyLog.record(
+                category: .storage,
+                code: .databaseHealthFailed,
+                operation: "database_close",
+                recoveryAction: "retry_on_next_launch",
+                impact: "database_close_failed"
+            )
+        }
     }
 
     public init(url: URL, migrations: [MacClippyDatabaseMigration] = []) throws {
@@ -106,11 +121,34 @@ public final class MacClippyDatabase {
     /// Runs a bounded, read-only integrity check. The report deliberately
     /// contains only schema/integrity facts, never row values or clipboard
     /// content, so it can safely be used by diagnostics and recovery UI.
-    public func healthCheck(requiredTables: Set<String> = []) -> MacClippyDatabaseHealthReport {
+    public func healthCheck(
+        requiredTables: Set<String> = [],
+        mode: MacClippyDatabaseHealthCheckMode = .bounded
+    ) -> MacClippyDatabaseHealthReport {
         do {
             return try queue.read { connection in
-                let quickCheck = try String.fetchAll(connection, sql: "PRAGMA quick_check")
-                let foreignKeyViolations = try Row.fetchAll(connection, sql: "PRAGMA foreign_key_check")
+                let quickCheckSQL = mode == .bounded ? "PRAGMA quick_check(1)" : "PRAGMA quick_check"
+                let quickCheck = try String.fetchAll(connection, sql: quickCheckSQL)
+                let foreignKeyViolations: [Row]
+                if mode == .bounded {
+                    // The table-valued pragma lets the UI/startup check stop
+                    // after a small sample. Backup validation explicitly uses
+                    // .full so it still proves the complete foreign-key set.
+                    do {
+                        foreignKeyViolations = try Row.fetchAll(
+                            connection,
+                            sql: "SELECT * FROM pragma_foreign_key_check LIMIT 64"
+                        )
+                    } catch {
+                        // Older SQLite builds do not expose table-valued
+                        // pragmas. Keep the check correct on those builds;
+                        // the app's supported macOS builds use the bounded
+                        // form above.
+                        foreignKeyViolations = try Row.fetchAll(connection, sql: "PRAGMA foreign_key_check")
+                    }
+                } else {
+                    foreignKeyViolations = try Row.fetchAll(connection, sql: "PRAGMA foreign_key_check")
+                }
                 let existingTables = Set(try String.fetchAll(
                     connection,
                     sql: "SELECT name FROM sqlite_master WHERE type IN ('table', 'view')"
@@ -120,6 +158,9 @@ public final class MacClippyDatabase {
                 var issues: [String] = []
                 if !quickCheckPassed { issues.append("sqlite-quick-check-failed") }
                 if !foreignKeyViolations.isEmpty { issues.append("foreign-key-violations") }
+                if mode == .bounded, foreignKeyViolations.count == 64 {
+                    issues.append("foreign-key-violations-truncated")
+                }
                 if !missingTables.isEmpty { issues.append("missing-required-tables") }
 
                 let status: MacClippyDatabaseHealthStatus
@@ -152,9 +193,9 @@ public final class MacClippyDatabase {
         }
     }
 
-    public func tableRowCount(_ table: String) -> Int64? {
+    public func tableRowCount(_ table: String) throws -> Int64? {
         guard table.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" ) }) else { return nil }
-        return try? queue.read { connection in
+        return try queue.read { connection in
             try Int64.fetchOne(connection, sql: "SELECT COUNT(*) FROM \(table)")
         }
     }

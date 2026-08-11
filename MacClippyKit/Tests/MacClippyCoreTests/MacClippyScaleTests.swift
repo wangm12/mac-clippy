@@ -7,9 +7,13 @@ import MacClippyCore
 /// Opt-in scale checks for the release-readiness matrix. They are not part of
 /// the default package suite because they intentionally create a large,
 /// disposable fixture and exercise the filesystem for several seconds.
+@MainActor
 final class MacClippyScaleTests: XCTestCase {
     func testOneHundredThousandRecordsRemainSearchableAndPaged() throws {
-        guard ProcessInfo.processInfo.environment["MACCLIPPY_RUN_SCALE_TESTS"] == "1" else { return }
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["MACCLIPPY_RUN_SCALE_TESTS"] == "1",
+            "Set MACCLIPPY_RUN_SCALE_TESTS=1 to run the 100,000-record fixture."
+        )
 
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("MacClippyScale-\(UUID().uuidString)", isDirectory: true)
@@ -45,10 +49,13 @@ final class MacClippyScaleTests: XCTestCase {
         let page = try clipboard.list(limit: 50)
         let pageDuration = Date().timeIntervalSince(pageStart)
 
-        XCTAssertEqual(clipboard.databaseRowCount(), Int64(count))
-        XCTAssertEqual(search.databaseRowCount(), Int64(count))
+        XCTAssertEqual(try clipboard.databaseRowCount(), Int64(count))
+        XCTAssertEqual(try search.databaseRowCount(), Int64(count))
         XCTAssertEqual(hits.count, 1)
         XCTAssertEqual(page.count, 50)
+        XCTAssertLessThan(insertionDuration, 180, "100,000-record insertion exceeded the scale budget")
+        XCTAssertLessThan(searchDuration, 3, "FTS search exceeded the scale budget")
+        XCTAssertLessThan(pageDuration, 3, "metadata page read exceeded the scale budget")
 
         XCTContext.runActivity(named: "MacClippy 100k scale timings") { activity in
             activity.add(XCTAttachment(string: "records=\(count)"))
@@ -62,7 +69,10 @@ final class MacClippyScaleTests: XCTestCase {
     }
 
     func testTwentyMegabyteRepresentationSpillsAndDeletesCleanly() throws {
-        guard ProcessInfo.processInfo.environment["MACCLIPPY_RUN_SCALE_TESTS"] == "1" else { return }
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["MACCLIPPY_RUN_SCALE_TESTS"] == "1",
+            "Set MACCLIPPY_RUN_SCALE_TESTS=1 to run the large-payload fixture."
+        )
 
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("MacClippyLargePayload-\(UUID().uuidString)", isDirectory: true)
@@ -96,8 +106,8 @@ final class MacClippyScaleTests: XCTestCase {
         }
         try clipboard.completeDeletion(operationID: journal.operationID)
 
-        XCTAssertFalse(blobs.contains(id: blobID))
-        XCTAssertEqual(clipboard.databaseRowCount(), 0)
+        XCTAssertFalse(try blobs.contains(id: blobID))
+        XCTAssertEqual(try clipboard.databaseRowCount(), 0)
         try database.queue.close()
     }
 }

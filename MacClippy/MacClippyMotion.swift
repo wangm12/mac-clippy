@@ -1,5 +1,23 @@
 import AppKit
+import os.signpost
 import SwiftUI
+
+enum MacClippyPerformance {
+    private static let log = OSLog(
+        subsystem: "com.macallyouneed.macclippy",
+        category: "ui-performance"
+    )
+
+    static func begin(_ operation: StaticString) -> OSSignpostID {
+        let signpostID = OSSignpostID(log: log)
+        os_signpost(.begin, log: log, name: operation, signpostID: signpostID)
+        return signpostID
+    }
+
+    static func end(_ operation: StaticString, id: OSSignpostID) {
+        os_signpost(.end, log: log, name: operation, signpostID: id)
+    }
+}
 
 enum MacClippyMotion {
     // Reference-aligned durations: dock enter ~180ms, exit ~130ms, hover/
@@ -33,19 +51,20 @@ enum MacClippyMotion {
     static let actionFeedbackAnimation = Animation.timingCurve(0.22, 1, 0.36, 1, duration: actionFeedbackDuration)
     static let settingsRevealAnimation = Animation.timingCurve(0.22, 1, 0.36, 1, duration: settingsRevealDuration)
 
-    // Action bar entrance/exit. Enter uses a light spring with a subtle
-    // overshoot (stiffness 420 / damping 28 / mass 0.8 — Raycast/Linear-tier
-    // feel). Exit is a fast ease-out so it never lingers over content.
-    static let actionBarEnterSpring = Animation.spring(response: 0.34, dampingFraction: 0.78)
+    // Action bar entrance/exit. Use the same non-bouncy ease-out family as the
+    // dock and content transitions so selection feedback stays fast and never
+    // overshoots the compact header. Exit is faster so it never lingers over
+    // content.
+    static let actionBarEnterSpring = Animation.timingCurve(0.22, 1, 0.36, 1, duration: 0.18)
     static let actionBarExit = Animation.timingCurve(0.4, 0, 1, 1, duration: 0.15)
     // Per-button stagger delay for the action bar buttons (left-to-right fade).
     static let actionBarStaggerStep: TimeInterval = 0.03
+    static let actionBarStaggerDuration: TimeInterval = 0.22
 
-    // Focus-follow scroll spring for the card carousel. Matches the requested
-    // spring(response: 0.3, dampingFraction: 0.8) so preview arrow navigation
-    // scrolls the list with a snappy, low-latency spring — not the slower
-    // focusAnimation timing curve that read as laggy during preview nav.
-    static let focusFollowSpring = Animation.spring(response: 0.3, dampingFraction: 0.8)
+    // Keep the public token name for existing callers, but use a short
+    // critically-damped ease-out. Preview arrow navigation must feel immediate
+    // without the overshoot that a low-damping spring can introduce.
+    static let focusFollowSpring = Animation.timingCurve(0.22, 1, 0.36, 1, duration: 0.16)
 
     static var systemReduceMotion: Bool {
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -76,8 +95,16 @@ enum MacClippyMotion {
     }
 
     static func contentTransition(reduceMotion: Bool) -> AnyTransition {
-        guard !reduceMotion else { return .opacity }
+        guard !reduceMotion else { return .identity }
         return .opacity.combined(with: .offset(x: contentOffset))
+    }
+
+    static func fadeTransition(reduceMotion: Bool) -> AnyTransition {
+        reduceMotion ? .identity : .opacity
+    }
+
+    static func headerTransition(reduceMotion: Bool) -> AnyTransition {
+        reduceMotion ? .identity : .move(edge: .top).combined(with: .opacity)
     }
 
     // Animated List-style card updates: content changes enter with a small
@@ -85,7 +112,7 @@ enum MacClippyMotion {
     // smaller than the panel transition so list updates stay subordinate to
     // the user's search and copy actions.
     static func cardListTransition(reduceMotion: Bool) -> AnyTransition {
-        guard !reduceMotion else { return .opacity }
+        guard !reduceMotion else { return .identity }
         return .asymmetric(
             insertion: .opacity.combined(with: .offset(x: contentOffset)),
             removal: .opacity.combined(with: .scale(scale: 0.98))
@@ -94,10 +121,10 @@ enum MacClippyMotion {
 
     // Vertical number flip for the "N selected" counter. Old digit slides up
     // and fades out; new digit slides up from below and fades in. Direction
-    // is fixed upward (count up is the common case); Reduce Motion is plain
-    // opacity.
+    // is fixed upward (count up is the common case); Reduce Motion is an
+    // immediate state change with no transition.
     static func numberFlipTransition(reduceMotion: Bool) -> AnyTransition {
-        guard !reduceMotion else { return .opacity }
+        guard !reduceMotion else { return .identity }
         return .opacity.combined(with: .offset(y: 8))
     }
 }

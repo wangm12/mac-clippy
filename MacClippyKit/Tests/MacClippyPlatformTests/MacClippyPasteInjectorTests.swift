@@ -1,7 +1,6 @@
 import AppKit
-import XCTest
-
 import MacClippyPlatform
+import XCTest
 
 final class MacClippyPasteInjectorTests: XCTestCase {
     func testPrepareTextWritesPlainTextToInjectedPasteboard() {
@@ -27,6 +26,42 @@ final class MacClippyPasteInjectorTests: XCTestCase {
         XCTAssertTrue(MacClippyPasteboardPreparer.prepare(.files(urls), on: pasteboard))
         let pastedURLs = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL]
         XCTAssertEqual(pastedURLs, urls)
+    }
+
+    func testFailedPrepareRestoresOriginalPasteboard() {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("MacClippyPrepareRestore-\(UUID().uuidString)"))
+        XCTAssertTrue(pasteboard.setString("original", forType: .string))
+        let injector = MacClippyPasteInjector(
+            pasteboard: pasteboard,
+            preparer: { _, pasteboard in
+                pasteboard.clearContents()
+                return false
+            }
+        )
+
+        XCTAssertFalse(injector.prepareText("replacement"))
+        XCTAssertEqual(pasteboard.string(forType: .string), "original")
+    }
+
+    func testFailedPrepareDoesNotClearIncompleteOriginalProvider() {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("MacClippyPrepareUnavailable-\(UUID().uuidString)"))
+        let provider = UnavailablePasteboardItemProvider()
+        let item = NSPasteboardItem()
+        XCTAssertTrue(item.setDataProvider(provider, forTypes: [.string]))
+        XCTAssertTrue(pasteboard.writeObjects([item]))
+
+        let changeCountBefore = pasteboard.changeCount
+        let injector = MacClippyPasteInjector(
+            pasteboard: pasteboard,
+            preparer: { _, _ in
+                XCTFail("the preparer must not run for an incomplete snapshot")
+                return false
+            }
+        )
+
+        XCTAssertFalse(injector.prepareText("replacement"))
+        XCTAssertEqual(pasteboard.changeCount, changeCountBefore)
+        XCTAssertEqual(pasteboard.pasteboardItems?.first?.types, [.string])
     }
 
     func testManualPasteRequiredRestoresOriginalPasteboard() {
@@ -92,13 +127,31 @@ final class MacClippyPasteInjectorTests: XCTestCase {
         )
         XCTAssertEqual(order, ["beforePaste", "paste"])
     }
+
+    func testClosedSideEffectGatePreventsPasteboardWritesAndEvents() {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("MacClippyPasteGate-\(UUID().uuidString)"))
+        XCTAssertTrue(pasteboard.setString("original", forType: .string))
+        var eventCount = 0
+        let injector = MacClippyPasteInjector(
+            pasteboard: pasteboard,
+            isProcessTrusted: { true },
+            postEvents: { _, _ in eventCount += 1 }
+        )
+        let gate = MacClippyPasteInjectionGate()
+        gate.close()
+
+        XCTAssertFalse(injector.prepareText("replacement", gate: gate))
+        XCTAssertEqual(injector.inject(text: "replacement", gate: gate), .manualPasteRequired)
+        XCTAssertEqual(pasteboard.string(forType: .string), "original")
+        XCTAssertEqual(eventCount, 0)
+    }
 }
 
 private final class UnavailablePasteboardItemProvider: NSObject, NSPasteboardItemDataProvider {
     func pasteboard(
-        _ pasteboard: NSPasteboard?,
-        item: NSPasteboardItem,
-        provideDataForType type: NSPasteboard.PasteboardType
+        _: NSPasteboard?,
+        item _: NSPasteboardItem,
+        provideDataForType _: NSPasteboard.PasteboardType
     ) {
         // Deliberately leave the promised data unavailable. The injector must
         // refuse to replace this clipboard rather than attempting a lossy

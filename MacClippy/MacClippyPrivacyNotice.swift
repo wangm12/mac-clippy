@@ -10,7 +10,9 @@ enum MacClippyPrivacyNoticePolicy {
     static let message = """
     Mac Clippy keeps a local history of clipboard items so you can search, preview, copy, and paste them later.
 
-    Clipboard payloads and image blobs are encrypted with a key in Keychain. Previews, OCR text, labels, and search metadata are also stored locally so search can be fast. Diagnostics and backups are user-triggered local actions.
+    Clipboard payloads and image blobs are encrypted with a key in Keychain.
+    Previews, OCR text, custom names, and search metadata are stored locally.
+    Diagnostics and backups are user-triggered local actions.
 
     By default, concealed, transient, auto-generated, and common password-manager content is excluded. You can pause capture, add app or text exclusions, set retention limits, enable the advanced Capture All option, and delete history in Settings. Deleting history removes the record, search entry, OCR text, representation data, and associated blobs when they are no longer shared by another record.
 

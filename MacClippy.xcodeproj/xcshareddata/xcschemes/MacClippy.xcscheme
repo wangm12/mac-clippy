@@ -35,6 +35,20 @@
                ReferencedContainer = "container:MacClippy.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "EB48C2B1F8DD95A3D94C2ABE"
+               BuildableName = "MacClippyUITests.xctest"
+               BlueprintName = "MacClippyUITests"
+               ReferencedContainer = "container:MacClippy.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction
@@ -61,6 +75,17 @@
                BlueprintIdentifier = "A83F903AC2BCFB2EB9BE552D"
                BuildableName = "MacClippyTests.xctest"
                BlueprintName = "MacClippyTests"
+               ReferencedContainer = "container:MacClippy.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "EB48C2B1F8DD95A3D94C2ABE"
+               BuildableName = "MacClippyUITests.xctest"
+               BlueprintName = "MacClippyUITests"
                ReferencedContainer = "container:MacClippy.xcodeproj">
             </BuildableReference>
          </TestableReference>

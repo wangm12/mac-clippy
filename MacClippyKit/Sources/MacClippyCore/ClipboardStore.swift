@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 import GRDB
 
-public enum MacClippyStoreError: Error {
+public enum MacClippyStoreError: Error, Sendable {
     case recordNotFound
     case invalidStoredRecord
     case inputTooLarge
@@ -140,6 +140,30 @@ public final class MacClippyClipboardStore {
         }
     ]
 
+    // SQLite's default variable limit is commonly 999. Keep ID batches below
+    // that ceiling with room for future query arguments, and de-duplicate
+    // before querying so a repeated ID cannot cause duplicate work across
+    // batches.
+    static let sqliteIDBatchSize = 500
+
+    static func uniqueIDs(_ ids: [RecordID]) -> [RecordID] {
+        var seen = Set<RecordID>()
+        var unique: [RecordID] = []
+        unique.reserveCapacity(ids.count)
+        for id in ids where seen.insert(id).inserted {
+            unique.append(id)
+        }
+        return unique
+    }
+
+    static func idBatches(_ ids: [RecordID]) -> [[RecordID]] {
+        let unique = uniqueIDs(ids)
+        guard !unique.isEmpty else { return [] }
+        return stride(from: 0, to: unique.count, by: sqliteIDBatchSize).map { start in
+            Array(unique[start ..< min(start + sqliteIDBatchSize, unique.count)])
+        }
+    }
+
     private static let schemaSQL = """
         CREATE TABLE IF NOT EXISTS clipboard_records (
             id TEXT PRIMARY KEY NOT NULL,
@@ -169,8 +193,8 @@ public final class MacClippyClipboardStore {
         INSERT OR IGNORE INTO macclippy_lamport_clock(scope, value) VALUES ('clipboard', 0);
     """
 
-    private let database: MacClippyDatabase
-    private let key: SymmetricKey
+    let database: MacClippyDatabase
+    let key: SymmetricKey
     private let deviceID: DeviceID
     private let inputLimits: MacClippyPasteboardInputLimits
 
@@ -198,8 +222,8 @@ public final class MacClippyClipboardStore {
         ])
     }
 
-    public func databaseRowCount() -> Int64? {
-        database.tableRowCount("clipboard_records")
+    public func databaseRowCount() throws -> Int64? {
+        try database.tableRowCount("clipboard_records")
     }
 
     @discardableResult
@@ -230,6 +254,7 @@ public final class MacClippyClipboardStore {
         }
         return ClipboardItemMeta(
             id: id, created: now, modified: now, deviceID: deviceID, lamport: lamport,
+            contentKind: record.contentKind,
             preview: Self.preview(for: record), sourceAppBundleID: sourceAppBundleID,
             detectedTypeJSON: detectedTypeJSON
         )
@@ -269,8 +294,14 @@ public final class MacClippyClipboardStore {
         let envelope = try MacClippyCipher.seal(try encodedRecordData(record), with: key)
         let milliseconds = Self.milliseconds(now)
 
+        guard representations.count <= inputLimits.maxRepresentationsPerRecord else {
+            throw MacClippyStoreError.inputTooLarge
+        }
         var totalRepresentationBytes = 0
         for representation in representations {
+            guard representation.uti.utf8.count <= inputLimits.maxUTIBytes else {
+                throw MacClippyStoreError.inputTooLarge
+            }
             guard let payloadBytes = representation.payloadBytes else { continue }
             guard payloadBytes.count <= inputLimits.maxRepresentationBytes else {
                 throw MacClippyStoreError.inputTooLarge
@@ -357,6 +388,7 @@ public final class MacClippyClipboardStore {
 
         return ClipboardItemMeta(
             id: id, created: now, modified: now, deviceID: deviceID, lamport: lamport,
+            contentKind: record.contentKind,
             preview: Self.preview(for: record), sourceAppBundleID: sourceAppBundleID,
             detectedTypeJSON: detectedTypeJSON
         )
@@ -377,6 +409,21 @@ public final class MacClippyClipboardStore {
         spillPayload: ((Data) throws -> String)?,
         spilledBlobIDs: inout [String]
     ) throws -> PreparedRepresentationRow {
+        switch representation.payloadState {
+        case .present:
+            guard representation.payloadBytes != nil, representation.blobID == nil else {
+                throw MacClippyStoreError.invalidStoredRecord
+            }
+        case .spilled:
+            guard representation.payloadBytes == nil, representation.blobID != nil else {
+                throw MacClippyStoreError.invalidStoredRecord
+            }
+        case .unavailable, .oversized:
+            guard representation.payloadBytes == nil, representation.blobID == nil else {
+                throw MacClippyStoreError.invalidStoredRecord
+            }
+        }
+
         // Provider-unavailable payload: retain the UTI as a type-only row.
         // payloadBytes and blobID are both nil; payloadState is .unavailable.
         if representation.isUnavailable {
@@ -462,520 +509,30 @@ public final class MacClippyClipboardStore {
         return data
     }
 
-    public func list(
-        limit: Int,
-        offset: Int = 0,
-        contentKind: MacClippyContentKind? = nil,
-        filter: MacClippyClipboardMetadataFilter? = nil
-    ) throws -> [ClipboardItemMeta] {
-        guard limit > 0 else { return [] }
-        return try database.queue.read { connection in
-            var predicates: [String] = []
-            var rawArguments: [Any] = []
-            let activeFilter = filter ?? MacClippyClipboardMetadataFilter(contentKind: contentKind)
 
-            if let contentKind = activeFilter.contentKind {
-                predicates.append("content_kind = ?")
-                rawArguments.append(contentKind.rawValue)
-            }
-            for value in activeFilter.sourceAppContains {
-                predicates.append("LOWER(source_app) LIKE LOWER(?) ESCAPE '\\'")
-                rawArguments.append(Self.likePattern(for: value))
-            }
-            for value in activeFilter.labelContains {
-                predicates.append("LOWER(custom_label) LIKE LOWER(?) ESCAPE '\\'")
-                rawArguments.append(Self.likePattern(for: value))
-            }
-            if activeFilter.requiresLabel {
-                predicates.append("custom_label IS NOT NULL AND trim(custom_label) != ''")
-            }
-            if activeFilter.requiresOCR {
-                predicates.append("ocr_text IS NOT NULL AND trim(ocr_text) != ''")
-            }
-            for date in activeFilter.modifiedBefore {
-                predicates.append("modified < ?")
-                rawArguments.append(Self.milliseconds(date))
-            }
-            for date in activeFilter.modifiedAfter {
-                predicates.append("modified >= ?")
-                rawArguments.append(Self.milliseconds(date))
-            }
 
-            var sql = """
-                SELECT id, created, modified, device_id, lamport, kind, preview, source_app,
-                       frequency, last_accessed, custom_label, detected_type, ocr_text
-                FROM clipboard_records
-            """
-            if !predicates.isEmpty {
-                sql += " WHERE " + predicates.joined(separator: " AND ")
-            }
-            sql += " ORDER BY modified DESC, lamport DESC, id DESC LIMIT ? OFFSET ?"
-            rawArguments.append(limit)
-            rawArguments.append(max(0, offset))
-            return try Row.fetchAll(connection, sql: sql, arguments: StatementArguments(rawArguments)!).map(Self.meta)
-        }
-    }
 
-    public func contentKinds(for ids: [RecordID]) throws -> [RecordID: MacClippyContentKind] {
-        guard !ids.isEmpty else { return [:] }
-        let placeholders = Array(repeating: "?", count: ids.count).joined(separator: ",")
-        return try database.queue.read { connection in
-            try Row.fetchAll(
-                connection,
-                sql: "SELECT id, content_kind FROM clipboard_records WHERE id IN (\(placeholders))",
-                arguments: StatementArguments(ids.map(\.rawValue))
-            ).reduce(into: [RecordID: MacClippyContentKind]()) { result, row in
-                guard let id = RecordID(rawValue: row["id"] as String),
-                      let contentKind = MacClippyContentKind(rawValue: row["content_kind"] as String) else { return }
-                result[id] = contentKind
-            }
-        }
-    }
 
-    public func metas(for ids: [RecordID]) throws -> [ClipboardItemMeta] {
-        guard !ids.isEmpty else { return [] }
-        let placeholders = Array(repeating: "?", count: ids.count).joined(separator: ",")
-        let rows = try database.queue.read { connection in
-            try Row.fetchAll(connection, sql: """
-                SELECT id, created, modified, device_id, lamport, kind, preview, source_app,
-                       frequency, last_accessed, custom_label, detected_type, ocr_text
-                FROM clipboard_records WHERE id IN (\(placeholders))
-            """, arguments: StatementArguments(ids.map(\.rawValue)))
-        }
-        let values = try rows.map(Self.meta)
-        let byID = Dictionary(uniqueKeysWithValues: values.map { ($0.id, $0) })
-        return ids.compactMap { byID[$0] }
-    }
 
-    public func body(for id: RecordID) throws -> ClipboardRecord {
-        let data: Data = try database.queue.read { connection in
-            guard let row = try Row.fetchOne(connection, sql: "SELECT envelope FROM clipboard_records WHERE id = ?", arguments: [id.rawValue]) else {
-                throw MacClippyStoreError.recordNotFound
-            }
-            guard let value = row["envelope"] as Data? else { throw MacClippyStoreError.invalidStoredRecord }
-            return value
-        }
-        return try JSONDecoder().decode(ClipboardRecord.self, from: MacClippyCipher.open(MacClippyEnvelope(combined: data), with: key))
-    }
 
-    // Atomically replaces the editable primary payload and its card metadata.
-    // Retained representation rows are deliberately updated in place: only
-    // the canonical representation for the edited content kind is changed;
-    // every other advertised UTI remains untouched.
-    @discardableResult
-    public func update(id: RecordID, with record: ClipboardRecord, now: Date = Date()) throws -> ClipboardItemMeta {
-        let envelope = try MacClippyCipher.seal(try JSONEncoder().encode(record), with: key)
-        let milliseconds = Self.milliseconds(now)
-        let primaryBytes = Self.primaryRepresentationBytes(for: record)
-        let primaryUTIs = Self.primaryRepresentationUTIs(for: record)
 
-        try database.queue.write { connection in
-            guard try Row.fetchOne(connection, sql: "SELECT id FROM clipboard_records WHERE id = ?", arguments: [id.rawValue]) != nil else {
-                throw MacClippyStoreError.recordNotFound
-            }
-            try connection.execute(sql: """
-                UPDATE clipboard_records
-                SET modified = ?, content_kind = ?, preview = ?, envelope = ?
-                WHERE id = ?
-            """, arguments: [
-                milliseconds, record.contentKind.rawValue, Self.preview(for: record), envelope.combined, id.rawValue
-            ])
 
-            if let primaryBytes,
-               let row = try Row.fetchOne(
-                   connection,
-                   sql: "SELECT uti FROM clipboard_representations WHERE record_id = ? AND uti IN (\(Array(repeating: "?", count: primaryUTIs.count).joined(separator: ","))) ORDER BY sort_order LIMIT 1",
-                   arguments: StatementArguments([id.rawValue] + primaryUTIs)
-               ) {
-                let uti: String = row["uti"]
-                let sealed = try MacClippyCipher.seal(primaryBytes, with: key)
-                try connection.execute(sql: """
-                    UPDATE clipboard_representations
-                    SET payload = ?, blob_id = NULL, payload_state = 'present'
-                    WHERE record_id = ? AND uti = ?
-                """, arguments: [sealed.combined, id.rawValue, uti])
-            }
-        }
 
-        guard let meta = try metas(for: [id]).first else { throw MacClippyStoreError.recordNotFound }
-        return meta
-    }
 
-    // Batch body reads for pinboard/history projections. This keeps the SQL
-    // work and database queue hop at one operation instead of one SELECT per
-    // record; decryption still happens once per envelope outside the read
-    // transaction.
-    public func bodies(for ids: [RecordID]) throws -> [RecordID: ClipboardRecord] {
-        guard !ids.isEmpty else { return [:] }
-        let placeholders = Array(repeating: "?", count: ids.count).joined(separator: ",")
-        let envelopes: [(String, Data)] = try database.queue.read { connection in
-            try Row.fetchAll(
-                connection,
-                sql: "SELECT id, envelope FROM clipboard_records WHERE id IN (\(placeholders))",
-                arguments: StatementArguments(ids.map(\.rawValue))
-            ).compactMap { row in
-                guard let rawID: String = row["id"], let envelope: Data = row["envelope"] else { return nil }
-                return (rawID, envelope)
-            }
-        }
 
-        var values: [RecordID: ClipboardRecord] = [:]
-        values.reserveCapacity(envelopes.count)
-        for (rawID, envelope) in envelopes {
-            guard let id = RecordID(rawValue: rawID) else { continue }
-            values[id] = try JSONDecoder().decode(
-                ClipboardRecord.self,
-                from: MacClippyCipher.open(MacClippyEnvelope(combined: envelope), with: key)
-            )
-        }
-        return values
-    }
 
-    public func isBlobReferenced(_ blobID: String, excluding recordID: RecordID? = nil) throws -> Bool {
-        let excluded = recordID.map { Set([$0]) } ?? []
-        return try referencedBlobIDs(excluding: excluded).contains(blobID)
-    }
-
-    /// Returns every BlobStore identifier still referenced by the database,
-    /// optionally ignoring records that are about to be deleted. The legacy
-    /// image reference lives inside an encrypted envelope, so it cannot be
-    /// resolved with SQL alone; decrypt each surviving envelope once and
-    /// share the resulting set across a batch cleanup.
-    ///
-    /// This replaces the old per-blob `isBlobReferenced` scan. A delete or
-    /// retention batch now performs one O(N) reference pass instead of one
-    /// full-history pass for every blob candidate.
-    public func referencedBlobIDs(excluding recordIDs: Set<RecordID> = []) throws -> Set<String> {
-        let representationIDs = try database.queue.read { connection in
-            try Row.fetchAll(
-                connection,
-                sql: "SELECT DISTINCT blob_id FROM clipboard_representations WHERE blob_id IS NOT NULL"
-            ).compactMap { $0["blob_id"] as String? }
-        }
-
-        var ids = Set(representationIDs)
-        // The legacy blob reference can only be present in image records.
-        // Use the persisted content_kind discriminator before decrypting so
-        // retention and delete cleanup do not walk every historical envelope.
-        for meta in try list(limit: Int.max, contentKind: .image) where !recordIDs.contains(meta.id) {
-            // A failed decrypt/decode is not evidence that the record has no
-            // Blob reference. Propagate the error so deletion/retention aborts
-            // before it can delete a Blob belonging to a corrupt record.
-            if let blobID = try body(for: meta.id).imageBlobID {
-                ids.insert(blobID)
-            }
-        }
-        return ids
-    }
-
-    // Returns every external Blob referenced by a record, including the
-    // legacy primary image payload and oversized representation rows. Callers
-    // use this before deleting the parent row so all of the record's files can
-    // be reclaimed immediately instead of waiting for startup reconciliation.
-    public func blobIDs(for id: RecordID) throws -> Set<String> {
-        var ids = Set<String>()
-        guard !(try metas(for: [id]).isEmpty) else {
-            throw MacClippyStoreError.recordNotFound
-        }
-        if try contentKinds(for: [id])[id] == .image,
-           let primary = try body(for: id).imageBlobID {
-            ids.insert(primary)
-        }
-        let representationIDs = try database.queue.read { connection in
-            try Row.fetchAll(
-                connection,
-                sql: "SELECT blob_id FROM clipboard_representations WHERE record_id = ? AND blob_id IS NOT NULL",
-                arguments: [id.rawValue]
-            ).compactMap { $0["blob_id"] as String? }
-        }
-        ids.formUnion(representationIDs)
-        return ids
-    }
-
-    /// Persists a deletion intent before callers touch the other stores. A
-    /// journal with no blob rows is still retained in the operations table,
-    /// so records without external payloads are recoverable too.
-    public func beginDeletion(ids: [RecordID], now: Date = Date()) throws -> MacClippyDeletionJournalEntry? {
-        let orderedIDs = Array(NSOrderedSet(array: ids))
-            .compactMap { $0 as? RecordID }
-        guard !orderedIDs.isEmpty else { return nil }
-
-        let presentIDs = try Set(metas(for: orderedIDs).map(\.id))
-        guard !presentIDs.isEmpty else { return nil }
-
-        var blobIDsByRecord: [RecordID: Set<String>] = [:]
-        var allBlobIDs = Set<String>()
-        for id in orderedIDs where presentIDs.contains(id) {
-            let ids = try blobIDs(for: id)
-            blobIDsByRecord[id] = ids
-            allBlobIDs.formUnion(ids)
-        }
-
-        let operationID = UUID().uuidString
-        try database.queue.write { connection in
-            try connection.execute(
-                sql: "INSERT INTO clipboard_deletion_operations(operation_id, created) VALUES (?, ?)",
-                arguments: [operationID, Self.milliseconds(now)]
-            )
-            for id in orderedIDs where presentIDs.contains(id) {
-                try connection.execute(
-                    sql: """
-                        INSERT INTO clipboard_deletion_records(operation_id, record_id)
-                        VALUES (?, ?)
-                    """,
-                    arguments: [operationID, id.rawValue]
-                )
-                for blobID in blobIDsByRecord[id] ?? [] {
-                    try connection.execute(
-                        sql: """
-                            INSERT INTO clipboard_deletion_journal(operation_id, record_id, blob_id)
-                            VALUES (?, ?, ?)
-                        """,
-                        arguments: [operationID, id.rawValue, blobID]
-                    )
-                }
-            }
-        }
-
-        return MacClippyDeletionJournalEntry(
-            operationID: operationID,
-            recordIDs: orderedIDs.filter { presentIDs.contains($0) },
-            blobIDs: allBlobIDs
-        )
-    }
-
-    public func pendingDeletions() throws -> [MacClippyDeletionJournalEntry] {
-        try database.queue.read { connection in
-            let operations = try Row.fetchAll(
-                connection,
-                sql: "SELECT operation_id FROM clipboard_deletion_operations ORDER BY created ASC"
-            )
-            return try operations.map { operation in
-                let operationID: String = operation["operation_id"]
-                let recordIDs = try Row.fetchAll(
-                    connection,
-                    sql: """
-                        SELECT record_id
-                        FROM clipboard_deletion_records
-                        WHERE operation_id = ?
-                        ORDER BY record_id ASC
-                    """,
-                    arguments: [operationID]
-                ).compactMap { row -> RecordID? in
-                    guard let rawID: String = row["record_id"] else { return nil }
-                    return RecordID(rawValue: rawID)
-                }
-                let rows = try Row.fetchAll(
-                    connection,
-                    sql: """
-                        SELECT record_id, blob_id
-                        FROM clipboard_deletion_journal
-                        WHERE operation_id = ?
-                        ORDER BY record_id ASC, blob_id ASC
-                    """,
-                    arguments: [operationID]
-                )
-                var blobIDs = Set<String>()
-                for row in rows {
-                    if let blobID: String = row["blob_id"] {
-                        blobIDs.insert(blobID)
-                    }
-                }
-                return MacClippyDeletionJournalEntry(
-                    operationID: operationID,
-                    recordIDs: recordIDs,
-                    blobIDs: blobIDs
-                )
-            }
-        }
-    }
-
-    public func completeDeletion(operationID: String) throws {
-        try database.queue.write { connection in
-            try connection.execute(
-                sql: "DELETE FROM clipboard_deletion_operations WHERE operation_id = ?",
-                arguments: [operationID]
-            )
-        }
-    }
-
-    /// Returns the encrypted inline storage estimate plus external blob IDs.
-    /// Blob byte sizes are intentionally resolved by the caller's BlobStore so
-    /// this store remains independent of filesystem ownership.
-    public func storageFootprint(for id: RecordID) throws -> MacClippyStoredPayloadFootprint {
-        let body = try body(for: id)
-        let encodedBodyBytes = try JSONEncoder().encode(body).count
-        let representationBytes = try database.queue.read { connection in
-            try Int.fetchOne(
-                connection,
-                sql: "SELECT COALESCE(SUM(length(payload)), 0) FROM clipboard_representations WHERE record_id = ?",
-                arguments: [id.rawValue]
-            ) ?? 0
-        }
-        return MacClippyStoredPayloadFootprint(
-            inlineBytes: encodedBodyBytes + representationBytes,
-            blobIDs: try blobIDs(for: id)
-        )
-    }
-
-    public func delete(id: RecordID) throws {
-        try database.queue.write { connection in
-            try connection.execute(sql: "DELETE FROM clipboard_records WHERE id = ?", arguments: [id.rawValue])
-        }
-    }
-
-    public func bumpFrequency(id: RecordID, now: Date = Date()) throws {
-        try database.queue.write { connection in
-            try connection.execute(sql: """
-                UPDATE clipboard_records SET frequency = frequency + 1, last_accessed = ? WHERE id = ?
-            """, arguments: [Self.milliseconds(now), id.rawValue])
-        }
-    }
-
-    // P2a: set or clear a trimmed custom label for a clipboard record. A
-    // blank/whitespace-only label is normalized to nil so blank input clears
-    // the label rather than persisting an empty string. The record's modified
-    // timestamp is bumped so the card reflects the edit and ordering by
-    // `modified DESC` stays meaningful after a label edit. Returns the updated
-    // meta so the runtime can reindex the search store and the dock can
-    // refresh the card without an extra read. Throws recordNotFound when the
-    // id is not present so the runtime never reindexes a row that was deleted
-    // concurrently.
-    @discardableResult
-    public func setCustomLabel(id: RecordID, label: String?, now: Date = Date()) throws -> ClipboardItemMeta {
-        let trimmed = label?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalized = (trimmed?.isEmpty ?? true) ? nil : trimmed
-        let milliseconds = Self.milliseconds(now)
-        try database.queue.write { connection in
-            try connection.execute(
-                sql: "UPDATE clipboard_records SET custom_label = ?, modified = ? WHERE id = ?",
-                arguments: [normalized, milliseconds, id.rawValue]
-            )
-            // changesCount is the row count touched by the UPDATE that just
-            // ran. A zero count means the id was not present; surface
-            // recordNotFound so the runtime never reindexes a row that was
-            // deleted concurrently.
-            guard connection.changesCount > 0 else { throw MacClippyStoreError.recordNotFound }
-        }
-        guard let meta = (try metas(for: [id])).first else { throw MacClippyStoreError.recordNotFound }
-        return meta
-    }
-
-    public func setOCRText(id: RecordID, text: String?) throws {
-        try database.queue.write { connection in
-            try connection.execute(sql: "UPDATE clipboard_records SET ocr_text = ? WHERE id = ?", arguments: [text, id.rawValue])
-        }
-    }
-
-    public func recentByFrequency(limit: Int, offset: Int = 0) throws -> [ClipboardItemMeta] {
-        guard limit > 0 else { return [] }
-        return try database.queue.read { connection in
-            try Row.fetchAll(connection, sql: """
-                SELECT id, created, modified, device_id, lamport, kind, preview, source_app,
-                       frequency, last_accessed, custom_label, detected_type, ocr_text
-                FROM clipboard_records ORDER BY frequency DESC, modified DESC, id DESC LIMIT ? OFFSET ?
-            """, arguments: [limit, max(0, offset)]).map(Self.meta)
-        }
-    }
-
-    public func allMetas() throws -> [ClipboardItemMeta] {
-        try list(limit: Int.max)
-    }
-
-    // Returns every retained representation for a record, decrypting inline
-    // payloads and leaving blob-backed payloads for the caller to read via
-    // BlobStore. Returns an empty set for legacy records that predate the 002
-    // migration, so callers can always treat missing representations as
-    // "no extra slots captured" rather than a missing-table error. Rows with
-    // payload_state 'unavailable' are returned as type-only markers (nil
-    // payloadBytes, nil blobID) so the advertised type set is complete even
-    // when the provider never materialized the bytes.
-    public func representations(for id: RecordID) throws -> [MacClippyClipboardRepresentation] {
-        try database.queue.read { connection in
-            let rows = try Row.fetchAll(
-                connection,
-                sql: "SELECT uti, payload, blob_id, payload_state FROM clipboard_representations WHERE record_id = ? ORDER BY sort_order ASC",
-                arguments: [id.rawValue]
-            )
-            return try rows.map { row in
-                let uti: String = row["uti"]
-                let blobID: String? = row["blob_id"]
-                let payload: Data? = row["payload"]
-                let stateString: String = (row["payload_state"] as String?) ?? MacClippyClipboardRepresentationPayloadState.present.rawValue
-                let payloadState = MacClippyClipboardRepresentationPayloadState(rawValue: stateString) ?? .present
-
-                switch payloadState {
-                case .unavailable:
-                    return MacClippyClipboardRepresentation(uti: uti, payloadBytes: nil, blobID: nil, payloadState: .unavailable)
-                case .oversized:
-                    return MacClippyClipboardRepresentation(uti: uti, payloadBytes: nil, blobID: nil, payloadState: .oversized)
-                case .spilled:
-                    return MacClippyClipboardRepresentation(uti: uti, payloadBytes: nil, blobID: blobID, payloadState: .spilled)
-                case .present:
-                    guard let payload else {
-                        throw MacClippyStoreError.invalidStoredRecord
-                    }
-                    do {
-                        let decryptedPayload = try MacClippyCipher.open(
-                            MacClippyEnvelope(combined: payload),
-                            with: key
-                        )
-                        return MacClippyClipboardRepresentation(
-                            uti: uti,
-                            payloadBytes: decryptedPayload,
-                            blobID: nil,
-                            payloadState: .present
-                        )
-                    } catch {
-                        // A corrupted representation must remain observable as
-                        // damaged storage. Returning empty Data would make the
-                        // UI report a usable empty payload and could turn a
-                        // failed copy/paste into a misleading success.
-                        throw MacClippyStoreError.invalidStoredRecord
-                    }
-                }
-            }
-        }
-    }
-
-    // All BlobStore identifiers referenced by the representation side table.
-    // Used by startup reconciliation to detect orphan blobs that are no longer
-    // referenced by any record (e.g. after a crash mid-capture).
-    public func allRepresentationBlobIDs() throws -> Set<String> {
-        try database.queue.read { connection in
-            let rows = try Row.fetchAll(
-                connection,
-                sql: "SELECT DISTINCT blob_id FROM clipboard_representations WHERE blob_id IS NOT NULL"
-            )
-            return Set(rows.compactMap { $0["blob_id"] as String? })
-        }
-    }
-
-    // Removes every representation row for a record. The 002 migration sets
-    // ON DELETE CASCADE on the side table, so delete(id:) already cascades
-    // when foreign_keys is on; this method exists so reconciliation and tests
-    // can drop representations without deleting the parent record.
-    public func deleteRepresentations(for id: RecordID) throws {
-        try database.queue.write { connection in
-            try connection.execute(
-                sql: "DELETE FROM clipboard_representations WHERE record_id = ?",
-                arguments: [id.rawValue]
-            )
-        }
-    }
-
-    private static func milliseconds(_ date: Date) -> Int64 {
+    static func milliseconds(_ date: Date) -> Int64 {
         Int64(date.timeIntervalSince1970 * 1_000)
     }
 
-    private static func likePattern(for value: String) -> String {
+    static func likePattern(for value: String) -> String {
         "%" + value
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "%", with: "\\%")
             .replacingOccurrences(of: "_", with: "\\_") + "%"
     }
 
-    private static func preview(for record: ClipboardRecord) -> String {
+    static func preview(for record: ClipboardRecord) -> String {
         switch record {
         case let .text(value): String(value.prefix(120))
         case .rtf: "(rich text)"
@@ -985,7 +542,7 @@ public final class MacClippyClipboardStore {
         }
     }
 
-    private static func primaryRepresentationUTIs(for record: ClipboardRecord) -> [String] {
+    static func primaryRepresentationUTIs(for record: ClipboardRecord) -> [String] {
         switch record {
         case .text: ["public.utf8-plain-text", "public.text", "NSStringPboardType"]
         case .html: ["public.html"]
@@ -995,7 +552,7 @@ public final class MacClippyClipboardStore {
         }
     }
 
-    private static func primaryRepresentationBytes(for record: ClipboardRecord) -> Data? {
+    static func primaryRepresentationBytes(for record: ClipboardRecord) -> Data? {
         switch record {
         case let .text(value), let .html(value): value.data(using: .utf8)
         case let .rtf(data): data
@@ -1013,18 +570,25 @@ public final class MacClippyClipboardStore {
         return result.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func meta(_ row: Row) throws -> ClipboardItemMeta {
+    static func meta(_ row: Row) throws -> ClipboardItemMeta {
+        guard let rawLamport: Int64 = row["lamport"], rawLamport >= 0 else {
+            throw MacClippyStoreError.invalidStoredRecord
+        }
         guard let id = RecordID(rawValue: row["id"]),
               let deviceID = DeviceID(rawValue: row["device_id"]),
-              let kind = RecordKind(rawValue: row["kind"] as String) else { throw MacClippyStoreError.invalidStoredRecord }
+              let kind = RecordKind(rawValue: row["kind"] as String),
+              let contentKind = MacClippyContentKind(rawValue: row["content_kind"] as String) else {
+            throw MacClippyStoreError.invalidStoredRecord
+        }
         let lastAccessed: Int64? = row["last_accessed"]
         return ClipboardItemMeta(
             id: id,
             created: Date(timeIntervalSince1970: Double(row["created"] as Int64) / 1_000),
             modified: Date(timeIntervalSince1970: Double(row["modified"] as Int64) / 1_000),
             deviceID: deviceID,
-            lamport: UInt64(row["lamport"] as Int64),
+            lamport: UInt64(rawLamport),
             kind: kind,
+            contentKind: contentKind,
             preview: row["preview"],
             sourceAppBundleID: row["source_app"],
             frequency: Int(row["frequency"] as Int64? ?? 0),

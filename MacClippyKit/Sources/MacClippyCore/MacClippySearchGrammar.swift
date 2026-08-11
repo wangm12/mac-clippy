@@ -13,7 +13,7 @@ import Foundation
 // - Unknown or malformed clauses (unknown key, empty value, unparseable date)
 //   are NOT silently dropped and NOT treated as match-all. They degrade to a
 //   bare free-text term so the query narrows via FTS instead of broadening.
-// - Quoted values (tag:"project alpha") are accepted; the surrounding quotes
+// - Quoted values (name:"project alpha") are accepted; the surrounding quotes
 //   are stripped and embedded escaped quotes are handled.
 // - Dates are parsed with the current local calendar so a malformed date
 //   never crashes; an invalid date degrades the clause to a bare term.
@@ -233,13 +233,13 @@ public enum MacClippySearchGrammar {
             // term so "app:" alone does not match everything.
             return cleaned.isEmpty ? .bare(token) : .app(cleaned)
 
-        case "tag", "label":
+        case "name", "tag", "label":
             guard let cleaned = unquote(value) else { return .bare(token) }
             return cleaned.isEmpty ? .bare(token) : .label(cleaned)
 
         case "has":
             switch value {
-            case "label": return .hasLabel
+            case "name", "label": return .hasLabel
             case "ocr": return .hasOCR
             default:
                 // Unknown has:<x>: degrade to a bare term.

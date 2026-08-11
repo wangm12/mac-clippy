@@ -17,6 +17,25 @@ MacClippy.xcodeproj/xcuserdata/
 MacClippy.xcodeproj/project.xcworkspace/xcuserdata/
 *.xcuserstate
 
-# Generated Swift package resolution state
-MacClippyKit/Package.resolved
-MacClippy.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+# Local credentials and signing material
+.env
+.env.*
+!.env.example
+*.p12
+*.mobileprovision
+*.provisionprofile
+*.pem
+*.key
+
+# Xcode archives and export products
+*.xcarchive/
+*.dSYM/
+*.dSYM.zip
+*.ipa
+*.pkg
+
+# Local design/agent context
+.impeccable.md
+
+# Keep Swift package resolution state under version control so clean builds
+# use the reviewed dependency revision instead of re-resolving a floating 7.x.

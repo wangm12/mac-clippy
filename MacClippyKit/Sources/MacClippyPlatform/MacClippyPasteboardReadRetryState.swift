@@ -192,7 +192,8 @@ public enum MacClippyPasteboardAvailability {
         var result: [(itemIndex: Int, uti: String)] = []
         for (index, item) in change.items.enumerated() {
             for type in item.types {
-                if !item.oversizedTypes.contains(type),
+                if type != MacClippyPasteboardInputLimits.truncatedUTIMarker,
+                   !item.oversizedTypes.contains(type),
                    item.data(forType: type) == nil,
                    item.string(forType: type) == nil {
                     result.append((itemIndex: index, uti: type))

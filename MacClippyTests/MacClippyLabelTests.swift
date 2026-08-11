@@ -4,10 +4,10 @@ import XCTest
 import MacClippyCore
 import MacClippyPlatform
 
-// P2a focused tests for the label feature at the runtime and dock-model
+// P2a focused tests for the rename feature at the runtime and dock-model
 // level: search/index preservation (body + OCR + label), clear retains
 // body/OCR searchability while removing the label term, the model action path
-// reports labelSaved feedback and reloads, and the type-aware card content
+// reports nameSaved feedback and reloads, and the type-aware card content
 // (customLabel, displayTitle, typeMetadataSubtitle, fileURLs, imageDimensions)
 // is presented correctly.
 final class MacClippyLabelTests: XCTestCase {
@@ -140,10 +140,10 @@ final class MacClippyLabelTests: XCTestCase {
         XCTAssertFalse(snapshot.isEditable)
     }
 
-    // MARK: - Dock model: labelSaved feedback + reload action path
+    // MARK: - Dock model: nameSaved feedback + reload action path
 
     @MainActor
-    func testModelSetLabelReportsSavedFeedbackAndReloads() throws {
+    func testModelRenameReportsSavedFeedbackAndReloads() throws {
         let model = MacClippyDockModel(runtime: runtime)
         let meta = try runtime.appendTestRecord(.text("body"))
         model.reload()
@@ -155,12 +155,12 @@ final class MacClippyLabelTests: XCTestCase {
         }
 
         model.focus(entry)
-        model.setLabelFocused("  my label  ")
+        model.renameFocused("  my label  ")
 
-        // The action runs on the work queue; wait for labelSaved feedback.
+        // The action runs on the work queue; wait for nameSaved feedback.
         wait { model.actionFeedback != nil }
-        guard case let .labelSaved(cleared) = model.actionFeedback else {
-            XCTFail("expected .labelSaved feedback, got \(String(describing: model.actionFeedback))")
+        guard case let .nameSaved(cleared) = model.actionFeedback else {
+            XCTFail("expected .nameSaved feedback, got \(String(describing: model.actionFeedback))")
             return
         }
         XCTAssertFalse(cleared, "a non-blank label should report cleared == false")
@@ -171,7 +171,7 @@ final class MacClippyLabelTests: XCTestCase {
     }
 
     @MainActor
-    func testModelSetLabelBlankReportsClearedFeedbackAndClearsLabel() throws {
+    func testModelRenameBlankReportsClearedFeedbackAndClearsName() throws {
         let model = MacClippyDockModel(runtime: runtime)
         let meta = try runtime.appendTestRecord(.text("body"))
         _ = try runtime.setCustomLabel(id: meta.id, label: "existing")
@@ -185,12 +185,12 @@ final class MacClippyLabelTests: XCTestCase {
         XCTAssertEqual(entry.customLabel, "existing")
 
         model.focus(entry)
-        // Pass a whitespace-only label: the model trims and reports cleared.
-        model.setLabelFocused("   ")
+        // Pass a whitespace-only name: the model trims and reports cleared.
+        model.renameFocused("   ")
 
         wait { model.actionFeedback != nil }
-        guard case let .labelSaved(cleared) = model.actionFeedback else {
-            XCTFail("expected .labelSaved feedback, got \(String(describing: model.actionFeedback))")
+        guard case let .nameSaved(cleared) = model.actionFeedback else {
+            XCTFail("expected .nameSaved feedback, got \(String(describing: model.actionFeedback))")
             return
         }
         XCTAssertTrue(cleared, "a blank label should report cleared == true")
@@ -200,8 +200,8 @@ final class MacClippyLabelTests: XCTestCase {
     }
 
     @MainActor
-    func testModelSetLabelForArbitraryIDDoesNotRequireFocus() throws {
-        // setLabel(for:label:) is the entry point used by the inline editor
+    func testModelRenameForArbitraryIDDoesNotRequireFocus() throws {
+        // renameItem(id:name:) is the entry point used by the inline editor
         // when the edited card is not the focused one. It must persist without
         // relying on focusedItem.
         let model = MacClippyDockModel(runtime: runtime)
@@ -209,11 +209,11 @@ final class MacClippyLabelTests: XCTestCase {
         model.reload()
         wait { model.historyItems.contains(where: { $0.id == meta.id }) }
 
-        model.setLabel(for: meta.id, label: "editor label")
+        model.renameItem(id: meta.id, name: "editor label")
 
         wait { model.actionFeedback != nil }
-        guard case .labelSaved = model.actionFeedback else {
-            XCTFail("expected .labelSaved feedback, got \(String(describing: model.actionFeedback))")
+        guard case .nameSaved = model.actionFeedback else {
+            XCTFail("expected .nameSaved feedback, got \(String(describing: model.actionFeedback))")
             return
         }
         wait { model.historyItems.first(where: { $0.id == meta.id })?.customLabel == "editor label" }

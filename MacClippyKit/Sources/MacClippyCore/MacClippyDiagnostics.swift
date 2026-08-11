@@ -30,6 +30,7 @@ public enum MacClippyErrorCode: String, Codable, Sendable, CaseIterable {
     case hotkeyRegistrationFailed
     case permissionUnavailable
     case databaseHealthFailed
+    case corruptStoredRecord
     case backupFailed
     case recoveryFailed
     case launchAtLoginUpdateFailed

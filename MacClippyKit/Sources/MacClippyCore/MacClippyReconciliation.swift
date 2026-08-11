@@ -1,166 +1,386 @@
 import Foundation
 
-// Startup reconciliation for orphan blobs and FTS rows.
-//
-// P0 capture writes the legacy envelope, the representation side table, the
-// BlobStore bytes, and the FTS index in separate steps. A crash or force-quit
-// mid-capture can leave:
-//   - a blob on disk that no clipboard record references (orphan blob), or
-//   - an FTS row whose clipboard record was never persisted (orphan FTS row).
-//
-// This service runs once at startup, off the main thread, and trims both
-// kinds of orphans. It is intentionally conservative: it only deletes blobs
-// that are referenced by neither the legacy envelope imageBlobID set nor the
-// representation side table, and it only deletes FTS rows whose record_id is
-// not present in clipboard_records. It never deletes clipboard records or
-// representations; those are user-visible data.
+private struct MacClippyReconciliationDiagnosticSample<Element: Hashable> {
+    private let limit: Int
+    private(set) var values: [Element] = []
+    private var seen = Set<Element>()
+    private(set) var count = 0
+
+    init(limit: Int) {
+        self.limit = limit
+    }
+
+    mutating func append(_ value: Element) {
+        count += 1
+        guard values.count < limit, seen.insert(value).inserted else { return }
+        values.append(value)
+    }
+}
+
+private struct MacClippyReconciliationBlobReferenceScan {
+    let referenced: MacClippyReachabilityFilter
+    let missing: MacClippyReconciliationDiagnosticSample<String>
+}
+
+private struct MacClippyReconciliationBlobCleanupScan {
+    let orphan: MacClippyReconciliationDiagnosticSample<String>
+    let failed: MacClippyReconciliationDiagnosticSample<String>
+}
+
+private struct MacClippyReconciliationFTSScan {
+    let orphan: MacClippyReconciliationDiagnosticSample<RecordID>
+    let missing: MacClippyReconciliationDiagnosticSample<RecordID>
+    let failed: MacClippyReconciliationDiagnosticSample<RecordID>
+}
+
+private struct MacClippyReachabilityFilter {
+    private static let bitCount = 1 << 22
+    private static let hashCount = 4
+    private var words = [UInt64](repeating: 0, count: bitCount / 64)
+
+    mutating func insert(_ value: String) {
+        for index in indexes(for: value) {
+            words[index / 64] |= 1 << UInt64(index % 64)
+        }
+    }
+
+    func mightContain(_ value: String) -> Bool {
+        indexes(for: value).allSatisfy { index in
+            words[index / 64] & (1 << UInt64(index % 64)) != 0
+        }
+    }
+
+    private func indexes(for value: String) -> [Int] {
+        var first: UInt64 = 14_695_981_039_346_656_037
+        var second: UInt64 = 1_099_511_628_211
+        for byte in value.utf8 {
+            first ^= UInt64(byte)
+            first &*= 1_099_511_628_211
+            second ^= UInt64(byte)
+            second &*= 1_405_759_539_483
+        }
+        let modulus = UInt64(Self.bitCount)
+        return (0 ..< Self.hashCount).map { offset in
+            Int((first &+ UInt64(offset) &* second) % modulus)
+        }
+    }
+}
+
+// Startup reconciliation for orphan blobs and FTS rows. The capture path
+// writes the clipboard database, external blobs, and FTS in separate steps, so
+// a crash can leave secondary artifacts behind. This service is deliberately
+// conservative: a possible blob reference is treated as live, while corrupt
+// primary records fail closed before any cleanup begins.
 public enum MacClippyReconciliation {
+    private static let pageSize = 256
+    private static let diagnosticSampleLimit = 256
+
     public struct Result: Sendable, Equatable {
         public let orphanBlobIDs: [String]
         public let missingBlobIDs: [String]
         public let orphanFTSRecordIDs: [RecordID]
+        public let missingFTSRecordIDs: [RecordID]
         public let failedBlobCleanupIDs: [String]
         public let failedFTSCleanupIDs: [RecordID]
+        public let orphanBlobCount: Int
+        public let missingBlobCount: Int
+        public let orphanFTSRecordCount: Int
+        public let missingFTSRecordCount: Int
+        public let failedBlobCleanupCount: Int
+        public let failedFTSCleanupCount: Int
 
         public init(
             orphanBlobIDs: [String],
             missingBlobIDs: [String] = [],
             orphanFTSRecordIDs: [RecordID],
+            missingFTSRecordIDs: [RecordID] = [],
             failedBlobCleanupIDs: [String] = [],
-            failedFTSCleanupIDs: [RecordID] = []
+            failedFTSCleanupIDs: [RecordID] = [],
+            orphanBlobCount: Int? = nil,
+            missingBlobCount: Int? = nil,
+            orphanFTSRecordCount: Int? = nil,
+            missingFTSRecordCount: Int? = nil,
+            failedBlobCleanupCount: Int? = nil,
+            failedFTSCleanupCount: Int? = nil
         ) {
             self.orphanBlobIDs = orphanBlobIDs
             self.missingBlobIDs = missingBlobIDs
             self.orphanFTSRecordIDs = orphanFTSRecordIDs
+            self.missingFTSRecordIDs = missingFTSRecordIDs
             self.failedBlobCleanupIDs = failedBlobCleanupIDs
             self.failedFTSCleanupIDs = failedFTSCleanupIDs
+            self.orphanBlobCount = orphanBlobCount ?? orphanBlobIDs.count
+            self.missingBlobCount = missingBlobCount ?? missingBlobIDs.count
+            self.orphanFTSRecordCount = orphanFTSRecordCount ?? orphanFTSRecordIDs.count
+            self.missingFTSRecordCount = missingFTSRecordCount ?? missingFTSRecordIDs.count
+            self.failedBlobCleanupCount = failedBlobCleanupCount ?? failedBlobCleanupIDs.count
+            self.failedFTSCleanupCount = failedFTSCleanupCount ?? failedFTSCleanupIDs.count
         }
 
         public static let empty = MacClippyReconciliation.Result(
             orphanBlobIDs: [],
-            missingBlobIDs: [],
-            orphanFTSRecordIDs: [],
-            failedBlobCleanupIDs: [],
-            failedFTSCleanupIDs: []
+            orphanFTSRecordIDs: []
         )
 
         public var isEmpty: Bool {
-            orphanBlobIDs.isEmpty && missingBlobIDs.isEmpty && orphanFTSRecordIDs.isEmpty
+            orphanBlobCount == 0 && missingBlobCount == 0
+                && orphanFTSRecordCount == 0 && missingFTSRecordCount == 0
         }
     }
 
-    // Detects orphans without deleting them. Useful for diagnostics and for
-    // tests that want to assert the detected set before any deletion happens.
+    /// Detects reconciliation issues without mutating any secondary store.
+    /// Diagnostics retain only a bounded sample; the count fields preserve
+    /// whether more work existed without making startup memory O(history).
     public static func detect(
         store: ClipboardStore,
         search: SearchStore,
-        blobs: BlobStore
-    ) throws -> MacClippyReconciliation.Result {
-        let referencedByEnvelope = try allLegacyImageBlobIDs(store: store)
-        let referencedByRepresentations = try store.allRepresentationBlobIDs()
-        let referencedBlobIDs = referencedByEnvelope.union(referencedByRepresentations)
-
-        let onDiskBlobIDs = allOnDiskBlobIDs(blobs: blobs)
-        let orphanBlobIDs = onDiskBlobIDs.subtracting(referencedBlobIDs).sorted()
-        let missingBlobIDs = referencedBlobIDs.subtracting(onDiskBlobIDs).sorted()
-
-        let indexedRecordIDs = try search.indexedRecordIDs(kind: .clipboardItem)
-        let existingRecordIDs = Set(try store.allMetas().map(\.id))
-        let orphanFTSRecordIDs = indexedRecordIDs.filter { !existingRecordIDs.contains($0) }
-
-        return MacClippyReconciliation.Result(
-            orphanBlobIDs: orphanBlobIDs,
-            missingBlobIDs: missingBlobIDs,
-            orphanFTSRecordIDs: orphanFTSRecordIDs
+        blobs: BlobStore,
+        shouldContinue: () -> Bool = { true }
+    ) throws -> Result {
+        try scan(
+            store: store,
+            search: search,
+            blobs: blobs,
+            shouldContinue: shouldContinue,
+            deleteBlob: nil,
+            isBlobStillUnreferenced: nil,
+            deleteFTS: nil
         )
     }
 
-    // Detects and then deletes orphans. Returns the detected set so callers
-    // can inspect what was cleaned up. Individual cleanup errors are collected
-    // so one failed file does not abort the rest of the sweep; callers must
-    // treat the returned failure sets as degraded state.
+    /// Detects and repairs issues while scanning. Cleanup happens as each
+    /// orphan is discovered, so a large orphan backlog is never retained in a
+    /// single result array. Per-item cleanup failures are sampled and counted;
+    /// the remaining candidates are still attempted.
     @discardableResult
     public static func reconcile(
         store: ClipboardStore,
         search: SearchStore,
         blobs: BlobStore,
-        deleteBlob: (String) throws -> Void = { id in
-            // Default no-op; the runtime injects blobs.delete(id:) so the
-            // enum stays free of BlobStore mutation in tests.
-            _ = id
-        }
-    ) throws -> MacClippyReconciliation.Result {
-        let detected = try detect(store: store, search: search, blobs: blobs)
-
-        var failedBlobCleanupIDs: [String] = []
-        for blobID in detected.orphanBlobIDs {
-            do {
-                try deleteBlob(blobID)
-            } catch {
-                failedBlobCleanupIDs.append(blobID)
+        shouldContinue: () -> Bool = { true },
+        deleteBlob: @escaping (String) throws -> Void = { _ in },
+        deleteFTS: ((RecordID) throws -> Void)? = nil,
+        isBlobStillUnreferenced: ((String) throws -> Bool)? = nil
+    ) throws -> Result {
+        try scan(
+            store: store,
+            search: search,
+            blobs: blobs,
+            shouldContinue: shouldContinue,
+            deleteBlob: deleteBlob,
+            isBlobStillUnreferenced: isBlobStillUnreferenced,
+            deleteFTS: deleteFTS ?? { id in
+                try search.remove(kind: .clipboardItem, id: id)
             }
-        }
-
-        var failedFTSCleanupIDs: [RecordID] = []
-        for recordID in detected.orphanFTSRecordIDs {
-            do {
-                try search.remove(kind: .clipboardItem, id: recordID)
-            } catch {
-                failedFTSCleanupIDs.append(recordID)
-            }
-        }
-
-        return MacClippyReconciliation.Result(
-            orphanBlobIDs: detected.orphanBlobIDs,
-            missingBlobIDs: detected.missingBlobIDs,
-            orphanFTSRecordIDs: detected.orphanFTSRecordIDs,
-            failedBlobCleanupIDs: failedBlobCleanupIDs,
-            failedFTSCleanupIDs: failedFTSCleanupIDs
         )
     }
 
-    // Collects every image blobID referenced by the legacy single-payload
-    // envelope across all records. P0 keeps the legacy envelope as the primary
-    // card payload, so any image record still references its blob through
-    // .image(blobID:width:height:).
-    private static func allLegacyImageBlobIDs(store: ClipboardStore) throws -> Set<String> {
-        var ids = Set<String>()
-        // `content_kind` is persisted alongside every envelope. Restrict the
-        // decrypt pass to image records; text, HTML, RTF, and file records
-        // cannot contain a legacy image blob reference. This keeps startup
-        // reconciliation proportional to the image subset instead of the
-        // entire history.
-        for meta in try store.list(limit: Int.max, contentKind: .image) {
-            // Fail closed when an image envelope cannot be decrypted or
-            // decoded. Treating the reference as absent could classify a
-            // still-needed Blob as orphan and delete user data.
-            if let blobID = try store.body(for: meta.id).imageBlobID {
-                ids.insert(blobID)
-            }
-        }
-        return ids
+    private static func scan(
+        store: ClipboardStore,
+        search: SearchStore,
+        blobs: BlobStore,
+        shouldContinue: () -> Bool,
+        deleteBlob: ((String) throws -> Void)?,
+        isBlobStillUnreferenced: ((String) throws -> Bool)?,
+        deleteFTS: ((RecordID) throws -> Void)?
+    ) throws -> Result {
+        try store.validateContentKinds(shouldContinue: shouldContinue)
+        try store.validateRepresentations(shouldContinue: shouldContinue)
+
+        // A fixed-size Bloom filter has no false negatives. A false positive
+        // only leaves a reclaimable orphan on disk, which is the safe failure
+        // mode for private clipboard data. This keeps reachability memory
+        // bounded even when the history contains hundreds of thousands of
+        // records or representation blobs.
+        let references = try scanBlobReferences(
+            store: store,
+            blobs: blobs,
+            shouldContinue: shouldContinue
+        )
+        let blobCleanup = try scanOrphanBlobs(
+            blobs: blobs,
+            referenced: references.referenced,
+            shouldContinue: shouldContinue,
+            deleteBlob: deleteBlob,
+            isBlobStillUnreferenced: isBlobStillUnreferenced
+        )
+        let fts = try scanFTS(
+            store: store,
+            search: search,
+            shouldContinue: shouldContinue,
+            deleteFTS: deleteFTS
+        )
+
+        return Result(
+            orphanBlobIDs: blobCleanup.orphan.values.sorted(),
+            missingBlobIDs: references.missing.values.sorted(),
+            orphanFTSRecordIDs: fts.orphan.values,
+            missingFTSRecordIDs: fts.missing.values,
+            failedBlobCleanupIDs: blobCleanup.failed.values.sorted(),
+            failedFTSCleanupIDs: fts.failed.values,
+            orphanBlobCount: blobCleanup.orphan.count,
+            missingBlobCount: references.missing.count,
+            orphanFTSRecordCount: fts.orphan.count,
+            missingFTSRecordCount: fts.missing.count,
+            failedBlobCleanupCount: blobCleanup.failed.count,
+            failedFTSCleanupCount: fts.failed.count
+        )
     }
 
-    // Lists every blob file currently on disk. BlobStore writes one
-    // `<id>.bin` file per blob, so we enumerate the blob root directory and
-    // strip the extension. The root is derived from BlobStore.encryptedURL
-    // by stripping the empty-id fallback's trailing component; because
-    // encryptedURL(id:) returns rootURL itself (not a child) when the id is
-    // rejected as unsafe, we must NOT delete the last path component here or
-    // we would enumerate the parent of the blob root and find nothing.
-    private static func allOnDiskBlobIDs(blobs: BlobStore) -> Set<String> {
-        let root = blobs.encryptedURL(id: "0")
-        let directory = root.deletingLastPathComponent()
-        guard let contents = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else {
-            return []
+    private static func scanBlobReferences(
+        store: ClipboardStore,
+        blobs: BlobStore,
+        shouldContinue: () -> Bool
+    ) throws -> MacClippyReconciliationBlobReferenceScan {
+        var referenced = MacClippyReachabilityFilter()
+        var missing = MacClippyReconciliationDiagnosticSample<String>(limit: diagnosticSampleLimit)
+        var cursor: MacClippyClipboardHistoryCursor?
+        while true {
+            guard shouldContinue() else { throw CancellationError() }
+            let page = try store.listOldest(limit: pageSize, after: cursor)
+            guard !page.isEmpty else { break }
+            for meta in page {
+                guard shouldContinue() else { throw CancellationError() }
+                let body = try store.body(for: meta.id)
+                guard meta.contentKind == nil || body.contentKind == meta.contentKind else {
+                    throw MacClippyStoreError.invalidStoredRecord
+                }
+                if let blobID = body.imageBlobID {
+                    referenced.insert(blobID)
+                    if try !blobs.containsChecked(id: blobID) { missing.append(blobID) }
+                }
+            }
+            guard page.count == pageSize, let last = page.last else { break }
+            cursor = MacClippyClipboardHistoryCursor(
+                modified: last.modified,
+                lamport: last.lamport,
+                id: last.id
+            )
         }
-        var ids = Set<String>()
-        for url in contents {
-            guard url.pathExtension == "bin" else { continue }
-            let id = url.deletingPathExtension().lastPathComponent
-            guard !id.isEmpty else { continue }
-            ids.insert(id)
+        try store.forEachRepresentationBlobID(shouldContinue: shouldContinue) { blobID in
+            referenced.insert(blobID)
+            if try !blobs.containsChecked(id: blobID) { missing.append(blobID) }
         }
-        return ids
+        return MacClippyReconciliationBlobReferenceScan(referenced: referenced, missing: missing)
+    }
+
+    private static func scanOrphanBlobs(
+        blobs: BlobStore,
+        referenced: MacClippyReachabilityFilter,
+        shouldContinue: () -> Bool,
+        deleteBlob: ((String) throws -> Void)?,
+        isBlobStillUnreferenced: ((String) throws -> Bool)?
+    ) throws -> MacClippyReconciliationBlobCleanupScan {
+        var orphan = MacClippyReconciliationDiagnosticSample<String>(limit: diagnosticSampleLimit)
+        var failed = MacClippyReconciliationDiagnosticSample<String>(limit: diagnosticSampleLimit)
+        try blobs.forEachID(shouldContinue: shouldContinue) { blobID in
+            guard !referenced.mightContain(blobID) else { return }
+            // The reference scan and the disk enumeration are intentionally
+            // separate bounded passes. A capture can publish a new reference
+            // between them, so revalidate before reporting or deleting the
+            // candidate. The runtime performs one final fenced check inside
+            // deleteBlob as well, closing the check/delete race.
+            if let isBlobStillUnreferenced,
+               try !isBlobStillUnreferenced(blobID) {
+                return
+            }
+            orphan.append(blobID)
+            guard let deleteBlob else { return }
+            do {
+                try deleteBlob(blobID)
+            } catch {
+                failed.append(blobID)
+            }
+        }
+        return MacClippyReconciliationBlobCleanupScan(orphan: orphan, failed: failed)
+    }
+
+    private static func scanFTS(
+        store: ClipboardStore,
+        search: SearchStore,
+        shouldContinue: () -> Bool,
+        deleteFTS: ((RecordID) throws -> Void)?
+    ) throws -> MacClippyReconciliationFTSScan {
+        let orphan = try scanOrphanFTS(
+            store: store,
+            search: search,
+            shouldContinue: shouldContinue,
+            deleteFTS: deleteFTS
+        )
+        let missing = try scanMissingFTS(
+            store: store,
+            search: search,
+            shouldContinue: shouldContinue
+        )
+        return MacClippyReconciliationFTSScan(orphan: orphan.0, missing: missing, failed: orphan.1)
+    }
+
+    private static func scanOrphanFTS(
+        store: ClipboardStore,
+        search: SearchStore,
+        shouldContinue: () -> Bool,
+        deleteFTS: ((RecordID) throws -> Void)?
+    ) throws -> (
+        MacClippyReconciliationDiagnosticSample<RecordID>,
+        MacClippyReconciliationDiagnosticSample<RecordID>
+    ) {
+        var orphan = MacClippyReconciliationDiagnosticSample<RecordID>(limit: diagnosticSampleLimit)
+        var failed = MacClippyReconciliationDiagnosticSample<RecordID>(limit: diagnosticSampleLimit)
+        var lastRowID: Int64?
+        while true {
+            guard shouldContinue() else { throw CancellationError() }
+            let indexedPage = try search.indexedRecordIDPage(
+                kind: .clipboardItem,
+                afterRowID: lastRowID,
+                limit: pageSize
+            )
+            guard !indexedPage.isEmpty else { break }
+            let indexedIDs = indexedPage.map(\.id)
+            let existingIDs = Set(try store.metas(for: indexedIDs).map(\.id))
+            var deletedInPage = false
+            for id in indexedIDs where !existingIDs.contains(id) {
+                orphan.append(id)
+                guard let deleteFTS else { continue }
+                do {
+                    try deleteFTS(id)
+                    deletedInPage = true
+                } catch {
+                    failed.append(id)
+                }
+            }
+            guard indexedPage.count == pageSize, let last = indexedPage.last else { break }
+            // If a row was deleted, keep the cursor so the replacement row
+            // that shifted into this page is examined. Otherwise advance by
+            // stable SQLite rowid; deletions cannot move later rowids behind
+            // the cursor.
+            if !deletedInPage {
+                lastRowID = last.rowID
+            }
+        }
+        return (orphan, failed)
+    }
+
+    private static func scanMissingFTS(
+        store: ClipboardStore,
+        search: SearchStore,
+        shouldContinue: () -> Bool
+    ) throws -> MacClippyReconciliationDiagnosticSample<RecordID> {
+        var missing = MacClippyReconciliationDiagnosticSample<RecordID>(limit: diagnosticSampleLimit)
+        var cursor: MacClippyClipboardHistoryCursor?
+        while true {
+            guard shouldContinue() else { throw CancellationError() }
+            let page = try store.listOldest(limit: pageSize, after: cursor)
+            guard !page.isEmpty else { break }
+            let pageIDs = page.map(\.id)
+            let indexedIDs = try search.indexedRecordIDs(kind: .clipboardItem, matching: pageIDs)
+            for id in pageIDs where !indexedIDs.contains(id) { missing.append(id) }
+            guard page.count == pageSize, let last = page.last else { break }
+            cursor = MacClippyClipboardHistoryCursor(
+                modified: last.modified,
+                lamport: last.lamport,
+                id: last.id
+            )
+        }
+        return missing
     }
 }

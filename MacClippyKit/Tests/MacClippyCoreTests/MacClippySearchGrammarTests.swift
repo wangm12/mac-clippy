@@ -93,16 +93,18 @@ final class MacClippySearchGrammarTests: XCTestCase {
         XCTAssertTrue(q.clauses.isEmpty)
     }
 
-    func testTagAndLabelAreAliases() {
+    func testNameAndLegacyAliasesAreEquivalent() {
+        let name = MacClippySearchGrammar.parse("name:work")
         let tag = MacClippySearchGrammar.parse("tag:work")
         let label = MacClippySearchGrammar.parse("label:work")
+        XCTAssertEqual(name.clauses, [.label("work")])
         XCTAssertEqual(tag.clauses, [.label("work")])
         XCTAssertEqual(label.clauses, [.label("work")])
     }
 
-    func testHasLabelAndHasOCRClauses() {
-        let q = MacClippySearchGrammar.parse("has:label has:ocr")
-        XCTAssertEqual(q.clauses, [.hasLabel, .hasOCR])
+    func testHasNameAndHasOCRClauses() {
+        let query = MacClippySearchGrammar.parse("has:name has:ocr")
+        XCTAssertEqual(query.clauses, [.hasLabel, .hasOCR])
     }
 
     func testHasUnknownValueDegradesToBare() {

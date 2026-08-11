@@ -120,6 +120,7 @@ final class MacClippyPasteboardObserverRetryTests: XCTestCase {
         )
         var delivered: [PasteboardChange] = []
         observer.start { delivered.append($0) }
+        observer.poll()
 
         // First poll: changeCount 2 with the lazy UTI unavailable.
         reader.change = PasteboardChange(
@@ -174,6 +175,7 @@ final class MacClippyPasteboardObserverRetryTests: XCTestCase {
         )
         var delivered: [PasteboardChange] = []
         observer.start { delivered.append($0) }
+        observer.poll()
 
         reader.change = PasteboardChange(
             changeCount: 2,
@@ -210,6 +212,7 @@ final class MacClippyPasteboardObserverRetryTests: XCTestCase {
         )
         var delivered: [PasteboardChange] = []
         observer.start { delivered.append($0) }
+        observer.poll()
 
         reader.change = PasteboardChange(
             changeCount: 2,
@@ -237,6 +240,7 @@ final class MacClippyPasteboardObserverRetryTests: XCTestCase {
         )
         var delivered: [PasteboardChange] = []
         observer.start { delivered.append($0) }
+        observer.poll()
 
         reader.change = PasteboardChange(
             changeCount: 2,
@@ -267,6 +271,7 @@ final class MacClippyPasteboardObserverRetryTests: XCTestCase {
         let observer = PasteboardObserver(reader: reader, pollInterval: 1)
         var delivered: [PasteboardChange] = []
         observer.start { delivered.append($0) }
+        observer.poll()
 
         reader.change = PasteboardChange(changeCount: 2, items: [
             PasteboardItem(types: ["public.utf8-plain-text"], representations: [
@@ -300,6 +305,7 @@ final class MacClippyPasteboardObserverRetryTests: XCTestCase {
         let observer = PasteboardObserver(reader: reader, pollInterval: 1, retryState: retryState)
         var delivered: [PasteboardChange] = []
         observer.start { delivered.append($0) }
+        observer.poll()
 
         reader.change = PasteboardChange(
             changeCount: 2,
@@ -317,6 +323,7 @@ final class MacClippyPasteboardObserverRetryTests: XCTestCase {
         // must deliver immediately. There must be no leftover pending entry
         // that could withhold it.
         observer.start { delivered.append($0) }
+        observer.poll()
         XCTAssertFalse(retryState.hasPending, "restart must not re-seed stale retry state")
 
         reader.change = PasteboardChange(
@@ -389,6 +396,7 @@ final class MacClippyPasteboardObserverRetryTests: XCTestCase {
         )
         var delivered: [PasteboardChange] = []
         observer.start { delivered.append($0) }
+        observer.poll()
 
         let queue = DispatchQueue(label: "MacClippyObserverConfigurationTests", attributes: .concurrent)
         let group = DispatchGroup()
@@ -454,6 +462,7 @@ final class MacClippyPasteboardObserverRetryTests: XCTestCase {
             handlerIsMainThread = Thread.isMainThread
             expectation.fulfill()
         }
+        observer.poll()
 
         // Bump the changeCount so the first timer fire delivers a change.
         reader.change = PasteboardChange(

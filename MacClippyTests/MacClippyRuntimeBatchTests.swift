@@ -73,6 +73,27 @@ final class MacClippyRuntimeBatchTests: XCTestCase {
         XCTAssertTrue(try runtime.history(limit: 10, query: "").map(\.id).isEmpty)
     }
 
+    func testBatchDeleteDoesNotMisclassifyDuplicatePresentIDsAsMissing() throws {
+        let record = try runtime.appendTestRecord(.text("duplicate delete"))
+
+        let result = try runtime.delete(ids: [record.id, record.id])
+
+        XCTAssertEqual(result.deletedIDs, [record.id])
+        XCTAssertTrue(result.missingIDs.isEmpty)
+        XCTAssertTrue(result.failedIDs.isEmpty)
+    }
+
+    func testEditRollsBackClipboardAndSearchProjectionWhenSearchWriteFails() throws {
+        let record = try runtime.appendTestRecord(.text("original edit text"))
+        try runtime.databases[1].queue.close()
+
+        XCTAssertThrowsError(try runtime.edit(id: record.id, text: "edited text"))
+        XCTAssertEqual(
+            try runtime.clipboardStore.body(for: record.id),
+            .text("original edit text")
+        )
+    }
+
     func testBatchDeleteReclaimsImageBlobWhenNoOtherRecordReferencesIt() throws {
         let image = try runtime.appendTestRecord(.image(blobID: "unused", width: 1, height: 1))
         let result = try runtime.delete(ids: [image.id])
@@ -178,6 +199,18 @@ final class MacClippyRuntimeBatchTests: XCTestCase {
         XCTAssertEqual(boardItemIDs, Set([first.id, second.id]))
     }
 
+    func testBatchPinDoesNotReportTheSamePresentIDTwice() throws {
+        let board = try runtime.createPinboard(name: "Work", color: nil)
+        let record = try runtime.appendTestRecord(.text("duplicate pin"))
+
+        let result = try runtime.pin(recordIDs: [record.id, record.id], to: board.id)
+
+        XCTAssertEqual(result.pinnedIDs, [record.id])
+        XCTAssertTrue(result.duplicateIDs.isEmpty)
+        XCTAssertTrue(result.missingIDs.isEmpty)
+        XCTAssertTrue(result.failedIDs.isEmpty)
+    }
+
     func testBatchPinTargetsFirstBoardWhenItIsTheOnlyBoard() throws {
         let board = try runtime.createPinboard(name: "Default", color: nil)
         let first = try runtime.appendTestRecord(.text("first"))
@@ -186,6 +219,24 @@ final class MacClippyRuntimeBatchTests: XCTestCase {
         XCTAssertEqual(result.pinnedIDs, [first.id])
         XCTAssertEqual(result.boardName, "Default")
         XCTAssertEqual(result.failedIDs, [])
+    }
+
+    func testPinboardProjectionLoadsBodiesInBoundedPages() throws {
+        let board = try runtime.createPinboard(name: "Large", color: nil)
+        var recordIDs: [RecordID] = []
+        for _ in 0 ..< 70 {
+            let record = try runtime.appendTestRecord(.text("pinboard-(index)"))
+            recordIDs.append(record.id)
+            try runtime.pin(recordID: record.id, to: board.id)
+        }
+
+        let firstPage = try runtime.pinboards().first(where: { $0.id == board.id })
+        XCTAssertEqual(firstPage?.itemCount, 70)
+        XCTAssertEqual(firstPage?.items.count, 64)
+
+        let secondPage = try runtime.pinboardItems(pinboardID: board.id, offset: 64)
+        XCTAssertEqual(secondPage.count, 6)
+        XCTAssertEqual(firstPage?.items.map(\.id) ?? [], Array(recordIDs.prefix(64)))
     }
 
     func testRenamePinboardPersistsNewName() throws {

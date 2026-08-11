@@ -122,6 +122,10 @@ public struct MacClippyClipboardItemMeta: Codable, Equatable, Sendable {
     public let deviceID: DeviceID
     public let lamport: UInt64
     public let kind: RecordKind
+    // Nil is retained only for lightweight test fixtures created without a
+    // database row. Database-backed metadata always carries this discriminator
+    // and reconciliation verifies it against the decrypted envelope.
+    public let contentKind: MacClippyContentKind?
     public let preview: String
     public let sourceAppBundleID: String?
     public let frequency: Int
@@ -137,6 +141,7 @@ public struct MacClippyClipboardItemMeta: Codable, Equatable, Sendable {
         deviceID: DeviceID,
         lamport: UInt64,
         kind: RecordKind = .clipboardItem,
+        contentKind: MacClippyContentKind? = nil,
         preview: String,
         sourceAppBundleID: String? = nil,
         frequency: Int = 0,
@@ -151,6 +156,7 @@ public struct MacClippyClipboardItemMeta: Codable, Equatable, Sendable {
         self.deviceID = deviceID
         self.lamport = lamport
         self.kind = kind
+        self.contentKind = contentKind
         self.preview = preview
         self.sourceAppBundleID = sourceAppBundleID
         self.frequency = frequency

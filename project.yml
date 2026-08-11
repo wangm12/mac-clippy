@@ -9,7 +9,10 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.9"
+    SWIFT_STRICT_CONCURRENCY: complete
     MACOSX_DEPLOYMENT_TARGET: "14.0"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
     CODE_SIGN_STYLE: Automatic
     SWIFT_ENABLE_EXPLICIT_MODULES: NO
   configs:
@@ -31,16 +34,81 @@ targets:
     platform: macOS
     sources:
       - path: MacClippy/MacClippyApp.swift
+      - path: MacClippy/MacClippyAppDelegate+Maintenance.swift
       - path: MacClippy/MacClippySettings.swift
+      - path: MacClippy/MacClippySettingsPreferences.swift
+      - path: MacClippy/MacClippySettings+Sections.swift
+      - path: MacClippy/MacClippySettings+Permissions.swift
+      - path: MacClippy/MacClippySettings+Maintenance.swift
+      - path: MacClippy/MacClippyPresentationPolicy.swift
+      - path: MacClippy/MacClippySettingsWindowCoordinator.swift
       - path: MacClippy/MacClippyHotKeyRecorder.swift
       - path: MacClippy/MacClippyRuntime.swift
+      - path: MacClippy/MacClippyRuntimeModels.swift
+      - path: MacClippy/MacClippyRuntime+StorageHealth.swift
+      - path: MacClippy/MacClippyRuntime+OCR.swift
+      - path: MacClippy/MacClippyRuntime+Lifecycle.swift
+      - path: MacClippy/MacClippyRuntime+Search.swift
+      - path: MacClippy/MacClippyRuntime+HistoryPagination.swift
+      - path: MacClippy/MacClippyRuntime+HistoryPaginationModels.swift
+      - path: MacClippy/MacClippyRuntime+Selection.swift
+      - path: MacClippy/MacClippyRuntime+HistoryPaginationProjection.swift
+      - path: MacClippy/MacClippyRuntime+SearchMaintenance.swift
+      - path: MacClippy/MacClippyRuntime+SearchProjection.swift
+      - path: MacClippy/MacClippyRuntime+History.swift
+      - path: MacClippy/MacClippyRuntime+HistoryProjection.swift
+      - path: MacClippy/MacClippyRuntime+Pinboard.swift
+      - path: MacClippy/MacClippyRuntime+ClipboardActions.swift
+      - path: MacClippy/MacClippyRuntime+Maintenance.swift
+      - path: MacClippy/MacClippyRuntime+MaintenanceHealth.swift
+      - path: MacClippy/MacClippyRuntime+MaintenanceRepair.swift
+      - path: MacClippy/MacClippyRuntime+BatchActions.swift
+      - path: MacClippy/MacClippyRuntime+OrderedActions.swift
+      - path: MacClippy/MacClippyRuntime+QueueActions.swift
+      - path: MacClippy/MacClippyDockPolicies.swift
+      - path: MacClippy/MacClippyDockModel.swift
+      - path: MacClippy/MacClippyDockModel+Categories.swift
+      - path: MacClippy/MacClippyDockModel+LoadingPreview.swift
+      - path: MacClippy/MacClippyDockModel+PinboardSearch.swift
+      - path: MacClippy/MacClippyDockModel+Thumbnails.swift
+      - path: MacClippy/MacClippyDockModel+HistoryPagination.swift
+      - path: MacClippy/MacClippyDockModel+Selection.swift
+      - path: MacClippy/MacClippyDockModel+SelectionAll.swift
+      - path: MacClippy/MacClippyDockModel+Actions.swift
+      - path: MacClippy/MacClippyDockModel+BatchActions.swift
+      - path: MacClippy/MacClippyDockModel+QueueActions.swift
+      - path: MacClippy/MacClippyDockModel+Utilities.swift
+      - path: MacClippy/MacClippyDockView.swift
+      - path: MacClippy/MacClippyDockView+HeaderSearch.swift
+      - path: MacClippy/MacClippyDockView+FilterDrop.swift
+      - path: MacClippy/MacClippyDockView+CarouselModal.swift
+      - path: MacClippy/MacClippyDockCard.swift
+      - path: MacClippy/MacClippyDockCardContent.swift
+      - path: MacClippy/MacClippyDockCardCategory.swift
+      - path: MacClippy/MacClippyDockCardAccessibility.swift
+      - path: MacClippy/MacClippyDockCardMenus.swift
+      - path: MacClippy/MacClippyDockCardInteraction.swift
+      - path: MacClippy/MacClippyCardImageThumbnail.swift
+      - path: MacClippy/MacClippyDockActionBar.swift
+      - path: MacClippy/MacClippyCreateCategoryEditor.swift
       - path: MacClippy/MacClippyPrivacyNotice.swift
       - path: MacClippy/MacClippyDock.swift
+      - path: MacClippy/MacClippyDockTheme.swift
       - path: MacClippy/MacClippyMotion.swift
       - path: MacClippy/MacClippyDockPanel.swift
       - path: MacClippy/MacClippyDockPreview.swift
+      - path: MacClippy/MacClippyDockPreviewSupport.swift
+      - path: MacClippy/MacClippyDockPreviewImageSelection.swift
+      - path: MacClippy/MacClippyDockPreviewImageSelectionDrawing.swift
+      - path: MacClippy/MacClippyFileIconLoader.swift
       - path: MacClippy/MacClippyDetails.swift
       - path: MacClippy/MacClippyDockController.swift
+      - path: MacClippy/MacClippyDockController+Lifecycle.swift
+      - path: MacClippy/MacClippyDockController+Input.swift
+      - path: MacClippy/MacClippyDockController+KeyActions.swift
+      - path: MacClippy/MacClippyDockController+Details.swift
+      - path: MacClippy/MacClippyDockController+Preview.swift
+      - path: MacClippy/MacClippyDockController+Feedback.swift
       - path: MacClippy/MacClippySourceAppPresentation.swift
       - path: MacClippy/MacClippyDiagnosticsExporter.swift
       - path: MacClippy/Assets.xcassets
@@ -55,6 +123,7 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_ENTITLEMENTS: MacClippy/MacClippy.entitlements
         GENERATE_INFOPLIST_FILE: NO
+        SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
     dependencies:
       - package: MacClippyKit
         product: MacClippyCore
@@ -69,6 +138,7 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
+        SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
     dependencies:
       - target: MacClippy
       - package: MacClippyKit
@@ -76,12 +146,27 @@ targets:
       - package: MacClippyKit
         product: MacClippyPlatform
 
+  MacClippyUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - path: MacClippyUITests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.macallyouneed.macclippy.uitests
+        SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+    dependencies:
+      - target: MacClippy
+
 schemes:
   MacClippy:
     build:
       targets:
         MacClippy: all
         MacClippyTests: [test]
+        MacClippyUITests: [test]
     test:
       targets:
         - MacClippyTests
+        - MacClippyUITests

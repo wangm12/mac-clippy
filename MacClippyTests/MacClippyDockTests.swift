@@ -71,6 +71,14 @@ final class MacClippyDockTests: XCTestCase {
             )
         )
         XCTAssertFalse(
+            MacClippyDockKeyboardOwnershipPolicy.shouldRestoreKeyboard(
+                for: .picker,
+                isVisible: true,
+                isClosing: false,
+                isExternalWindowPresented: true
+            )
+        )
+        XCTAssertFalse(
             MacClippyDockKeyboardOwnershipPolicy.shouldRestoreFirstResponder(for: .modal)
         )
     }

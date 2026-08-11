@@ -1,14 +1,33 @@
 import Foundation
 
 public enum MacClippyCategoryColorPolicy {
+    // Stable values inspired by the macOS Theme accent choices. Categories
+    // are persisted as HEX for backwards compatibility, so these are
+    // intentionally stable rather than appearance-dependent NSColor values.
     public static let palette = [
-        "#2563EB",
-        "#7C3AED",
-        "#C2410C",
-        "#0F766E",
-        "#A16207",
-        "#4D7C0F",
+        "#0A84FF", // blue
+        "#BF5AF2", // purple
+        "#FF375F", // pink
+        "#FF453A", // red
+        "#FF9F0A", // orange
+        "#FFD60A", // yellow
+        "#30D158", // green
+        "#8E8E93" // graphite
     ]
+
+    public static func name(for color: String) -> String {
+        switch palette.firstIndex(of: color) {
+        case 0: "blue"
+        case 1: "purple"
+        case 2: "pink"
+        case 3: "red"
+        case 4: "orange"
+        case 5: "yellow"
+        case 6: "green"
+        case 7: "graphite"
+        default: "custom color"
+        }
+    }
 
     public static func color(for pinboard: Pinboard) -> String {
         color(for: pinboard.id, name: pinboard.name, preferred: pinboard.color)

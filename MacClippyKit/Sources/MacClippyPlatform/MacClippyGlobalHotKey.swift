@@ -35,7 +35,7 @@ public struct MacClippyGlobalHotKeyDescriptor: Equatable, Sendable {
     }
 }
 
-public enum MacClippyGlobalHotKeyError: Error, Equatable, LocalizedError {
+public enum MacClippyGlobalHotKeyError: Error, Equatable, LocalizedError, Sendable {
     case eventHandlerInstallationFailed(OSStatus)
     case registrationFailed(OSStatus)
     case registrationRollbackFailed
@@ -52,8 +52,9 @@ public enum MacClippyGlobalHotKeyError: Error, Equatable, LocalizedError {
     }
 }
 
+@MainActor
 public final class MacClippyGlobalHotKey {
-    private static let eventHotKeyID = EventHotKeyID(signature: OSType(0x4D43_4C50), id: 1)
+    private nonisolated static let eventHotKeyID = EventHotKeyID(signature: OSType(0x4D43_4C50), id: 1)
     private static let eventHandler: EventHandlerUPP = { _, event, userData in
         guard let event, let userData else { return noErr }
         let hotKey = Unmanaged<MacClippyGlobalHotKey>.fromOpaque(userData).takeUnretainedValue()
@@ -61,7 +62,7 @@ public final class MacClippyGlobalHotKey {
     }
 
     private var descriptor: MacClippyGlobalHotKeyDescriptor
-    private let callback: () -> Void
+    private let callback: @MainActor @Sendable () -> Void
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandlerRef: EventHandlerRef?
 
@@ -71,7 +72,7 @@ public final class MacClippyGlobalHotKey {
 
     public init(
         descriptor: MacClippyGlobalHotKeyDescriptor,
-        callback: @escaping () -> Void
+        callback: @escaping @MainActor @Sendable () -> Void
     ) {
         self.descriptor = descriptor
         self.callback = callback
@@ -149,7 +150,7 @@ public final class MacClippyGlobalHotKey {
         }
     }
 
-    private func handle(_ event: EventRef) -> OSStatus {
+    private nonisolated func handle(_ event: EventRef) -> OSStatus {
         var receivedID = EventHotKeyID()
         let parameterStatus = GetEventParameter(
             event,
@@ -166,14 +167,11 @@ public final class MacClippyGlobalHotKey {
             return noErr
         }
 
-        DispatchQueue.main.async { [weak self] in
+        DispatchQueue.main.async { @MainActor [weak self] in
             guard let self, self.hotKeyRef != nil else { return }
             self.callback()
         }
         return noErr
     }
 
-    deinit {
-        unregister()
-    }
 }

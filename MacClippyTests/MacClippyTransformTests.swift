@@ -248,17 +248,17 @@ final class MacClippyTransformTests: XCTestCase {
     // MARK: - Dock model: context-facing paths preserve async behavior
 
     @MainActor
-    func testModelCopyFocusedTransformedPreparesPasteboardAndDoesNotPost() throws {
+    func testModelCopyFocusedTransformedPreparesPasteboardAndDoesNotPost() async throws {
         let model = MacClippyDockModel(runtime: runtime)
         _ = try runtime.appendTestRecord(.text("hello"))
         model.reload()
-        wait { model.historyItems.count >= 1 }
+        await wait { model.historyItems.count >= 1 }
 
         model.focusSelection(at: 0)
         model.beginSession()
         model.copyFocused(transform: .uppercase)
 
-        wait { model.actionFeedback != nil }
+        await wait { model.actionFeedback != nil }
 
         guard case let .transformedCopied(name) = model.actionFeedback else {
             XCTFail("expected .transformedCopied feedback, got \(String(describing: model.actionFeedback))")
@@ -270,11 +270,11 @@ final class MacClippyTransformTests: XCTestCase {
     }
 
     @MainActor
-    func testModelPasteFocusedTransformedPostsOnceAndClosesDock() throws {
+    func testModelPasteFocusedTransformedPostsOnceAndClosesDock() async throws {
         let model = MacClippyDockModel(runtime: runtime)
         _ = try runtime.appendTestRecord(.text("hello"))
         model.reload()
-        wait { model.historyItems.count >= 1 }
+        await wait { model.historyItems.count >= 1 }
 
         model.focusSelection(at: 0)
         model.beginSession()
@@ -282,7 +282,7 @@ final class MacClippyTransformTests: XCTestCase {
         var didClose = false
         model.pasteFocused(transform: .uppercase, completion: { didClose = true })
 
-        wait { didClose || model.actionFeedback != nil || model.errorMessage != nil }
+        await wait { didClose || model.actionFeedback != nil || model.errorMessage != nil }
 
         XCTAssertTrue(didClose, "transformed paste should close the dock on success")
         guard case let .transformedPasted(name, manual) = model.actionFeedback else {
@@ -296,11 +296,11 @@ final class MacClippyTransformTests: XCTestCase {
     }
 
     @MainActor
-    func testModelPasteFocusedTransformedImageSurfacesErrorAndDoesNotCloseOrPost() throws {
+    func testModelPasteFocusedTransformedImageSurfacesErrorAndDoesNotCloseOrPost() async throws {
         let model = MacClippyDockModel(runtime: runtime)
         _ = try runtime.appendTestRecord(.image(blobID: "unused", width: 1, height: 1))
         model.reload()
-        wait { model.historyItems.count >= 1 }
+        await wait { model.historyItems.count >= 1 }
 
         model.focusSelection(at: 0)
         model.beginSession()
@@ -308,7 +308,7 @@ final class MacClippyTransformTests: XCTestCase {
         var didClose = false
         model.pasteFocused(transform: .uppercase, completion: { didClose = true })
 
-        wait { didClose || model.actionFeedback != nil || model.errorMessage != nil }
+        await wait { didClose || model.actionFeedback != nil || model.errorMessage != nil }
 
         XCTAssertFalse(didClose, "a rejected transform must not close the dock")
         XCTAssertNil(model.actionFeedback, "a rejected transform must not show success feedback")
@@ -318,14 +318,14 @@ final class MacClippyTransformTests: XCTestCase {
     }
 
     @MainActor
-    func testModelPasteFocusedTransformedStaleCompletionDoesNotCloseReopenedDock() throws {
+    func testModelPasteFocusedTransformedStaleCompletionDoesNotCloseReopenedDock() async throws {
         // Session-generation guard must hold for transformed paste: a stale
         // completion from a previous dock session must not call the close
         // handler or mutate a newly reopened dock.
         let model = MacClippyDockModel(runtime: runtime)
         _ = try runtime.appendTestRecord(.text("hello"))
         model.reload()
-        wait { model.historyItems.count >= 1 }
+        await wait { model.historyItems.count >= 1 }
 
         model.focusSelection(at: 0)
         model.beginSession()
@@ -337,8 +337,7 @@ final class MacClippyTransformTests: XCTestCase {
         // queue drains. The stale completion must be suppressed.
         model.endSession()
         model.beginSession()
-
-        wait { postedEventCount > 0 || model.actionFeedback != nil || model.errorMessage != nil || didClose }
+        model.workQueue.sync {}
 
         XCTAssertFalse(didClose, "stale transformed-paste completion must not close a reopened dock")
     }
@@ -355,10 +354,14 @@ final class MacClippyTransformTests: XCTestCase {
         return Data(rtf.utf8)
     }
 
-    private func wait(until condition: () -> Bool, timeout: TimeInterval = 2.0) {
+    @MainActor
+    private func wait(
+        until condition: @MainActor @escaping () -> Bool,
+        timeout: TimeInterval = 2.0
+    ) async {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline, !condition() {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+            try? await Task.sleep(nanoseconds: 10_000_000)
         }
     }
 }

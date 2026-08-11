@@ -6,9 +6,13 @@ import MacClippyPlatform
 /// Opt-in lifecycle pressure checks. The normal suite already covers the
 /// state machine; this fixture repeatedly creates/cancels the timer and
 /// exercises the same serial lifecycle queue used by production.
+@MainActor
 final class MacClippyLifecycleStressTests: XCTestCase {
-    func testObserverStartPollStopRemainsIdempotentAcrossTenThousandCycles() {
-        guard ProcessInfo.processInfo.environment["MACCLIPPY_RUN_STRESS_TESTS"] == "1" else { return }
+    func testObserverStartPollStopRemainsIdempotentAcrossTenThousandCycles() throws {
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["MACCLIPPY_RUN_STRESS_TESTS"] == "1",
+            "Set MACCLIPPY_RUN_STRESS_TESTS=1 to run the 10,000-cycle fixture."
+        )
 
         let reader = SteppingReader()
         let observer = PasteboardObserver(
@@ -22,6 +26,11 @@ final class MacClippyLifecycleStressTests: XCTestCase {
 
         for cycle in 1...cycleCount {
             observer.start { _ in delivered += 1 }
+            // start() is intentionally non-blocking in production. Establish
+            // the start barrier before changing the reader; otherwise the
+            // queued start may snapshot this cycle's changeCount as its
+            // initial baseline and there would be nothing new to deliver.
+            observer.poll()
             reader.advance(to: cycle)
             observer.poll()
             observer.stop()
@@ -29,6 +38,7 @@ final class MacClippyLifecycleStressTests: XCTestCase {
 
         XCTAssertEqual(delivered, cycleCount)
         let duration = Date().timeIntervalSince(start)
+        XCTAssertLessThan(duration, 30, "observer lifecycle stress exceeded the time budget")
         XCTContext.runActivity(named: "MacClippy observer lifecycle stress") { activity in
             activity.add(XCTAttachment(string: "cycles=\(cycleCount)"))
             activity.add(XCTAttachment(string: "seconds=\(duration)"))
