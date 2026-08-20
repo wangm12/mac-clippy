@@ -230,6 +230,38 @@ final class MacClippyCoreTests: XCTestCase {
         XCTAssertEqual(Set(complete).count, 40)
     }
 
+    func testSearchSubstringFindsCJKInsideALongerToken() throws {
+        let search = try searchStore()
+        let matching = RecordID.generate()
+        let other = RecordID.generate()
+        try search.insert(id: matching, text: "你好世界")
+        try search.insert(id: other, text: "unrelated english")
+
+        let hits = try search.search(terms: ["世界"], limit: 10)
+        XCTAssertEqual(hits.map(\.id), [matching])
+        XCTAssertTrue(hits[0].snippet.contains("世界"))
+    }
+
+    func testSearchTermsKeepMultiWordPhrasesTogether() throws {
+        let search = try searchStore()
+        let matching = RecordID.generate()
+        let split = RecordID.generate()
+        try search.insert(id: matching, text: "project alpha notes")
+        try search.insert(id: split, text: "project beta and alpha elsewhere")
+
+        let hits = try search.search(terms: ["project alpha"], limit: 10)
+        XCTAssertEqual(hits.map(\.id), [matching])
+    }
+
+    func testSearchPrefixStarMatchesTokenPrefix() throws {
+        let search = try searchStore()
+        let matching = RecordID.generate()
+        try search.insert(id: matching, text: "clipboard manager")
+        try search.insert(id: RecordID.generate(), text: "unrelated")
+
+        XCTAssertEqual(try search.search(terms: ["clip*"], limit: 10).map(\.id), [matching])
+    }
+
     func clipboardStore() throws -> ClipboardStore {
         try ClipboardStore(database: MacClippyDatabase(inMemory: true), deviceKey: testKey(), deviceID: XCTUnwrap(DeviceID(rawValue: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")))
     }

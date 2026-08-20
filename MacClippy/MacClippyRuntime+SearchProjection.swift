@@ -70,7 +70,7 @@ extension MacClippyRuntime {
             segments.append(label)
         }
         if case let .files(urls) = record {
-            segments.append(contentsOf: urls.flatMap { [$0.lastPathComponent, $0.path] })
+            segments.append(contentsOf: urls.map(\.lastPathComponent))
         }
         segments.append(contentsOf: representationUTIs)
         let text = segments.joined(separator: "\n")
@@ -78,33 +78,6 @@ extension MacClippyRuntime {
             bytes: text.utf8.prefix(MacClippyRuntime.searchIndexTextByteLimit),
             encoding: .utf8
         ) ?? ""
-    }
-
-    // P2b: resolve FTS hits to history entries, preserving the existing
-    // snippet-as-preview behavior for bare-term search. Shared by the
-    // bare-only path so the structured integration does not change how a
-    // pure bare query is rendered.
-    func historyEntriesFromHits(
-        _ hits: [SearchHit],
-        shouldCancel: () -> Bool = { false }
-    ) throws -> [MacClippyHistoryEntry] {
-        let metas = try clipboardStore.metas(for: hits.map(\.id))
-        let metasByID = Dictionary(uniqueKeysWithValues: metas.map { ($0.id, $0) })
-        let entriesByID = try entries(for: metas, validateContentKind: true)
-        var entries: [MacClippyHistoryEntry] = []
-        entries.reserveCapacity(hits.count)
-        for hit in hits {
-            guard !shouldCancel() else { return [] }
-            guard let meta = metasByID[hit.id], let entry = entriesByID[hit.id] else { continue }
-            entries.append(MacClippyHistoryEntry(
-                meta: meta,
-                contentKind: entry.contentKind,
-                preview: hit.snippet,
-                fileURLs: entry.fileURLs,
-                imageDimensions: entry.imageDimensions
-            ))
-        }
-        return entries
     }
 
     // Resolve uncached history projections in one envelope read. The fallback

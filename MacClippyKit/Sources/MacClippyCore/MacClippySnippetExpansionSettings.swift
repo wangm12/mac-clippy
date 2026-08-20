@@ -15,8 +15,4 @@ public enum MacClippySnippetExpansionSettings {
     public static func load(from defaults: UserDefaults = .standard) -> MacClippySnippetExpansionMode {
         MacClippySnippetExpansionMode(rawValue: defaults.string(forKey: modeKey) ?? "") ?? defaultMode
     }
-
-    public static func save(_ mode: MacClippySnippetExpansionMode, to defaults: UserDefaults = .standard) {
-        defaults.set(mode.rawValue, forKey: modeKey)
-    }
 }

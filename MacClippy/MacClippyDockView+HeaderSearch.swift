@@ -149,8 +149,9 @@ extension MacClippyDockView {
                     }
                     .onSubmit { model.reload() }
                     .help(
-                        "Search clipboard history. Add clauses like type:text, app:name, name:work, has:name, "
-                            + "has:ocr, before:YYYY-MM-DD, after:YYYY-MM-DD."
+                        "Search clipboard history. Add clauses like type:text, type:url, app:name, name:work, "
+                            + "has:name, has:ocr, before:YYYY-MM-DD, after:YYYY-MM-DD. Quote a phrase to keep "
+                            + "it together, and add * for a prefix (clip*)."
                     )
                 if !model.query.isEmpty {
                     Button {

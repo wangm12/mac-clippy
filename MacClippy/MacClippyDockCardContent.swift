@@ -19,9 +19,11 @@ extension MacClippyDockView {
                 .fill(MacClippyDockTheme.lineColor)
                 .frame(height: 1)
 
-            Text(snippet.preview.isEmpty ? "(empty)" : snippet.preview)
-                .font(MacClippyDockCardMetrics.contentFont)
-                .foregroundStyle(MacClippyDockTheme.textColor)
+            highlightedText(
+                snippet.preview.isEmpty ? "(empty)" : snippet.preview,
+                font: MacClippyDockCardMetrics.contentFont,
+                color: MacClippyDockTheme.textColor
+            )
                 .lineSpacing(1)
                 .lineLimit(3)
                 .multilineTextAlignment(.leading)
@@ -30,7 +32,7 @@ extension MacClippyDockView {
         .padding(MacClippyDockCardMetrics.padding)
         .frame(
             width: MacClippyDockCardMetrics.width,
-            height: MacClippyDockCardMetrics.height,
+            height: MacClippyDockCardMetrics.height(for: dynamicTypeSize),
             alignment: .topLeading
         )
         .contentShape(RoundedRectangle(cornerRadius: MacClippyDockCardMetrics.radius, style: .continuous))
@@ -101,7 +103,7 @@ extension MacClippyDockView {
         .padding(MacClippyDockCardMetrics.padding)
         .frame(
             width: MacClippyDockCardMetrics.width,
-            height: MacClippyDockCardMetrics.height,
+            height: MacClippyDockCardMetrics.height(for: dynamicTypeSize),
             alignment: .topLeading
         )
         .contentShape(RoundedRectangle(cornerRadius: MacClippyDockCardMetrics.radius, style: .continuous))
@@ -181,9 +183,11 @@ extension MacClippyDockView {
     private func urlCardBody(_ url: URL, item: MacClippyHistoryEntry) -> some View {
         let originalURL = item.preview.trimmingCharacters(in: .whitespacesAndNewlines)
         VStack(alignment: .leading, spacing: 6) {
-            Text(originalURL.isEmpty ? url.absoluteString : originalURL)
-                .font(MacClippyDockCardMetrics.contentMonospacedFont)
-                .foregroundStyle(MacClippyDockTheme.contentTextColor)
+            highlightedText(
+                originalURL.isEmpty ? url.absoluteString : originalURL,
+                font: MacClippyDockCardMetrics.contentMonospacedFont,
+                color: MacClippyDockTheme.contentTextColor
+            )
                 .lineLimit(6)
                 .multilineTextAlignment(.leading)
                 .truncationMode(.middle)
@@ -204,9 +208,11 @@ extension MacClippyDockView {
                     .multilineTextAlignment(.leading)
             } else {
                 ForEach(Array(names.prefix(3).enumerated()), id: \.offset) { _, name in
-                    Text(name.isEmpty ? "(file)" : name)
-                        .font(MacClippyDockCardMetrics.contentFont)
-                        .foregroundStyle(MacClippyDockTheme.contentTextColor)
+                    highlightedText(
+                        name.isEmpty ? "(file)" : name,
+                        font: MacClippyDockCardMetrics.contentFont,
+                        color: MacClippyDockTheme.contentTextColor
+                    )
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
@@ -232,11 +238,13 @@ extension MacClippyDockView {
             }
             if let ocrPreview = item.preview.isEmpty ? nil : item.preview,
                !ocrPreview.isEmpty {
-                Text(ocrPreview)
-                    .font(MacClippyDockCardMetrics.contentFont)
+                highlightedText(
+                    ocrPreview,
+                    font: MacClippyDockCardMetrics.contentFont,
+                    color: MacClippyDockTheme.mutedColor
+                )
                     .lineLimit(3)
                     .multilineTextAlignment(.leading)
-                    .foregroundStyle(MacClippyDockTheme.mutedColor)
             }
             Spacer(minLength: 0)
         }
@@ -304,56 +312,43 @@ extension MacClippyDockView {
     @ViewBuilder
     private func plainTextCardBody(_ item: MacClippyHistoryEntry) -> some View {
         let text = item.preview.isEmpty ? "(empty)" : String(item.preview.prefix(2_000))
-
-        Text(text)
-            .font(MacClippyDockCardMetrics.contentFont)
-            .foregroundStyle(MacClippyDockTheme.contentTextColor)
-            .lineSpacing(1)
-            .lineLimit(8)
-            .truncationMode(.tail)
-            .multilineTextAlignment(.leading)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+        highlightedText(
+            text,
+            font: MacClippyDockCardMetrics.contentFont,
+            color: MacClippyDockTheme.contentTextColor
+        )
+        .lineSpacing(1)
+        .lineLimit(8)
+        .truncationMode(.tail)
+        .multilineTextAlignment(.leading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     @ViewBuilder
     private func codeCardBody(_ item: MacClippyHistoryEntry) -> some View {
         ScrollView(.vertical, showsIndicators: false) {
-            Text(String(item.preview.prefix(2_000)))
-                .font(MacClippyDockCardMetrics.contentMonospacedFont)
-                .foregroundStyle(MacClippyDockTheme.contentTextColor)
-                .lineSpacing(1)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+            highlightedText(
+                String(item.preview.prefix(2_000)),
+                font: MacClippyDockCardMetrics.contentMonospacedFont,
+                color: MacClippyDockTheme.contentTextColor
+            )
+            .lineSpacing(1)
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .scrollDisabled(true)
     }
 
     var emptyTitle: String {
-        if case .pinboard = model.selectedTab {
-            return model.selectedPinboardName.map { "\($0) is empty" } ?? "Pinboard is empty"
-        }
-        return model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "No clipboard history yet"
-            : "No matches"
+        MacClippyDockEmptyStateCopy.title(
+            query: model.query,
+            tab: model.selectedTab,
+            pinboardName: model.selectedPinboardName
+        )
     }
 
     var emptySubtitle: String {
-        if case .pinboard = model.selectedTab {
-            return "Pinned items will appear here."
-        }
-        return model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "Copied items will appear here."
-            : "Try a different search."
-    }
-
-    private func iconName(for kind: ContentKind) -> String {
-        switch kind {
-        case .text: "text.alignleft"
-        case .html: "chevron.left.forwardslash.chevron.right"
-        case .rtf: "textformat"
-        case .image: "photo"
-        case .files: "doc"
-        }
+        MacClippyDockEmptyStateCopy.subtitle(query: model.query, tab: model.selectedTab)
     }
 
     func label(for kind: ContentKind) -> String {

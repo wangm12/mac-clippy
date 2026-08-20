@@ -90,12 +90,23 @@ extension MacClippyDockView {
     }
 
     func announceSearchResultsIfNeeded() {
-        guard model.selectedTab == .history,
-              !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        let count = model.visibleItems.count
+        guard !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let count: Int
+        let noun: String
+        switch model.selectedTab {
+        case .history:
+            count = model.visibleItems.count
+            noun = "clipboard"
+        case .pinboard:
+            count = model.visibleItems.count
+            noun = "pinboard"
+        case .snippets:
+            count = model.visibleSnippets.count
+            noun = "snippet"
+        }
         let announcement = count == 0
-            ? "No matching clipboard items"
-            : "\(count) clipboard result\(count == 1 ? "" : "s")"
+            ? "No matching \(noun) items"
+            : "\(count) \(noun) result\(count == 1 ? "" : "s")"
         guard let app = NSApp else { return }
         NSAccessibility.post(
             element: app,
@@ -145,13 +156,13 @@ extension MacClippyDockView {
                     .multilineTextAlignment(.center)
                 Button("Retry") {
                     if model.selectedTab == .history {
-                        model.retryHistoryPage()
+                        model.retryCurrentPage()
                     } else {
-                        model.retryPinboardSearchPage()
+                        model.retryCurrentPage()
                     }
                 }
                 .buttonStyle(.bordered)
-                .controlSize(.small)
+                    .controlSize(.small)
             }
             .padding(16)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -187,9 +198,7 @@ extension MacClippyDockView {
                         if let pageError = model.pageError {
                             pageRetryFooter(
                                 message: pageError,
-                                action: model.selectedTab == .history
-                                    ? model.retryHistoryPage
-                                    : model.retryPinboardSearchPage
+                                action: model.retryCurrentPage
                             )
                         }
                     }
@@ -214,8 +223,35 @@ extension MacClippyDockView {
             // Constrain the horizontal carousel to the compact card height plus
             // its vertical scroll padding so it never stretches to fill the
             // panel vertically and leaves a large blank gap below the cards.
-            .frame(height: MacClippyDockCardMetrics.carouselHeight)
+            .frame(height: MacClippyDockCardMetrics.carouselHeight(for: dynamicTypeSize))
+            .overlay { carouselEdgeFade }
+            .overlay { MacClippyDockScrollSignpostProbe().allowsHitTesting(false) }
         }
+    }
+
+    private var carouselEdgeFade: some View {
+        HStack(spacing: 0) {
+            LinearGradient(
+                colors: [
+                    MacClippyDockTheme.panelStrongColor,
+                    MacClippyDockTheme.panelStrongColor.opacity(0)
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+            .frame(width: 16)
+            Spacer(minLength: 0)
+            LinearGradient(
+                colors: [
+                    MacClippyDockTheme.panelStrongColor.opacity(0),
+                    MacClippyDockTheme.panelStrongColor
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+            .frame(width: 16)
+        }
+        .allowsHitTesting(false)
     }
 
     private func pageRetryFooter(message: String, action: @escaping () -> Void) -> some View {
@@ -253,7 +289,10 @@ extension MacClippyDockView {
                                 .font(.caption)
                                 .foregroundStyle(MacClippyDockTheme.mutedColor)
                         }
-                        .frame(width: MacClippyDockCardMetrics.width, height: MacClippyDockCardMetrics.height)
+                        .frame(
+                            width: MacClippyDockCardMetrics.width,
+                            height: MacClippyDockCardMetrics.height(for: dynamicTypeSize)
+                        )
                     } else {
                         ForEach(Array(visibleSnippets.enumerated()), id: \.element.id) { index, snippet in
                             snippetCard(snippet, index: index)
@@ -281,7 +320,9 @@ extension MacClippyDockView {
         }
         // Keep the snippet carousel the same compact height as the clipboard
         // carousel, including when the add card is the only card.
-        .frame(height: MacClippyDockCardMetrics.carouselHeight)
+        .frame(height: MacClippyDockCardMetrics.carouselHeight(for: dynamicTypeSize))
+        .overlay { carouselEdgeFade }
+        .overlay { MacClippyDockScrollSignpostProbe().allowsHitTesting(false) }
     }
 
     private var snippetAddCard: some View {
@@ -301,7 +342,7 @@ extension MacClippyDockView {
                     .font(.caption)
                     .foregroundStyle(MacClippyDockTheme.mutedColor)
             }
-            .frame(width: MacClippyDockCardMetrics.width, height: MacClippyDockCardMetrics.height)
+            .frame(width: MacClippyDockCardMetrics.width, height: MacClippyDockCardMetrics.height(for: dynamicTypeSize))
             .contentShape(RoundedRectangle(cornerRadius: MacClippyDockCardMetrics.radius, style: .continuous))
             .background(MacClippyDockTheme.cardColor, in: RoundedRectangle(cornerRadius: MacClippyDockCardMetrics.radius, style: .continuous))
             .overlay {

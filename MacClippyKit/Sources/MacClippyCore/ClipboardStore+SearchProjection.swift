@@ -20,6 +20,7 @@ extension MacClippyClipboardStore {
         offset: Int = 0,
         contentKind: MacClippyContentKind? = nil,
         filter: MacClippyClipboardMetadataFilter? = nil,
+        requiresURL: Bool = false,
         before cursor: MacClippyClipboardHistoryCursor? = nil
     ) throws -> [ClipboardItemMeta] {
         guard limit > 0 else { return [] }
@@ -27,33 +28,12 @@ extension MacClippyClipboardStore {
             var predicates: [String] = []
             var rawArguments: [Any] = []
             let activeFilter = filter ?? MacClippyClipboardMetadataFilter(contentKind: contentKind)
-
-            if let contentKind = activeFilter.contentKind {
-                predicates.append("content_kind = ?")
-                rawArguments.append(contentKind.rawValue)
-            }
-            for value in activeFilter.sourceAppContains {
-                predicates.append("LOWER(source_app) LIKE LOWER(?) ESCAPE '\\'")
-                rawArguments.append(Self.likePattern(for: value))
-            }
-            for value in activeFilter.labelContains {
-                predicates.append("LOWER(custom_label) LIKE LOWER(?) ESCAPE '\\'")
-                rawArguments.append(Self.likePattern(for: value))
-            }
-            if activeFilter.requiresLabel {
-                predicates.append("custom_label IS NOT NULL AND trim(custom_label) != ''")
-            }
-            if activeFilter.requiresOCR {
-                predicates.append("ocr_text IS NOT NULL AND trim(ocr_text) != ''")
-            }
-            for date in activeFilter.modifiedBefore {
-                predicates.append("modified < ?")
-                rawArguments.append(Self.milliseconds(date))
-            }
-            for date in activeFilter.modifiedAfter {
-                predicates.append("modified >= ?")
-                rawArguments.append(Self.milliseconds(date))
-            }
+            Self.appendFilterPredicates(
+                activeFilter,
+                requiresURL: requiresURL,
+                predicates: &predicates,
+                rawArguments: &rawArguments
+            )
             if let cursor {
                 predicates.append("(modified < ? OR (modified = ? AND lamport < ?) OR (modified = ? AND lamport = ? AND id < ?))")
                 let milliseconds = Self.milliseconds(cursor.modified)
@@ -75,17 +55,6 @@ extension MacClippyClipboardStore {
                 throw MacClippyStoreError.invalidStoredRecord
             }
             return try Row.fetchAll(connection, sql: sql, arguments: arguments).map(Self.meta)
-        }
-    }
-
-    public func recentByFrequency(limit: Int, offset: Int = 0) throws -> [ClipboardItemMeta] {
-        guard limit > 0 else { return [] }
-        return try database.queue.read { connection in
-            try Row.fetchAll(connection, sql: """
-                SELECT id, created, modified, device_id, lamport, kind, content_kind, preview, source_app,
-                       frequency, last_accessed, custom_label, detected_type, ocr_text
-                FROM clipboard_records ORDER BY frequency DESC, modified DESC, id DESC LIMIT ? OFFSET ?
-            """, arguments: [limit, max(0, offset)]).map(Self.meta)
         }
     }
 
@@ -136,4 +105,45 @@ extension MacClippyClipboardStore {
     // payload_state 'unavailable' are returned as type-only markers (nil
     // payloadBytes, nil blobID) so the advertised type set is complete even
     // when the provider never materialized the bytes.
+    private static func appendFilterPredicates(
+        _ filter: MacClippyClipboardMetadataFilter,
+        requiresURL: Bool,
+        predicates: inout [String],
+        rawArguments: inout [Any]
+    ) {
+        if let contentKind = filter.contentKind {
+            predicates.append("content_kind = ?")
+            rawArguments.append(contentKind.rawValue)
+        }
+        for value in filter.sourceAppContains {
+            predicates.append("LOWER(source_app) LIKE LOWER(?) ESCAPE '\\'")
+            rawArguments.append(likePattern(for: value))
+        }
+        for value in filter.labelContains {
+            predicates.append("LOWER(custom_label) LIKE LOWER(?) ESCAPE '\\'")
+            rawArguments.append(likePattern(for: value))
+        }
+        if filter.requiresLabel {
+            predicates.append("custom_label IS NOT NULL AND trim(custom_label) != ''")
+        }
+        if filter.requiresOCR {
+            predicates.append("ocr_text IS NOT NULL AND trim(ocr_text) != ''")
+        }
+        if requiresURL {
+            predicates.append(urlMatchPredicate)
+        }
+        for date in filter.modifiedBefore {
+            predicates.append("modified < ?")
+            rawArguments.append(milliseconds(date))
+        }
+        for date in filter.modifiedAfter {
+            predicates.append("modified >= ?")
+            rawArguments.append(milliseconds(date))
+        }
+    }
+
+    private static let urlMatchPredicate =
+        "(LOWER(IFNULL(detected_type, '')) LIKE '%url%'"
+        + " OR LOWER(TRIM(preview)) LIKE 'http://%'"
+        + " OR LOWER(TRIM(preview)) LIKE 'https://%')"
 }

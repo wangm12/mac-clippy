@@ -184,7 +184,11 @@ final class MacClippySearchGrammarTests: XCTestCase {
         modified: Date = Date(timeIntervalSince1970: 1_783_728_000) // 2026-07-09 12:00 UTC
     ) -> MacClippySearchGrammar.SearchRecord {
         MacClippySearchGrammar.SearchRecord(
-            contentKind: kind, sourceAppBundleID: app, customLabel: label, ocrText: ocr, modified: modified
+            contentKind: kind,
+            sourceAppBundleID: app,
+            customLabel: label,
+            ocrText: ocr,
+            modified: modified
         )
     }
 

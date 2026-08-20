@@ -29,17 +29,6 @@ enum MacClippyDockPreviewTarget: Equatable, Sendable {
     }
 }
 
-enum MacClippyDockCardClickIntent: Equatable {
-    case focus
-    case copy
-}
-
-enum MacClippyDockCardClickPolicy {
-    static func intent(for clickCount: Int) -> MacClippyDockCardClickIntent {
-        clickCount >= 2 ? .copy : .focus
-    }
-}
-
 enum MacClippyDockCardHighlightPolicy {
     static func isActive(isFocused: Bool, isSelected: Bool, isPreviewVisible: Bool) -> Bool {
         isPreviewVisible ? isFocused : isSelected
@@ -146,12 +135,6 @@ enum MacClippyDockCardMetrics {
     // the card row). Kept generous enough that the card border never clips
     // against the scroll view's bounds or the panel's top clip shape.
     static let carouselVerticalPadding: CGFloat = 10
-    // Compact horizontal carousel height: the fixed card height plus the
-    // vertical scroll padding on both sides. The populated horizontal carousel
-    // is constrained to this so it never expands to fill the panel vertically.
-    static var carouselHeight: CGFloat {
-        height + carouselVerticalPadding * 2
-    }
 }
 
 struct MacClippyDockCategoryPresentation: Identifiable, Equatable, Sendable {

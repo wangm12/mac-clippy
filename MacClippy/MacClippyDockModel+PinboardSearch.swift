@@ -30,10 +30,17 @@ extension MacClippyDockModel {
             resetPinboardSearchState()
             return
         }
-        resetPinboardSearchState()
+        pinboardSearchWorkItem?.cancel()
+        pinboardSearchCancellationToken?.cancel()
+        pinboardSearchWorkItem = nil
+        pinboardSearchCancellationToken = nil
+        pinboardSearchGeneration &+= 1
         pinboardSearchBoardID = boardID
         pinboardSearchQuery = query
+        pinboardSearchPageToken = nil
         pinboardSearchHasMore = true
+        pinboardSearchError = nil
+        clearPageError()
         loadPinboardSearchPage(reset: true)
     }
 
@@ -128,8 +135,9 @@ extension MacClippyDockModel {
             // Keep the cursor and continuation so the same page can be
             // retried without losing the already visible matches.
             pinboardSearchHasMore = true
-            pinboardSearchError = MacClippyUserFacingError.historyLoad
-            pageError = MacClippyUserFacingError.historyLoad
+            let message = MacClippyUserFacingError.message(for: error, fallback: MacClippyUserFacingError.historyLoad)
+            pinboardSearchError = message
+            pageError = message
         }
     }
 }

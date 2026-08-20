@@ -57,6 +57,12 @@ final class MacClippyDockInteractionPolicyTests: XCTestCase {
         )
     }
 
+    func testSearchEscapeClearsNonEmptyQueryFirst() {
+        XCTAssertTrue(MacClippyDockSearchEscapePolicy.clearsQueryFirst("clip"))
+        XCTAssertFalse(MacClippyDockSearchEscapePolicy.clearsQueryFirst("   "))
+        XCTAssertFalse(MacClippyDockSearchEscapePolicy.clearsQueryFirst(""))
+    }
+
     func testSearchModeLeavesTextEditingKeysNative() {
         XCTAssertEqual(action(mode: .search, keyCode: 49, hasCardFocus: true), .native)
         XCTAssertEqual(action(mode: .search, keyCode: 123, hasCardFocus: true), .native)

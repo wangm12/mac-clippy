@@ -49,6 +49,9 @@ struct MacClippyDockView: View {
     // toast outside the dock instead of an in-panel overlay.
     let onCopyToast: (String) -> Void
     @Environment(\.accessibilityReduceMotion) var accessibilityReduceMotion
+    @Environment(\.colorSchemeContrast) var colorSchemeContrast
+    @Environment(\.accessibilityDifferentiateWithoutColor) var differentiateWithoutColor
+    @Environment(\.dynamicTypeSize) var dynamicTypeSize
     @FocusState var isSearchFocused: Bool
     @AccessibilityFocusState var modalAccessibilityFocused: Bool
     @State var dropTargetPinboardID: RecordID?
@@ -82,7 +85,9 @@ struct MacClippyDockView: View {
     }
 
     var highContrast: Bool {
-        NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+        colorSchemeContrast == .increased
+            || differentiateWithoutColor
+            || NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
             || NSWorkspace.shared.accessibilityDisplayShouldDifferentiateWithoutColor
     }
 
@@ -109,7 +114,7 @@ struct MacClippyDockView: View {
                 }
             // The carousel container fills the width but does not force a
             // vertical stretch: the populated horizontal carousels constrain
-            // themselves to MacClippyDockCardMetrics.carouselHeight, while the
+            // themselves to MacClippyDockCardMetrics.carouselHeight(for:), while the
             // loading/error/empty branches keep their own maxHeight: .infinity
             // so they center within the available panel space without adding
             // decorative edge overlays over the first and last cards.
@@ -208,11 +213,25 @@ struct MacClippyDockView: View {
             guard wasLoading, !isLoading else { return }
             announceSearchResultsIfNeeded()
         }
+        .onChange(of: model.pinboardSearchIsLoading) { wasLoading, isLoading in
+            guard wasLoading, !isLoading else { return }
+            announceSearchResultsIfNeeded()
+        }
+        .onChange(of: model.filteredSnippets.count) { _, _ in
+            announceSearchResultsIfNeeded()
+        }
+        .onChange(of: model.selectedTab) { _, _ in
+            announceSearchResultsIfNeeded()
+        }
         .onAppear {
             // Keyboard-first: do NOT auto-focus the search field on launch.
             // The first card is focusable; Cmd+K still focuses search on
             // demand via the controller key monitor.
             onReduceMotionChange(accessibilityReduceMotion)
+            let signpostID = MacClippyPerformance.begin("dock_open")
+            DispatchQueue.main.async {
+                MacClippyPerformance.end("dock_open", id: signpostID)
+            }
         }
         .onChange(of: model.hasMultipleSelection) { _, hasMultipleSelection in
             onLayoutHeightChange(hasMultipleSelection)

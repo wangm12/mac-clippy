@@ -3,6 +3,28 @@ import Foundation
 import MacClippyCore
 import MacClippyPlatform
 
+enum MacClippyHistoryRecencyOrder {
+    static func sorted(_ items: [MacClippyHistoryEntry]) -> [MacClippyHistoryEntry] {
+        items.sorted { lhs, rhs in
+            if lhs.meta.modified != rhs.meta.modified {
+                return lhs.meta.modified > rhs.meta.modified
+            }
+            if lhs.meta.lamport != rhs.meta.lamport {
+                return lhs.meta.lamport > rhs.meta.lamport
+            }
+            return lhs.id.rawValue > rhs.id.rawValue
+        }
+    }
+
+    static func sortedIDs(_ metas: [ClipboardItemMeta]) -> [RecordID] {
+        metas.sorted { lhs, rhs in
+            if lhs.modified != rhs.modified { return lhs.modified > rhs.modified }
+            if lhs.lamport != rhs.lamport { return lhs.lamport > rhs.lamport }
+            return lhs.id.rawValue > rhs.id.rawValue
+        }.map(\.id)
+    }
+}
+
 struct MacClippyHistoryStructuredPageContext {
     let query: MacClippySearchGrammar.Query
     let limit: Int
@@ -29,34 +51,8 @@ extension MacClippyRuntime {
         )
     }
 
-    func structuredHitProjection(
-        _ hits: [SearchHit],
-        context: MacClippyHistoryStructuredPageContext,
-        shouldCancel: () -> Bool
-    ) throws -> (
-        metasByID: [RecordID: ClipboardItemMeta],
-        entriesByID: [RecordID: MacClippyHistoryEntry]
-    ) {
-        let metas = try clipboardStore.metas(for: hits.map(\.id))
-        let metasByID = Dictionary(uniqueKeysWithValues: metas.map { ($0.id, $0) })
-        let knownKinds = context.needsKind ? try clipboardStore.contentKinds(for: hits.map(\.id)) : [:]
-        let matchingHits = try matchingStructuredHits(
-            hits,
-            metasByID: metasByID,
-            limit: hits.count,
-            query: context.query,
-            needsKind: context.needsKind,
-            knownKinds: knownKinds,
-            shouldCancel: shouldCancel
-        )
-        let entriesByID = try entries(
-            for: matchingHits.map { $0.1 },
-            validateContentKind: true
-        )
-        let matchingByID: [RecordID: ClipboardItemMeta] = Dictionary(
-            uniqueKeysWithValues: matchingHits.map { ($0.0.id, $0.1) }
-        )
-        return (matchingByID, entriesByID)
+    func recencySorted(_ items: [MacClippyHistoryEntry]) -> [MacClippyHistoryEntry] {
+        MacClippyHistoryRecencyOrder.sorted(items)
     }
 
     func historyCursor(for meta: ClipboardItemMeta) -> MacClippyClipboardHistoryCursor {

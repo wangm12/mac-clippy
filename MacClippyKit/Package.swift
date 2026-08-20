@@ -32,6 +32,7 @@ let package = Package(
             name: "MacClippyCoreTests",
             dependencies: [
                 "MacClippyCore",
+                .product(name: "GRDB", package: "GRDB.swift"),
             ],
             path: "Tests/MacClippyCoreTests"
         ),

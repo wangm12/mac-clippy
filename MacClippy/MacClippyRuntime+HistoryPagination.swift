@@ -50,7 +50,7 @@ extension MacClippyRuntime {
         let parsed = MacClippySearchGrammar.parse(trimmedQuery)
         guard parsed.hasStructuredClauses else {
             return try historyPageForBareQuery(
-                parsed.bareTerms.joined(separator: " "),
+                parsed.bareTerms,
                 limit: limit,
                 pageToken: pageToken,
                 shouldCancel: shouldCancel
@@ -168,6 +168,7 @@ extension MacClippyRuntime {
                 try clipboardStore.list(
                     limit: batchLimit,
                     filter: filter,
+                    requiresURL: listRequiresURL(for: context.query),
                     before: cursor
                 )
             }
@@ -210,7 +211,7 @@ extension MacClippyRuntime {
     }
 
     private func historyPageForBareQuery(
-        _ query: String,
+        _ terms: [String],
         limit: Int,
         pageToken: MacClippyHistoryPageToken?,
         shouldCancel: () -> Bool
@@ -226,7 +227,7 @@ extension MacClippyRuntime {
             }
             let batchLimit = max(1, limit - items.count + 1)
             let (hits, metas) = try withStoreLock {
-                let hits = try searchStore.search(query: query, limit: batchLimit, after: lastSearchCursor)
+                let hits = try searchStore.search(terms: terms, limit: batchLimit, after: lastSearchCursor)
                 let metas = try clipboardStore.metas(for: hits.map(\.id))
                 return (hits, metas)
             }
@@ -243,7 +244,7 @@ extension MacClippyRuntime {
                 items.append(MacClippyHistoryEntry(
                     meta: meta,
                     contentKind: entry.contentKind,
-                    preview: hit.snippet,
+                    preview: MacClippySearchQuery.displayText(fromFTSSnippet: hit.snippet),
                     fileURLs: entry.fileURLs,
                     imageDimensions: entry.imageDimensions
                 ))
@@ -253,7 +254,7 @@ extension MacClippyRuntime {
                 let hasMoreInBatch = index + 1 < hits.count || hits.count == batchLimit
                 try ensureSearchRevision(searchCursor.indexRevision)
                 return MacClippyHistoryPage(
-                    items: items,
+                    items: recencySorted(items),
                     nextPageToken: hasMoreInBatch
                         ? .searchCursor(MacClippySearchPageCursor(
                             indexRevision: searchCursor.indexRevision,
@@ -271,7 +272,7 @@ extension MacClippyRuntime {
         }
 
         try ensureSearchRevision(searchCursor.indexRevision)
-        return MacClippyHistoryPage(items: items, nextPageToken: nil)
+        return MacClippyHistoryPage(items: recencySorted(items), nextPageToken: nil)
     }
 
     private func historyPageForBareAndStructuredQuery(
@@ -283,7 +284,7 @@ extension MacClippyRuntime {
         var lastSearchCursor = searchCursor.searchCursor
         var items: [MacClippyHistoryEntry] = []
         items.reserveCapacity(context.limit)
-        let ftsQuery = context.query.bareTerms.joined(separator: " ")
+        let terms = context.query.bareTerms
 
         while items.count < context.limit {
             guard !shouldCancel() else {
@@ -291,7 +292,7 @@ extension MacClippyRuntime {
             }
             let batchLimit = max(1, context.limit - items.count + 1)
             let (hits, metas, knownKinds) = try withStoreLock {
-                let hits = try searchStore.search(query: ftsQuery, limit: batchLimit, after: lastSearchCursor)
+                let hits = try searchStore.search(terms: terms, limit: batchLimit, after: lastSearchCursor)
                 let ids = hits.map(\.id)
                 let metas = try clipboardStore.metas(for: ids)
                 let knownKinds: [RecordID: MacClippyContentKind] = context.needsKind
@@ -327,7 +328,7 @@ extension MacClippyRuntime {
                 items.append(MacClippyHistoryEntry(
                     meta: meta,
                     contentKind: entry.contentKind,
-                    preview: hit.snippet,
+                    preview: MacClippySearchQuery.displayText(fromFTSSnippet: hit.snippet),
                     fileURLs: entry.fileURLs,
                     imageDimensions: entry.imageDimensions
                 ))
@@ -337,7 +338,7 @@ extension MacClippyRuntime {
                 let hasMoreInBatch = index + 1 < hits.count || hits.count == batchLimit
                 try ensureSearchRevision(searchCursor.indexRevision)
                 return MacClippyHistoryPage(
-                    items: items,
+                    items: recencySorted(items),
                     nextPageToken: hasMoreInBatch
                         ? .searchCursor(MacClippySearchPageCursor(
                             indexRevision: searchCursor.indexRevision,
@@ -355,7 +356,7 @@ extension MacClippyRuntime {
         }
 
         try ensureSearchRevision(searchCursor.indexRevision)
-        return MacClippyHistoryPage(items: items, nextPageToken: nil)
+        return MacClippyHistoryPage(items: recencySorted(items), nextPageToken: nil)
     }
 
     private func validatedSearchCursor(

@@ -31,6 +31,7 @@ public enum MacClippySearchGrammar {
         case hasOCR
         case before(Date)
         case after(Date)
+        case url
     }
 
     public struct Query: Equatable, Sendable {
@@ -68,19 +69,22 @@ public enum MacClippySearchGrammar {
         public let customLabel: String?
         public let ocrText: String?
         public let modified: Date
+        public let isURL: Bool
 
         public init(
             contentKind: MacClippyContentKind,
             sourceAppBundleID: String?,
             customLabel: String?,
             ocrText: String?,
-            modified: Date
+            modified: Date,
+            isURL: Bool = false
         ) {
             self.contentKind = contentKind
             self.sourceAppBundleID = sourceAppBundleID
             self.customLabel = customLabel
             self.ocrText = ocrText
             self.modified = modified
+            self.isURL = isURL
         }
 
         public init(meta: ClipboardItemMeta, contentKind: MacClippyContentKind) {
@@ -89,6 +93,14 @@ public enum MacClippySearchGrammar {
             self.customLabel = meta.customLabel
             self.ocrText = meta.ocrText
             self.modified = meta.modified
+            self.isURL = Self.detectsURL(meta)
+        }
+
+        public static func detectsURL(_ meta: ClipboardItemMeta) -> Bool {
+            if let json = meta.detectedTypeJSON, json.localizedCaseInsensitiveContains("url") {
+                return true
+            }
+            return MacClippySmartText.matchesURL(meta.preview)
         }
     }
 
@@ -223,9 +235,7 @@ public enum MacClippySearchGrammar {
             if let kind = MacClippyContentKind(rawValue: kindValue) {
                 return .type(kind)
             }
-            // Unknown content kind: degrade to a bare term so the query does
-            // not silently broaden to match-all.
-            return .bare(token)
+            return urlOrBareClause(kindValue, token: token)
 
         case "app":
             guard let cleaned = unquote(value) else { return .bare(token) }
@@ -265,6 +275,10 @@ public enum MacClippySearchGrammar {
             // via FTS instead of being dropped or broadening the query.
             return .bare(token)
         }
+    }
+
+    private static func urlOrBareClause(_ kindValue: String, token: String) -> Clause {
+        kindValue == "url" ? .url : .bare(token)
     }
 
     // Strip surrounding quotes from a value and unescape embedded \" sequences.
@@ -351,6 +365,8 @@ public enum MacClippySearchGrammar {
         case .after(let dayStart):
             // after:<day> means modified on or after the start of that day.
             return record.modified >= dayStart
+        case .url:
+            return record.isURL
         }
     }
 }

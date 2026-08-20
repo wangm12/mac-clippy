@@ -79,8 +79,6 @@ public final class MacClippyPasteboardWriteSentinel: @unchecked Sendable {
     }
 }
 
-public typealias PasteboardWriteSentinel = MacClippyPasteboardWriteSentinel
-
 // Convenience helper that performs the beginWrite/prepare/consume sequence in
 // one call. The injector uses this so the sentinel token is registered before
 // the pasteboard is touched and the write happens in the same main-thread

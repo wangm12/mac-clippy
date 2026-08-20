@@ -99,7 +99,16 @@ extension MacClippyDockModel {
         // on the raw query so bare-term pinboard search behavior is
         // unchanged.
         guard parsed.hasStructuredClauses else {
-            return items.filter { $0.preview.localizedCaseInsensitiveContains(normalizedQuery) }
+            return items.filter { entry in
+                MacClippySearchQuery.allTerms(
+                    parsed.bareTerms.isEmpty ? [normalizedQuery] : parsed.bareTerms,
+                    appearIn: [
+                        entry.preview,
+                        entry.meta.ocrText ?? "",
+                        entry.meta.customLabel ?? ""
+                    ]
+                )
+            }
         }
         return items.filter { entry in
             let record = MacClippySearchGrammar.SearchRecord(
@@ -107,16 +116,19 @@ extension MacClippyDockModel {
                 sourceAppBundleID: entry.meta.sourceAppBundleID,
                 customLabel: entry.meta.customLabel,
                 ocrText: entry.meta.ocrText,
-                modified: entry.meta.modified
+                modified: entry.meta.modified,
+                isURL: MacClippySearchGrammar.SearchRecord.detectsURL(entry.meta)
             )
             guard MacClippySearchGrammar.matches(parsed, record: record) else { return false }
-            // AND with the existing bare-term substring on the preview so a
-            // mixed query (e.g. important type:text) still narrows by the
-            // bare portion too. With no bare terms, only the structured
-            // predicate applies.
             if parsed.bareTerms.isEmpty { return true }
-            let bare = parsed.bareTerms.joined(separator: " ")
-            return entry.preview.localizedCaseInsensitiveContains(bare)
+            return MacClippySearchQuery.allTerms(
+                parsed.bareTerms,
+                appearIn: [
+                    entry.preview,
+                    entry.meta.ocrText ?? "",
+                    entry.meta.customLabel ?? ""
+                ]
+            )
         }
     }
 

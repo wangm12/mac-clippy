@@ -34,6 +34,9 @@ MacClippy.xcodeproj/project.xcworkspace/xcuserdata/
 *.ipa
 *.pkg
 
+# Generated review artifacts
+*.docx
+
 # Local design/agent context
 .impeccable.md
 

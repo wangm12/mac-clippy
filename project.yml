@@ -58,6 +58,7 @@ targets:
       - path: MacClippy/MacClippyRuntime+History.swift
       - path: MacClippy/MacClippyRuntime+HistoryProjection.swift
       - path: MacClippy/MacClippyRuntime+Pinboard.swift
+      - path: MacClippy/MacClippyRuntime+PinboardSearch.swift
       - path: MacClippy/MacClippyRuntime+ClipboardActions.swift
       - path: MacClippy/MacClippyRuntime+Maintenance.swift
       - path: MacClippy/MacClippyRuntime+MaintenanceHealth.swift
@@ -66,6 +67,11 @@ targets:
       - path: MacClippy/MacClippyRuntime+OrderedActions.swift
       - path: MacClippy/MacClippyRuntime+QueueActions.swift
       - path: MacClippy/MacClippyDockPolicies.swift
+      - path: MacClippy/MacClippyDockEmptyState.swift
+      - path: MacClippy/MacClippyDockPinboardVisibleItems.swift
+      - path: MacClippy/MacClippyUserFacingError+Typed.swift
+      - path: MacClippy/MacClippyDockScrollSignpost.swift
+      - path: MacClippy/MacClippyDockCardHighlight.swift
       - path: MacClippy/MacClippyDockModel.swift
       - path: MacClippy/MacClippyDockModel+Categories.swift
       - path: MacClippy/MacClippyDockModel+LoadingPreview.swift

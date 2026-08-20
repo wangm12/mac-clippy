@@ -57,172 +57,6 @@ extension MacClippyRuntime {
         }
     }
 
-    private func historyForEmptyQuery(
-        limit: Int,
-        shouldCancel: () -> Bool
-    ) throws -> [MacClippyHistoryEntry] {
-        guard limit > 0 else { return [] }
-        let metas = try clipboardStore.list(limit: limit)
-        guard !shouldCancel() else { return [] }
-        let entriesByID = try entries(for: metas, validateContentKind: true)
-        return metas.compactMap { meta in
-            guard !shouldCancel() else { return nil }
-            return entriesByID[meta.id]
-        }
-    }
-
-    private func historyForBareQuery(
-        _ query: String,
-        limit: Int,
-        shouldCancel: () -> Bool
-    ) throws -> [MacClippyHistoryEntry] {
-        guard limit > 0 else { return [] }
-        var collected: [MacClippyHistoryEntry] = []
-        collected.reserveCapacity(limit)
-        var pageOffset = 0
-        while collected.count < limit {
-            guard !shouldCancel() else { return [] }
-            let remaining = limit - collected.count
-            // Resolve no more than the number of cards still requested. If a
-            // hit is corrupt/orphaned, the outer page loop fetches the next
-            // FTS page instead of decrypting an oversized speculative batch.
-            let pageSize = min(max(remaining, 1), 128)
-            let hits = try searchStore.search(
-                query: query,
-                limit: pageSize,
-                offset: pageOffset
-            )
-            guard !hits.isEmpty else { break }
-            guard !shouldCancel() else { return [] }
-            let pageEntries = try historyEntriesFromHits(hits, shouldCancel: shouldCancel)
-            guard !shouldCancel() else { return [] }
-            collected.append(contentsOf: pageEntries.prefix(limit - collected.count))
-            if hits.count < pageSize { break }
-            pageOffset += hits.count
-        }
-        return collected
-    }
-
-    private func historyForStructuredOnlyQuery(
-        _ query: MacClippySearchGrammar.Query,
-        limit: Int,
-        needsKind: Bool,
-        requestedKind: MacClippyContentKind?,
-        shouldCancel: () -> Bool
-    ) throws -> [MacClippyHistoryEntry] {
-        guard limit > 0 else { return [] }
-        var collected: [MacClippyHistoryEntry] = []
-        collected.reserveCapacity(limit)
-        let pageSize = 128
-        var cursor: MacClippyClipboardHistoryCursor?
-        let filter = metadataFilter(for: query, contentKind: requestedKind)
-
-        while collected.count < limit {
-            guard !shouldCancel() else { return collected }
-            let metas = try clipboardStore.list(
-                limit: pageSize,
-                filter: filter,
-                before: cursor
-            )
-            guard !metas.isEmpty else { break }
-
-            let knownKinds = requestedKind.map { kind in
-                Dictionary(uniqueKeysWithValues: metas.map { ($0.id, kind) })
-            } ?? [:]
-            let matchingMetas = try matchingStructuredMetas(
-                metas,
-                limit: limit - collected.count,
-                query: query,
-                needsKind: needsKind,
-                knownKinds: knownKinds,
-                shouldCancel: shouldCancel
-            )
-            guard !shouldCancel() else { return collected }
-
-            let entriesByID = try entries(for: matchingMetas, validateContentKind: true)
-            for meta in matchingMetas {
-                guard collected.count < limit else { break }
-                if let entry = entriesByID[meta.id],
-                   requestedKind == nil || entry.contentKind == requestedKind {
-                    collected.append(entry)
-                }
-            }
-
-            guard metas.count == pageSize, let last = metas.last else { break }
-            cursor = MacClippyClipboardHistoryCursor(
-                modified: last.modified,
-                lamport: last.lamport,
-                id: last.id
-            )
-        }
-        return collected
-    }
-
-    private func historyForBareAndStructuredQuery(
-        _ query: MacClippySearchGrammar.Query,
-        limit: Int,
-        needsKind: Bool,
-        requestedKind: MacClippyContentKind?,
-        shouldCancel: () -> Bool
-    ) throws -> [MacClippyHistoryEntry] {
-        guard limit > 0 else { return [] }
-        let ftsQuery = query.bareTerms.joined(separator: " ")
-        var collected: [MacClippyHistoryEntry] = []
-        collected.reserveCapacity(limit)
-        var pageOffset = 0
-
-        while collected.count < limit {
-            guard !shouldCancel() else { return [] }
-            let remaining = limit - collected.count
-            let pageSize = min(max(remaining, 1), 128)
-            let hits = try searchStore.search(
-                query: ftsQuery,
-                limit: pageSize,
-                offset: pageOffset
-            )
-            guard !hits.isEmpty else { break }
-            guard !shouldCancel() else { return [] }
-
-            let hitIDs = hits.map(\.id)
-            let metas = try clipboardStore.metas(for: hitIDs)
-            let metasByID = Dictionary(uniqueKeysWithValues: metas.map { ($0.id, $0) })
-            let knownKinds = needsKind ? try clipboardStore.contentKinds(for: hitIDs) : [:]
-            let matchingHits = try matchingStructuredHits(
-                hits,
-                metasByID: metasByID,
-                limit: limit - collected.count,
-                query: query,
-                needsKind: needsKind,
-                knownKinds: knownKinds,
-                shouldCancel: shouldCancel
-            )
-            guard !shouldCancel() else { return [] }
-
-            let entriesByID = try entries(
-                for: matchingHits.map { $0.1 },
-                validateContentKind: true
-            )
-            for (hit, meta) in matchingHits {
-                guard collected.count < limit,
-                      let entry = entriesByID[meta.id],
-                      requestedKind == nil || entry.contentKind == requestedKind else { continue }
-                collected.append(
-                    MacClippyHistoryEntry(
-                        meta: meta,
-                        contentKind: entry.contentKind,
-                        preview: hit.snippet,
-                        fileURLs: entry.fileURLs,
-                        imageDimensions: entry.imageDimensions
-                    )
-                )
-            }
-
-            if hits.count < pageSize { break }
-            pageOffset += hits.count
-        }
-        return collected
-    }
-
     // Paging reuses these pure projection helpers across bounded History
     // queries. The explicit arguments keep query state visible at the call
     // site instead of storing mutable search state on Runtime.
@@ -295,11 +129,18 @@ extension MacClippyRuntime {
                 filter.modifiedBefore.append(date)
             case let .after(date):
                 filter.modifiedAfter.append(date)
-            case .bare, .type:
+            case .bare, .type, .url:
                 break
             }
         }
         return filter
+    }
+
+    func listRequiresURL(for query: MacClippySearchGrammar.Query) -> Bool {
+        query.clauses.contains { clause in
+            if case .url = clause { return true }
+            return false
+        }
     }
 
 }

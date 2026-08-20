@@ -35,10 +35,10 @@ extension MacClippyDockController {
                 self.details = details
                 self.setDetailsRootView(AnyView(self.detailsView(details: details, editing: .none)))
                 panel.makeKey()
-            case .failure:
+            case let .failure(error):
                 self.details = nil
                 self.setDetailsRootView(AnyView(MacClippyDetailsErrorView(
-                    message: MacClippyUserFacingError.itemLoad,
+                    message: MacClippyUserFacingError.message(for: error, fallback: MacClippyUserFacingError.itemLoad),
                     onRetry: { [weak self] in self?.refreshDetails() },
                     onClose: { [weak self] in self?.hideDetails() }
                 )))
@@ -172,8 +172,10 @@ extension MacClippyDockController {
             case .success:
                 self.detailsEditing = .none
                 self.showDetails()
-            case .failure:
-                self.model.setErrorForDetails(MacClippyUserFacingError.itemSave)
+            case let .failure(error):
+                self.model.setErrorForDetails(
+                    MacClippyUserFacingError.message(for: error, fallback: MacClippyUserFacingError.itemSave)
+                )
             }
         }
     }
@@ -191,8 +193,10 @@ extension MacClippyDockController {
             case .success:
                 self.detailsEditing = .none
                 self.showDetails()
-            case .failure:
-                self.model.setErrorForDetails(MacClippyUserFacingError.itemSave)
+            case let .failure(error):
+                self.model.setErrorForDetails(
+                    MacClippyUserFacingError.message(for: error, fallback: MacClippyUserFacingError.itemSave)
+                )
             }
         }
     }

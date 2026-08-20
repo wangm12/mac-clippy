@@ -31,8 +31,34 @@ extension MacClippyDockModel {
         guard board.items.last?.id == itemID,
               board.items.count < board.itemCount,
               pinboardLoadingIDs.insert(pinboardID).inserted else { return }
+        loadPinboardItemsPage(pinboardID: pinboardID, offset: board.items.count)
+    }
 
-        let offset = board.items.count
+    func retryPinboardItemPage() {
+        guard case let .pinboard(pinboardID) = selectedTab,
+              let offset = pinboardItemPageRetryOffset,
+              pinboardLoadingIDs.insert(pinboardID).inserted else { return }
+        clearPageError()
+        loadPinboardItemsPage(pinboardID: pinboardID, offset: offset)
+    }
+
+    func retryCurrentPage() {
+        switch selectedTab {
+        case .history:
+            retryHistoryPage()
+        case .snippets:
+            break
+        case .pinboard:
+            if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                retryPinboardItemPage()
+            } else {
+                retryPinboardSearchPage()
+            }
+        }
+    }
+
+    private func loadPinboardItemsPage(pinboardID: RecordID, offset: Int) {
+        pinboardItemPageRetryOffset = offset
         let session = sessionGeneration
         let loadGeneration = pinboardLoadGeneration
         let runtimeReference = runtime
@@ -46,19 +72,28 @@ extension MacClippyDockModel {
                 guard
                     case .pinboard(pinboardID) = self.selectedTab,
                     let currentIndex = self.pinboards.firstIndex(where: { $0.id == pinboardID }) else { return }
-                guard case let .success(items) = result, !items.isEmpty else { return }
-
-                let current = self.pinboards[currentIndex]
-                let existingIDs = Set(current.items.map(\.id))
-                let additions = items.filter { !existingIDs.contains($0.id) }
-                guard !additions.isEmpty else { return }
-                self.pinboards[currentIndex] = MacClippyPinboardEntry(
-                    board: current.board,
-                    items: current.items + additions,
-                    itemCount: current.itemCount
-                )
-                self.rebindSelection()
-                self.recomputeDedupRuns()
+                switch result {
+                case let .success(items):
+                    self.pinboardItemPageRetryOffset = nil
+                    self.clearPageError()
+                    guard !items.isEmpty else { return }
+                    let current = self.pinboards[currentIndex]
+                    let existingIDs = Set(current.items.map(\.id))
+                    let additions = items.filter { !existingIDs.contains($0.id) }
+                    guard !additions.isEmpty else { return }
+                    self.pinboards[currentIndex] = MacClippyPinboardEntry(
+                        board: current.board,
+                        items: current.items + additions,
+                        itemCount: current.itemCount
+                    )
+                    self.rebindSelection()
+                    self.recomputeDedupRuns()
+                case let .failure(error):
+                    self.pageError = MacClippyUserFacingError.message(
+                        for: error,
+                        fallback: MacClippyUserFacingError.historyLoad
+                    )
+                }
             }
         }
     }

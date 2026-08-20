@@ -114,7 +114,7 @@ extension MacClippyDockModel {
             let existingIDs = Set(historyItems.map(\.id))
             let additions = page.items.filter { !existingIDs.contains($0.id) }
             if !additions.isEmpty {
-                historyItems.append(contentsOf: additions)
+                historyItems = MacClippyHistoryRecencyOrder.sorted(historyItems + additions)
                 rebindSelection()
                 recomputeDedupRuns()
             }
@@ -131,9 +131,10 @@ extension MacClippyDockModel {
             // Keep the continuation so the user can retry the failed page;
             // never silently turn a partial history snapshot into a complete
             // one.
-            pageError = MacClippyUserFacingError.historyLoad
+            let message = MacClippyUserFacingError.message(for: error, fallback: MacClippyUserFacingError.historyLoad)
+            pageError = message
             if historyItems.isEmpty {
-                historyLoadError = MacClippyUserFacingError.historyLoad
+                historyLoadError = message
             }
         }
     }

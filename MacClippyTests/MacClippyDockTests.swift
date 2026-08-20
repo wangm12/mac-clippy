@@ -157,11 +157,6 @@ final class MacClippyDockTests: XCTestCase {
         )
     }
 
-    func testPointerCardIntentFocusesOnceAndCopiesOnlyOnDoubleClick() {
-        XCTAssertEqual(MacClippyDockCardClickPolicy.intent(for: 1), .focus)
-        XCTAssertEqual(MacClippyDockCardClickPolicy.intent(for: 2), .copy)
-    }
-
     func testPreviewHighlightFollowsFocusInsteadOfLeavingSelectionHighlightBehind() {
         XCTAssertTrue(
             MacClippyDockCardHighlightPolicy.isActive(

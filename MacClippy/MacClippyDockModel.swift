@@ -228,6 +228,7 @@ final class MacClippyDockModel: ObservableObject {
     var modalPresentationToken: UInt = 0
     var pinboardLoadingIDs: Set<RecordID> = []
     var pinboardLoadGeneration: UInt = 0
+    var pinboardItemPageRetryOffset: Int?
     var queuePasteCancellationToken: MacClippyCancellationToken?
     var sideEffectGate: MacClippyPasteInjectionGate?
 

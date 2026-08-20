@@ -177,8 +177,6 @@ public final class MacClippyPasteboardReadRetryState {
     }
 }
 
-public typealias PasteboardReadRetryState = MacClippyPasteboardReadRetryState
-
 // Helpers for detecting which advertised UTIs in a PasteboardChange are
 // currently unavailable (provider advertised the type but returned no Data
 // and no string). Used by both the observer (to seed the retry state) and
@@ -203,5 +201,3 @@ public enum MacClippyPasteboardAvailability {
         return result
     }
 }
-
-public typealias PasteboardAvailability = MacClippyPasteboardAvailability

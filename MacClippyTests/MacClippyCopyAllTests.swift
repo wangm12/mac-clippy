@@ -292,6 +292,39 @@ final class MacClippyCopyAllTests: XCTestCase {
         XCTAssertEqual(pasteboard.string(forType: .string), "copy and close")
     }
 
+    @MainActor
+    func testCopyFocusedDoesNotShowSuccessWhenPrepareReturnsFalse() throws {
+        let failingRoot = tempRoot.appendingPathComponent("prepare-false", isDirectory: true)
+        try FileManager.default.createDirectory(at: failingRoot, withIntermediateDirectories: true)
+        let failingInjector = MacClippyPasteInjector(
+            pasteboard: pasteboard,
+            isProcessTrusted: { true },
+            postEvents: { [weak self] _, _ in
+                self?.postedEventCount &+= 1
+            },
+            preparer: { _, _ in false }
+        )
+        let failingRuntime = try MacClippyRuntime(
+            paths: try MacClippyPaths(rootURL: failingRoot),
+            pasteInjector: failingInjector
+        )
+        defer { failingRuntime.closeForTesting() }
+
+        let model = MacClippyDockModel(runtime: failingRuntime)
+        _ = try failingRuntime.appendTestRecord(.text("will not copy"))
+        model.reload()
+        wait { model.historyItems.count == 1 }
+        model.focusSelection(at: 0)
+
+        model.copyFocused(plain: false)
+
+        wait { model.actionError != nil || model.actionFeedback != nil }
+
+        XCTAssertEqual(model.actionError, MacClippyUserFacingError.genericAction)
+        XCTAssertNil(model.actionFeedback)
+        XCTAssertEqual(postedEventCount, 0)
+    }
+
     // MARK: - Helpers
 
     private func wait(until condition: () -> Bool, timeout: TimeInterval = 2.0) {

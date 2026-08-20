@@ -45,5 +45,3 @@ public enum MacClippyPasteboardReadRetry {
         return nil
     }
 }
-
-public typealias PasteboardReadRetry = MacClippyPasteboardReadRetry

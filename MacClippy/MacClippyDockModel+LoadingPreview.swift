@@ -39,12 +39,17 @@ extension MacClippyDockModel {
             return filter(historyItems, by: query)
         case .snippets: return []
         case let .pinboard(id):
-            let source = pinboards.first(where: { $0.id == id })?.items ?? []
-            if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return source
-            }
-            guard pinboardSearchBoardID == id, pinboardSearchQuery == query else { return [] }
-            return pinboardSearchItems
+            return MacClippyDockPinboardVisibleItems.resolve(
+                MacClippyDockPinboardVisibleItemsState(
+                    query: query,
+                    boardID: id,
+                    source: pinboards.first(where: { $0.id == id })?.items ?? [],
+                    searchBoardID: pinboardSearchBoardID,
+                    searchQuery: pinboardSearchQuery,
+                    searchItems: pinboardSearchItems,
+                    isLoading: pinboardSearchIsLoading
+                )
+            )
         }
     }
 
@@ -61,15 +66,23 @@ extension MacClippyDockModel {
             return
         }
 
-        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let source = snippets
         guard !normalizedQuery.isEmpty else {
             filteredSnippets = source
             return
         }
 
-        let workItem = DispatchWorkItem { [weak self, source, normalizedQuery] in
-            let filtered = source.filter { $0.normalizedSearchText.contains(normalizedQuery) }
+        let parsed = MacClippySearchGrammar.parse(normalizedQuery)
+        let workItem = DispatchWorkItem { [weak self, source, parsed] in
+            let filtered: [MacClippySnippetEntry]
+            if parsed.bareTerms.isEmpty {
+                filtered = parsed.hasStructuredClauses ? [] : source
+            } else {
+                filtered = source.filter { snippet in
+                    MacClippySearchQuery.allTerms(parsed.bareTerms, appearIn: [snippet.normalizedSearchText])
+                }
+            }
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.snippetFilterRequestID == requestID else { return }
                 self.filteredSnippets = filtered
@@ -210,14 +223,15 @@ extension MacClippyDockModel {
                 focusSelection(at: focusedIndex)
             }
             recomputeDedupRuns()
-        case .failure:
+        case let .failure(error):
             // Keep the last successful snapshot visible. A transient
             // query/database failure should not destroy current content;
             // the error banner and next reload provide recovery.
+            let message = MacClippyUserFacingError.message(for: error, fallback: MacClippyUserFacingError.historyLoad)
             if historyItems.isEmpty {
-                historyLoadError = MacClippyUserFacingError.historyLoad
+                historyLoadError = message
             } else {
-                pageError = MacClippyUserFacingError.historyLoad
+                pageError = message
             }
         }
     }
@@ -229,7 +243,9 @@ extension MacClippyDockModel {
         // bounded Runtime scan so matches outside the initial 64 cards are
         // still searchable without reloading every static surface.
         guard selectedTab == .history || isPinboardTab else { return }
+        let signpostID = MacClippyPerformance.begin("search_keystroke")
         reloadTask = Task { @MainActor [weak self] in
+            defer { MacClippyPerformance.end("search_keystroke", id: signpostID) }
             do {
                 try await Task.sleep(nanoseconds: 120_000_000)
             } catch {

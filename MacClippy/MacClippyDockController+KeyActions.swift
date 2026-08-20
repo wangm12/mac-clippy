@@ -40,7 +40,12 @@ extension MacClippyDockController {
         switch action {
         case .dismissModal: model.dismissModal()
         case .enterSearch: enterSearchMode()
-        case .exitSearch: enterPickerMode()
+        case .exitSearch:
+            if MacClippyDockSearchEscapePolicy.clearsQueryFirst(model.query) {
+                model.query = ""
+            } else {
+                enterPickerMode()
+            }
         case .closeDock: hide()
         default: break
         }

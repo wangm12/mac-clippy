@@ -145,6 +145,41 @@ final class MacClippyPasteInjectorTests: XCTestCase {
         XCTAssertEqual(pasteboard.string(forType: .string), "original")
         XCTAssertEqual(eventCount, 0)
     }
+
+    func testFailedPrepareRestoresOriginalImageRepresentation() {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("MacClippyPrepareRestoreImage-\(UUID().uuidString)"))
+        let image = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x01])
+        XCTAssertTrue(pasteboard.setData(image, forType: .png))
+        let injector = MacClippyPasteInjector(
+            pasteboard: pasteboard,
+            preparer: { _, pasteboard in
+                pasteboard.clearContents()
+                return false
+            }
+        )
+
+        XCTAssertFalse(injector.prepare(.image(Data([0x00]))))
+        XCTAssertEqual(pasteboard.data(forType: .png), image)
+    }
+
+    func testFailedPrepareRestoresURLAndTextRepresentations() {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("MacClippyPrepareRestoreMulti-\(UUID().uuidString)"))
+        let item = NSPasteboardItem()
+        XCTAssertTrue(item.setString("https://example.com", forType: .URL))
+        XCTAssertTrue(item.setString("example link", forType: .string))
+        XCTAssertTrue(pasteboard.writeObjects([item]))
+        let injector = MacClippyPasteInjector(
+            pasteboard: pasteboard,
+            preparer: { _, pasteboard in
+                pasteboard.clearContents()
+                return false
+            }
+        )
+
+        XCTAssertFalse(injector.prepareText("replacement"))
+        XCTAssertEqual(pasteboard.string(forType: .URL), "https://example.com")
+        XCTAssertEqual(pasteboard.string(forType: .string), "example link")
+    }
 }
 
 private final class UnavailablePasteboardItemProvider: NSObject, NSPasteboardItemDataProvider {

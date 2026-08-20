@@ -3,6 +3,8 @@ import CoreGraphics
 import ImageIO
 import SwiftUI
 
+import MacClippyPlatform
+
 struct MacClippyDockPreviewFileIcon: View {
     let url: URL
 
@@ -133,11 +135,11 @@ private final class MacClippyFileIconCache: @unchecked Sendable {
 
 private final class MacClippyFileIconInFlight: @unchecked Sendable {
     let task: Task<CGImage?, Never>
-    private let state: MacClippyFileIconInFlightState
+    private let state: MacClippyFileIconWaiterAccounting
 
     init(path: String) {
         let request = MacClippyFileIconRequest(path: path)
-        let state = MacClippyFileIconInFlightState()
+        let state = MacClippyFileIconWaiterAccounting()
         self.state = state
         task = Task.detached(priority: .utility) {
             let resolved = await request.resolve()
@@ -163,38 +165,6 @@ private final class MacClippyFileIconInFlight: @unchecked Sendable {
 
     func cancel() {
         task.cancel()
-    }
-}
-
-private final class MacClippyFileIconInFlightState: @unchecked Sendable {
-    private let lock = NSLock()
-    private var waiterCount = 0
-    private var finished = false
-
-    func addWaiter() {
-        lock.lock()
-        waiterCount += 1
-        lock.unlock()
-    }
-
-    func releaseWaiter() -> Bool {
-        lock.lock()
-        waiterCount = max(0, waiterCount - 1)
-        let shouldCancel = waiterCount == 0 && !finished
-        lock.unlock()
-        return shouldCancel
-    }
-
-    func markFinished() {
-        lock.lock()
-        finished = true
-        lock.unlock()
-    }
-
-    var isFinished: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return finished
     }
 }
 

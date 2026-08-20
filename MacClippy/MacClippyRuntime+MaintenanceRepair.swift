@@ -7,12 +7,6 @@ import MacClippyCore
 import MacClippyPlatform
 
 extension MacClippyRuntime {
-    func markSearchRepairNeeded() {
-        withStoreLock {
-            markSearchRepairNeededLocked()
-        }
-    }
-
     func markSearchRepairNeededLocked() {
         storageDegradedReasons.insert("fts-repair-needed")
         do {
@@ -25,20 +19,6 @@ extension MacClippyRuntime {
                 recoveryAction: "export_diagnostics_and_repair_storage",
                 impact: "fts_repair_state_not_persisted"
             )
-        }
-    }
-
-    func markSearchRepairNeeded(for lifecycleToken: MacClippyRuntimeLifecycleToken) {
-        do {
-            try performCurrentLifecycleCommit(lifecycleToken) {
-                markSearchRepairNeededLocked()
-            }
-        } catch is CancellationError {
-            // The marker belongs to the invalidated generation and must not
-            // be written after stop/restart.
-        } catch {
-            // The uncommitted marker is already represented by the OCR error;
-            // keep this path redacted and let the next health check retry it.
         }
     }
 

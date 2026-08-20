@@ -40,12 +40,6 @@ final class MacClippyMotionTests: XCTestCase {
         XCTAssertEqual(offscreen.maxY, frame.minY - MacClippyMotion.panelTravelPadding)
     }
 
-    func testCardClickPolicyNeverPastesForPointerClicks() {
-        XCTAssertEqual(MacClippyDockCardClickPolicy.intent(for: 1), .focus)
-        XCTAssertEqual(MacClippyDockCardClickPolicy.intent(for: 2), .copy)
-        XCTAssertEqual(MacClippyDockCardClickPolicy.intent(for: 3), .copy)
-    }
-
     func testStaleHideCompletionCannotApplyAfterReopen() {
         let hiding = MacClippyDockAnimationTransaction(generation: 1, operation: .hiding)
         let reopened = MacClippyDockAnimationTransaction(generation: 2, operation: .showing)
