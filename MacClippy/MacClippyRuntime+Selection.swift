@@ -216,6 +216,6 @@ extension MacClippyRuntime {
             }
             if let resolved { return resolved }
         }
-        return []
+        throw MacClippyPinboardSearchPageError.boardChanged
     }
 }

@@ -2,9 +2,9 @@ import SwiftUI
 
 import MacClippyCore
 
-extension MacClippyDockView {
-    func highlightedText(_ text: String, font: Font, color: Color) -> Text {
-        let terms = MacClippySearchGrammar.parse(model.query).bareTerms
+@MainActor
+enum MacClippyDockCardHighlight {
+    static func text(_ text: String, font: Font, color: Color, terms: [String]) -> Text {
         let ranges = MacClippySearchQuery.highlightedRanges(in: text, queryTerms: terms)
             .sorted { $0.lowerBound < $1.lowerBound }
         guard !ranges.isEmpty else {
@@ -37,5 +37,16 @@ extension MacClippyDockView {
         return pieces.reduce(Text("")) { partial, piece in
             partial + piece
         }
+    }
+}
+
+extension MacClippyDockView {
+    func highlightedText(_ text: String, font: Font, color: Color, terms: [String]? = nil) -> Text {
+        MacClippyDockCardHighlight.text(
+            text,
+            font: font,
+            color: color,
+            terms: terms ?? MacClippySearchGrammar.parse(model.query).bareTerms
+        )
     }
 }

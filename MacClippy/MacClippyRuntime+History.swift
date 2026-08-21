@@ -8,10 +8,6 @@ import MacClippyPlatform
 extension MacClippyRuntime {
     private static let cardPreviewCharacterLimit = 2_000
     private static let detailsOCRCharacterLimit = 16_000
-    // A preview is a user-facing, downsampled presentation. Keep its source
-    // read bounded just like the thumbnail path so opening Space cannot
-    // allocate an arbitrarily large decrypted image.
-    private static let previewImageReadLimit = 128 * 1_024 * 1_024
 
     private static func boundedDisplayText(_ value: String, limit: Int) -> String {
         guard value.count > limit else { return value }
@@ -92,36 +88,6 @@ extension MacClippyRuntime {
         guard let trigger = trigger?.trimmingCharacters(in: .whitespacesAndNewlines),
               !trigger.isEmpty else { return nil }
         return trigger.hasPrefix(";") ? trigger : ";\(trigger)"
-    }
-
-    func preview(id: RecordID) throws -> MacClippyRuntimePreviewPayload {
-        try withStoreLock {
-            func textPayload(_ text: String) -> MacClippyRuntimePreviewPayload {
-                .text(
-                    MacClippyRuntimePreviewText(
-                        displayText: MacClippyDockPreviewTextPolicy.displayText(for: text),
-                        characterCount: text.count
-                    )
-                )
-            }
-            switch try clipboardStore.body(for: id) {
-            case let .text(value):
-                return textPayload(value)
-            case let .html(value):
-                let record = ClipboardRecord.html(value)
-                return textPayload(MacClippyClipboardText.plainText(from: record) ?? value)
-            case let .rtf(data):
-                let record = ClipboardRecord.rtf(data)
-                guard let text = MacClippyClipboardText.plainText(from: record) else {
-                    throw MacClippyStoreError.invalidStoredRecord
-                }
-                return textPayload(text)
-            case let .image(blobID, _, _), let .encryptedImage(blobID, _, _):
-                return .image(try blobStore.read(id: blobID, maxBytes: Self.previewImageReadLimit))
-            case let .files(urls):
-                return .files(urls)
-            }
-        }
     }
 
     // Thumbnail callers only need the primary image bytes. Keep this separate
@@ -355,18 +321,6 @@ extension MacClippyRuntime {
                 throw error
             }
             return updated
-        }
-    }
-
-    func preview(snippetID: RecordID) throws -> MacClippyRuntimePreviewPayload {
-        try withStoreLock {
-            let text = try snippetStore.fetch(id: snippetID).body
-            return .text(
-                MacClippyRuntimePreviewText(
-                    displayText: MacClippyDockPreviewTextPolicy.displayText(for: text),
-                    characterCount: text.count
-                )
-            )
         }
     }
 

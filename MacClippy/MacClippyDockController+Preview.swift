@@ -259,11 +259,12 @@ extension MacClippyDockController {
     func copyPreviewText(_ text: String) {
         let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return }
-        guard model.runtime.pasteInjector.prepareTextForHistory(normalized) else {
-            model.setActionError(MacClippyUserFacingError.genericAction)
-            return
+        do {
+            try model.runtime.pasteInjector.prepareTextForHistory(normalized)
+            showCopyToast(title: "Text copied")
+        } catch {
+            model.setActionError(MacClippyUserFacingError.message(for: error))
         }
-        showCopyToast(title: "Text copied")
     }
 
     func hidePreview() {
@@ -369,7 +370,14 @@ extension MacClippyDockController {
         id: RecordID
     ) -> MacClippyDockPreviewContent {
         switch payload {
-        case let .text(value): .text(id: id, value: value.displayText)
+        case let .text(value):
+            switch value.kind {
+            case let .color(swatch):
+                .color(id: id, value: value.displayText, swatch: swatch)
+            case .plain, .url, .json, .code:
+                .text(id: id, value: value.displayText, kind: value.kind)
+            }
+        case let .richText(richText, plain, _): .richText(id: id, attributed: richText.attributed, plain: plain)
         case let .image(data): .image(id: id, data: data)
         case let .files(urls): MacClippyDockPreviewContentPolicy.content(forFiles: urls)
         }

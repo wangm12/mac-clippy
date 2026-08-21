@@ -90,23 +90,30 @@ extension MacClippyDockView {
     }
 
     func announceSearchResultsIfNeeded() {
-        guard !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let isLoading: Bool
+        let hasMore: Bool
         let count: Int
-        let noun: String
         switch model.selectedTab {
         case .history:
+            isLoading = model.isLoading
+            hasMore = model.historyHasMore
             count = model.visibleItems.count
-            noun = "clipboard"
         case .pinboard:
+            isLoading = model.pinboardSearchIsLoading
+            hasMore = model.pinboardSearchHasMore
             count = model.visibleItems.count
-            noun = "pinboard"
         case .snippets:
+            isLoading = false
+            hasMore = false
             count = model.visibleSnippets.count
-            noun = "snippet"
         }
-        let announcement = count == 0
-            ? "No matching \(noun) items"
-            : "\(count) \(noun) result\(count == 1 ? "" : "s")"
+        guard let announcement = MacClippyDockSearchAnnouncementPolicy.announcement(
+            query: model.query,
+            tab: model.selectedTab,
+            count: count,
+            hasMore: hasMore,
+            isLoading: isLoading
+        ) else { return }
         guard let app = NSApp else { return }
         NSAccessibility.post(
             element: app,
@@ -282,10 +289,10 @@ extension MacClippyDockView {
                             Image(systemName: "magnifyingglass")
                                 .font(.title3)
                                 .foregroundStyle(MacClippyDockTheme.muted2Color)
-                            Text("No matching snippets")
+                            Text(MacClippyDockEmptyStateCopy.snippetTitle(query: model.query))
                                 .font(.callout.weight(.medium))
                                 .foregroundStyle(MacClippyDockTheme.textColor)
-                            Text("Try a different search.")
+                            Text(MacClippyDockEmptyStateCopy.snippetSubtitle(query: model.query))
                                 .font(.caption)
                                 .foregroundStyle(MacClippyDockTheme.mutedColor)
                         }

@@ -57,6 +57,7 @@ targets:
       - path: MacClippy/MacClippyRuntime+SearchProjection.swift
       - path: MacClippy/MacClippyRuntime+History.swift
       - path: MacClippy/MacClippyRuntime+HistoryProjection.swift
+      - path: MacClippy/MacClippyRuntime+Preview.swift
       - path: MacClippy/MacClippyRuntime+Pinboard.swift
       - path: MacClippy/MacClippyRuntime+PinboardSearch.swift
       - path: MacClippy/MacClippyRuntime+ClipboardActions.swift
@@ -75,6 +76,7 @@ targets:
       - path: MacClippy/MacClippyDockModel.swift
       - path: MacClippy/MacClippyDockModel+Categories.swift
       - path: MacClippy/MacClippyDockModel+LoadingPreview.swift
+      - path: MacClippy/MacClippyDockModel+HistoryRestart.swift
       - path: MacClippy/MacClippyDockModel+PinboardSearch.swift
       - path: MacClippy/MacClippyDockModel+Thumbnails.swift
       - path: MacClippy/MacClippyDockModel+HistoryPagination.swift
@@ -89,12 +91,14 @@ targets:
       - path: MacClippy/MacClippyDockView+FilterDrop.swift
       - path: MacClippy/MacClippyDockView+CarouselModal.swift
       - path: MacClippy/MacClippyDockCard.swift
+      - path: MacClippy/MacClippyClipboardCardLabel.swift
       - path: MacClippy/MacClippyDockCardContent.swift
       - path: MacClippy/MacClippyDockCardCategory.swift
       - path: MacClippy/MacClippyDockCardAccessibility.swift
       - path: MacClippy/MacClippyDockCardMenus.swift
       - path: MacClippy/MacClippyDockCardInteraction.swift
       - path: MacClippy/MacClippyCardImageThumbnail.swift
+      - path: MacClippy/MacClippyCardThumbnailLoader.swift
       - path: MacClippy/MacClippyDockActionBar.swift
       - path: MacClippy/MacClippyCreateCategoryEditor.swift
       - path: MacClippy/MacClippyPrivacyNotice.swift
@@ -103,9 +107,12 @@ targets:
       - path: MacClippy/MacClippyMotion.swift
       - path: MacClippy/MacClippyDockPanel.swift
       - path: MacClippy/MacClippyDockPreview.swift
+      - path: MacClippy/MacClippyDockPreviewColor.swift
       - path: MacClippy/MacClippyDockPreviewSupport.swift
+      - path: MacClippy/MacClippyDockPreviewTextViews.swift
       - path: MacClippy/MacClippyDockPreviewImageSelection.swift
       - path: MacClippy/MacClippyDockPreviewImageSelectionDrawing.swift
+      - path: MacClippy/MacClippyVideoPreview.swift
       - path: MacClippy/MacClippyFileIconLoader.swift
       - path: MacClippy/MacClippyDetails.swift
       - path: MacClippy/MacClippyDockController.swift

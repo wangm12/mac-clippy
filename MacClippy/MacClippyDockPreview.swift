@@ -1,6 +1,4 @@
 import AppKit
-import AVFoundation
-import AVKit
 import MacClippyCore
 import MacClippyPlatform
 import SwiftUI
@@ -8,7 +6,9 @@ import UniformTypeIdentifiers
 
 enum MacClippyDockPreviewContent {
     case loading
-    case text(id: RecordID, value: String)
+    case text(id: RecordID, value: String, kind: MacClippyClipboardPresentationKind)
+    case richText(id: RecordID, attributed: NSAttributedString, plain: String)
+    case color(id: RecordID, value: String, swatch: MacClippyColorSwatch)
     case image(id: RecordID, data: Data)
     case video(URL)
     case files([URL])
@@ -50,7 +50,6 @@ enum MacClippyDockPreviewTextPolicy {
             + "\n\n— Preview shortened for performance · \(remaining) more characters —"
     }
 }
-
 // Maps a file-URL payload to the right preview content. A single pasted file
 // URL whose extension conforms to UTType.movie is represented as a video
 // preview; multiple files or non-video files keep the existing file list.
@@ -236,8 +235,8 @@ struct MacClippyDockPreviewView: View {
     // Footer: character count + exit hint, QuickLook-style.
     private var previewFooter: some View {
         HStack(spacing: 8) {
-            if metadata.characterCount > 0 {
-                Text("\(metadata.characterCount) characters")
+            if let footerText = content.footerText(characterCount: metadata.characterCount) {
+                Text(footerText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -256,26 +255,36 @@ struct MacClippyDockPreviewView: View {
                 .controlSize(.small)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityLabel("Loading preview")
-        case .text:
-            let value = content.textValue ?? ""
+        case let .text(_, value, kind):
             // Use NSTextView for both modes. It keeps long clipboard payloads
             // in AppKit's native text layout path instead of asking SwiftUI to
             // repeatedly re-measure one very large Text during preview.
             let displayText = MacClippyDockPreviewTextPolicy.displayText(for: value.isEmpty ? "(empty)" : value)
-            if MacClippyDockCodePolicy.isCode(value) {
+            switch kind {
+            case .url:
+                MacClippyDockPreviewURL(value: displayText)
+            case .json, .code:
                 MacClippyDockPreviewTextView(
                     text: displayText,
                     monospaced: true,
-                    foregroundColor: NSColor(calibratedRed: 0.85, green: 0.88, blue: 0.93, alpha: 1)
+                    foregroundColor: .textColor,
+                    backgroundColor: .textBackgroundColor
                 )
-                .background(Color(red: 0.10, green: 0.11, blue: 0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            } else {
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            case .plain, .color:
                 MacClippyDockPreviewTextView(
                     text: displayText,
                     monospaced: false,
                     foregroundColor: .labelColor
                 )
             }
+        case let .richText(_, attributed, plain):
+            let displayAttributed = plain.isEmpty
+                ? NSAttributedString(string: "(empty)")
+                : attributed
+            MacClippyDockPreviewAttributedTextView(attributedText: displayAttributed)
+        case let .color(_, value, swatch):
+            MacClippyDockPreviewColor(value: value, swatch: swatch)
         case let .image(id, data):
             MacClippyDockPreviewImage(
                 id: id,
@@ -343,50 +352,42 @@ struct MacClippyDockPreviewView: View {
     }
 }
 
-// Video preview for a single pasted movie URL. Uses AVKit.VideoPlayer with an
-// AVPlayer bounded to the existing preview content area; native playback
-// controls remain available. The player is created on appear and autoplays if
-// practical, and is paused on disappear so leaving the preview never leaves a
-// movie playing. Playback is preview-only: it does not touch the pasteboard or
-// the store, so paste/storage behavior is unaffected.
-private struct MacClippyVideoPreview: View {
-    let url: URL
-    let reduceMotion: Bool
-    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
-    @State private var player: AVPlayer?
+private struct MacClippyDockPreviewURL: View {
+    let value: String
+
+    private var url: URL? {
+        MacClippyClipboardPresentation.url(fromPlainText: value)
+    }
+
+    private var pathAndQuery: String? {
+        guard let url else { return nil }
+        let path = url.path.isEmpty ? "/" : url.path
+        let suffix = url.query.map { "\(path)?\($0)" } ?? path
+        return suffix == "/" ? nil : suffix
+    }
 
     var body: some View {
-        Group {
-            if let player {
-                VideoPlayer(player: player)
-            } else {
-                ProgressView()
-                    .controlSize(.small)
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(url?.host(percentEncoded: false) ?? value)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                    .textSelection(.enabled)
+                if let pathAndQuery {
+                    Text(pathAndQuery)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                }
             }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .task(id: url) {
-            // Preview navigation can replace the URL while the view identity
-            // remains stable. Replace the player on URL change so the previous
-            // asset cannot keep decoding/playing in the background.
-            player?.pause()
-            let next = AVPlayer(url: url)
-            player = next
-            if !accessibilityReduceMotion && !reduceMotion {
-                next.play()
-            }
-        }
-        .onChange(of: accessibilityReduceMotion) { _, reduceMotion in
-            guard let player else { return }
-            if reduceMotion || accessibilityReduceMotion {
-                player.pause()
-            } else {
-                player.play()
-            }
-        }
-        .onDisappear {
-            player?.pause()
-            player = nil
+            MacClippyDockPreviewTextView(
+                text: value,
+                monospaced: false,
+                foregroundColor: .labelColor
+            )
         }
     }
 }

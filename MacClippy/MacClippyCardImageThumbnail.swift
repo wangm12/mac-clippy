@@ -4,13 +4,17 @@ import SwiftUI
 import MacClippyCore
 
 // Bounded thumbnail rendering keeps image decoding off the main thread and
-// prevents a large image payload from changing card geometry.
-struct MacClippyCardImageThumbnail: View {
-    let item: MacClippyHistoryEntry
-    @ObservedObject var model: MacClippyDockModel
+// prevents a large image payload from changing card geometry. Equality is
+// item-ID only so search highlighting can update without redrawing the image.
+struct MacClippyCardImageThumbnail: View, Equatable {
+    nonisolated let itemID: RecordID
+    let load: @MainActor @Sendable (RecordID) async -> CGImage?
 
     @State private var image: CGImage?
-    @State private var loadedItemID: RecordID?
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.itemID == rhs.itemID
+    }
 
     var body: some View {
         Group {
@@ -30,15 +34,11 @@ struct MacClippyCardImageThumbnail: View {
                     }
             }
         }
-        .task(id: item.id) {
-            guard item.contentKind == .image else { return }
-            let itemID = item.id
-            loadedItemID = itemID
+        .task(id: itemID) {
             image = nil
-            model.loadImageThumbnail(for: itemID) { result in
-                guard loadedItemID == itemID else { return }
-                image = result
-            }
+            let loaded = await load(itemID)
+            guard !Task.isCancelled else { return }
+            image = loaded
         }
     }
 }

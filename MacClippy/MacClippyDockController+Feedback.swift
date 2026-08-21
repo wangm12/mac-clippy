@@ -47,6 +47,7 @@ extension MacClippyDockController {
         toast.invalidateShadow()
         toast.setFrame(frame, display: true)
         toast.orderFrontRegardless()
+        announceCopyToast(title)
 
         toastDismissTask?.cancel()
         toastDismissTask = Task { @MainActor [weak self] in
@@ -54,6 +55,15 @@ extension MacClippyDockController {
             guard let self, !Task.isCancelled else { return }
             self.toastPanel?.orderOut(nil)
         }
+    }
+
+    private func announceCopyToast(_ title: String) {
+        guard let app = NSApp else { return }
+        NSAccessibility.post(
+            element: app,
+            notification: .announcementRequested,
+            userInfo: [.announcement: title]
+        )
     }
 
     func dismissCopyToast() {

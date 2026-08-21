@@ -63,6 +63,25 @@ enum MacClippyDockEmptyStateCopy {
         return "Copied items will appear here."
     }
 
+    static func snippetTitle(query: String) -> String {
+        snippetCopy(query: query).title
+    }
+
+    static func snippetSubtitle(query: String) -> String {
+        snippetCopy(query: query).subtitle
+    }
+
+    private static func snippetCopy(query: String) -> (title: String, subtitle: String) {
+        let parsed = MacClippySearchGrammar.parse(query)
+        if parsed.bareTerms.isEmpty, parsed.hasStructuredClauses {
+            return (
+                "Filters apply to History and Pinboard",
+                "Snippets match name and trigger text. type: and date filters are not used here."
+            )
+        }
+        return ("No matching snippets", "Try a different search.")
+    }
+
     static func title(
         query: String,
         tab: MacClippyDockTab,
@@ -87,5 +106,32 @@ enum MacClippyDockEmptyStateCopy {
     private static func isPinboard(_ tab: MacClippyDockTab) -> Bool {
         if case .pinboard = tab { return true }
         return false
+    }
+}
+
+enum MacClippyDockSearchAnnouncementPolicy {
+    static func announcement(
+        query: String,
+        tab: MacClippyDockTab,
+        count: Int,
+        hasMore: Bool,
+        isLoading: Bool
+    ) -> String? {
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        guard !isLoading else { return nil }
+        let noun: String
+        switch tab {
+        case .history:
+            noun = "clipboard"
+        case .pinboard:
+            noun = "pinboard"
+        case .snippets:
+            noun = "snippet"
+        }
+        if count == 0 {
+            return "No matching \(noun) items"
+        }
+        let base = "\(count) \(noun) result\(count == 1 ? "" : "s")"
+        return hasMore ? "\(base), more available" : base
     }
 }

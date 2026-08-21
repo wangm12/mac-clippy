@@ -26,6 +26,9 @@ struct MacClippyHotKeyRecorder: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+            .accessibilityLabel("Clipboard shortcut")
+            .accessibilityValue(isRecording ? "Recording" : descriptor.symbolicDisplay)
+            .accessibilityHint(isRecording ? "Type a new shortcut" : "Click to record a new shortcut")
 
             Button {
                 stopRecording()

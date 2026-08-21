@@ -105,8 +105,7 @@ public enum MacClippySmartText {
     }
 
     private static func isURL(_ value: String) -> Bool {
-        guard !value.contains(where: { $0.isWhitespace }), let components = URLComponents(string: value), let scheme = components.scheme?.lowercased() else { return false }
-        return ["http", "https"].contains(scheme) && !(components.host?.isEmpty ?? true)
+        MacClippyClipboardPresentation.url(fromPlainText: value) != nil
     }
 
     private static func isEmail(_ value: String) -> Bool {
@@ -117,7 +116,7 @@ public enum MacClippySmartText {
         value.range(of: "^\\+?[0-9][0-9 .()\\-]{6,}[0-9]$", options: .regularExpression) != nil
     }
 
-    private static func isColor(_ value: String) -> Bool {
+    static func isColor(_ value: String) -> Bool {
         value.range(of: "^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$", options: .regularExpression) != nil
             || value.range(of: "^(?:rgb|rgba|hsl)\\([^)]*\\)$", options: .regularExpression) != nil
     }

@@ -99,12 +99,7 @@ extension MacClippyDockModel {
                       self.sessionGeneration == session,
                       self.operationGeneration == opGeneration else { return }
                 switch resolution {
-                case let .success(.merged(prepared)):
-                    // prepared is the pasteboard write result; Copy all does
-                    // not post a paste keystroke, so prepared is the only
-                    // success signal. Show copied feedback either way (a
-                    // failed write would have thrown before reaching here).
-                    _ = prepared
+                case .success(.merged):
                     self.showActionFeedback(.copied(plain: false))
                 case let .success(.mixed(supportedIDs, unsupportedIDs, unsupportedKinds)):
                     self.showActionFeedback(.multiPasteMixed(
@@ -118,8 +113,8 @@ extension MacClippyDockModel {
                         unavailableCount: unavailableIDs.count,
                         unavailableKinds: unavailableKinds
                     ))
-                case .failure:
-                    self.setActionError(MacClippyUserFacingError.genericAction)
+                case let .failure(error):
+                    self.setActionError(MacClippyUserFacingError.message(for: error))
                 }
             }
         }

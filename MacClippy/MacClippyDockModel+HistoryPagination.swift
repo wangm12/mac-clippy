@@ -108,6 +108,7 @@ extension MacClippyDockModel {
               self.historyPageToken == request.pageToken else { return }
         historyIsLoadingMore = false
         historyLoadCancellationToken = nil
+        guard selectedTab == .history else { return }
         switch result {
         case let .success(page):
             clearPageError()
@@ -122,10 +123,7 @@ extension MacClippyDockModel {
             historyHasMore = page.nextPageToken != nil
         case let .failure(error):
             if error is MacClippyHistoryPageError {
-                // FTS rank order is no longer compatible with this
-                // continuation. Restart the current query while preserving
-                // the visible snapshot until the replacement page arrives.
-                reload()
+                restartHistoryQuery()
                 return
             }
             // Keep the continuation so the user can retry the failed page;

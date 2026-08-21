@@ -61,6 +61,7 @@ public final class MacClippySnippetExpander: @unchecked Sendable {
 
     private let modeProvider: () -> MacClippySnippetExpansionMode
     private let injector: MacClippyPasteInjector
+    private let keyPoster: MacClippySnippetKeyPoster
     private let lifecycleLock = NSLock()
     private var planner: MacClippySnippetExpansionPlanner
     private var eventTap: CFMachPort?
@@ -82,10 +83,12 @@ public final class MacClippySnippetExpander: @unchecked Sendable {
     public init(
         modeProvider: @escaping () -> MacClippySnippetExpansionMode = { MacClippySnippetExpansionSettings.load() },
         lookup: @escaping Lookup,
-        injector: MacClippyPasteInjector = MacClippyPasteInjector()
+        injector: MacClippyPasteInjector = MacClippyPasteInjector(),
+        keyPoster: MacClippySnippetKeyPoster = MacClippySnippetKeyPoster()
     ) {
         self.modeProvider = modeProvider
         self.injector = injector
+        self.keyPoster = keyPoster
         planner = MacClippySnippetExpansionPlanner(modeProvider: modeProvider, lookup: lookup)
     }
 
@@ -293,18 +296,33 @@ public final class MacClippySnippetExpander: @unchecked Sendable {
                 && installed
                 && modeProvider() != .disabled
         }
-        guard canExpand, injector.canInjectAutomatically else { return }
-        _ = injector.inject(text: plan.body) { [weak self] in
+        guard canExpand else { return }
+        let result = injector.inject(text: plan.body) { [weak self] in
             guard let self else { return }
             for _ in 0 ..< plan.charactersToDelete {
                 postKey(UInt16(kVK_Delete))
             }
         }
+        guard result == .manualPasteRequired else { return }
+        restoreSuppressedDelimiter(for: plan)
     }
 
+    package func expandForTesting(using plan: MacClippySnippetExpansionPlan) {
+        let generation = withLifecycleLock {
+            installed = true
+            return lifecycleGeneration
+        }
+        expand(using: plan, generation: generation)
+    }
+
+    // Expansion output must not re-enter the session tap that detects
+    // triggers, so these keys never use the injector's paste event path.
     private func postKey(_ keyCode: UInt16) {
-        let source = CGEventSource(stateID: .combinedSessionState)
-        CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(keyCode), keyDown: true)?.post(tap: .cgAnnotatedSessionEventTap)
-        CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(keyCode), keyDown: false)?.post(tap: .cgAnnotatedSessionEventTap)
+        keyPoster.post(keyCode: keyCode)
+    }
+
+    private func restoreSuppressedDelimiter(for plan: MacClippySnippetExpansionPlan) {
+        guard let keyCode = plan.suppressedDelimiterKeyCode else { return }
+        postKey(keyCode)
     }
 }

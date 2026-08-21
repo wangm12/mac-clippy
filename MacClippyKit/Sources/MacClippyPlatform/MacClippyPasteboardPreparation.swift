@@ -10,6 +10,9 @@ public enum MacClippyPasteboardContent: Equatable, Sendable {
 }
 
 public enum MacClippyPasteboardPreparer {
+    /// Production pasteboard writes must call this only through
+    /// `MacClippyPasteInjector`'s `preparer` closure so snapshot/restore
+    /// protections stay centralized. Tests may call it directly.
     @discardableResult
     public static func prepare(
         _ content: MacClippyPasteboardContent,

@@ -7,7 +7,7 @@ final class MacClippyPasteInjectorTests: XCTestCase {
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("MacClippyPasteInjectorTests-\(UUID().uuidString)"))
         let injector = MacClippyPasteInjector(pasteboard: pasteboard, isProcessTrusted: { false })
 
-        XCTAssertTrue(injector.prepareText("plain text"))
+        XCTAssertNoThrow(try injector.prepareText("plain text"))
         XCTAssertEqual(pasteboard.string(forType: .string), "plain text")
     }
 
@@ -39,8 +39,34 @@ final class MacClippyPasteInjectorTests: XCTestCase {
             }
         )
 
-        XCTAssertFalse(injector.prepareText("replacement"))
+        XCTAssertThrowsError(try injector.prepareText("replacement")) { error in
+            XCTAssertEqual(error as? MacClippyPasteboardPrepareError, .writeFailed)
+        }
         XCTAssertEqual(pasteboard.string(forType: .string), "original")
+    }
+
+    func testFailedPrepareDoesNotClobberForeignPasteboardWrite() {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("MacClippyPrepareForeignWrite-\(UUID().uuidString)"))
+        XCTAssertTrue(pasteboard.setString("original", forType: .string))
+        let injector = MacClippyPasteInjector(
+            pasteboard: pasteboard,
+            preparer: { _, pasteboard in
+                pasteboard.clearContents()
+                let preparerChangeCount = pasteboard.changeCount
+                pasteboard.clearContents()
+                XCTAssertGreaterThan(pasteboard.changeCount, preparerChangeCount)
+                XCTAssertTrue(pasteboard.setString("foreign", forType: .string))
+                return false
+            }
+        )
+
+        XCTAssertThrowsError(try injector.prepareText("replacement")) { error in
+            XCTAssertTrue(
+                error is MacClippyPasteboardPrepareError,
+                "Expected a pasteboard prepare error, got \(error)"
+            )
+        }
+        XCTAssertEqual(pasteboard.string(forType: .string), "foreign")
     }
 
     func testFailedPrepareDoesNotClearIncompleteOriginalProvider() {
@@ -59,7 +85,9 @@ final class MacClippyPasteInjectorTests: XCTestCase {
             }
         )
 
-        XCTAssertFalse(injector.prepareText("replacement"))
+        XCTAssertThrowsError(try injector.prepareText("replacement")) { error in
+            XCTAssertEqual(error as? MacClippyPasteboardPrepareError, .incompleteSnapshot)
+        }
         XCTAssertEqual(pasteboard.changeCount, changeCountBefore)
         XCTAssertEqual(pasteboard.pasteboardItems?.first?.types, [.string])
     }
@@ -140,7 +168,9 @@ final class MacClippyPasteInjectorTests: XCTestCase {
         let gate = MacClippyPasteInjectionGate()
         gate.close()
 
-        XCTAssertFalse(injector.prepareText("replacement", gate: gate))
+        XCTAssertThrowsError(try injector.prepareText("replacement", gate: gate)) { error in
+            XCTAssertEqual(error as? MacClippyPasteboardPrepareError, .gateClosed)
+        }
         XCTAssertEqual(injector.inject(text: "replacement", gate: gate), .manualPasteRequired)
         XCTAssertEqual(pasteboard.string(forType: .string), "original")
         XCTAssertEqual(eventCount, 0)
@@ -158,7 +188,9 @@ final class MacClippyPasteInjectorTests: XCTestCase {
             }
         )
 
-        XCTAssertFalse(injector.prepare(.image(Data([0x00]))))
+        XCTAssertThrowsError(try injector.prepare(.image(Data([0x00])))) { error in
+            XCTAssertEqual(error as? MacClippyPasteboardPrepareError, .writeFailed)
+        }
         XCTAssertEqual(pasteboard.data(forType: .png), image)
     }
 
@@ -176,9 +208,24 @@ final class MacClippyPasteInjectorTests: XCTestCase {
             }
         )
 
-        XCTAssertFalse(injector.prepareText("replacement"))
+        XCTAssertThrowsError(try injector.prepareText("replacement")) { error in
+            XCTAssertEqual(error as? MacClippyPasteboardPrepareError, .writeFailed)
+        }
         XCTAssertEqual(pasteboard.string(forType: .URL), "https://example.com")
         XCTAssertEqual(pasteboard.string(forType: .string), "example link")
+    }
+
+    func testClosedGateThrowsGateClosed() {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("MacClippyPrepareGateThrow-\(UUID().uuidString)"))
+        XCTAssertTrue(pasteboard.setString("original", forType: .string))
+        let injector = MacClippyPasteInjector(pasteboard: pasteboard)
+        let gate = MacClippyPasteInjectionGate()
+        gate.close()
+
+        XCTAssertThrowsError(try injector.prepareText("replacement", gate: gate)) { error in
+            XCTAssertEqual(error as? MacClippyPasteboardPrepareError, .gateClosed)
+        }
+        XCTAssertEqual(pasteboard.string(forType: .string), "original")
     }
 }
 

@@ -162,7 +162,7 @@ extension MacClippyDockModel {
     }
 
     func performWithSideEffect(
-        _ operation: @escaping @Sendable (MacClippyPasteInjectionGate) throws -> Bool,
+        _ operation: @escaping @Sendable (MacClippyPasteInjectionGate) throws -> Void,
         onSuccess: (@MainActor @Sendable () -> Void)? = nil,
         onFailure: (@MainActor @Sendable () -> Void)? = nil
     ) {
@@ -172,11 +172,7 @@ extension MacClippyDockModel {
         let gate = MacClippyPasteInjectionGate()
         sideEffectGate = gate
         workQueue.async { [weak self, gate] in
-            let result = Result {
-                guard try operation(gate) else {
-                    throw MacClippyDockOperationError.returnedFailure
-                }
-            }
+            let result = Result { try operation(gate) }
             DispatchQueue.main.async { [weak self] in
                 guard let self,
                       self.sessionGeneration == session,
@@ -184,8 +180,8 @@ extension MacClippyDockModel {
                 switch result {
                 case .success:
                     onSuccess?()
-                case .failure:
-                    self.setActionError(MacClippyUserFacingError.genericAction)
+                case let .failure(error):
+                    self.setActionError(MacClippyUserFacingError.message(for: error))
                     onFailure?()
                 }
             }

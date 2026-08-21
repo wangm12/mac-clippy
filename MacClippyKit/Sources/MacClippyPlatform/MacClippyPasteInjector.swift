@@ -14,6 +14,7 @@ public final class MacClippyPasteInjector {
     private struct PasteboardSnapshot {
         let items: [[(type: NSPasteboard.PasteboardType, data: Data)]]
         let isComplete: Bool
+        let changeCount: Int
     }
 
     private let pasteboard: NSPasteboard
@@ -21,6 +22,7 @@ public final class MacClippyPasteInjector {
     private let postEvents: (CGEvent, CGEvent) -> Void
     private let writeSentinel: MacClippyPasteboardWriteSentinel?
     private let prepareContent: (MacClippyPasteboardContent, NSPasteboard) -> Bool
+    private let writeObjects: (NSPasteboard, [NSPasteboardWriting]) -> Bool
     private let operationLock = NSLock()
 
     public init(
@@ -31,13 +33,19 @@ public final class MacClippyPasteInjector {
             keyUp.post(tap: .cghidEventTap)
         },
         writeSentinel: MacClippyPasteboardWriteSentinel? = nil,
-        preparer: @escaping (MacClippyPasteboardContent, NSPasteboard) -> Bool = MacClippyPasteboardPreparer.prepare(_:on:)
+        preparer: @escaping (MacClippyPasteboardContent, NSPasteboard) -> Bool = {
+            MacClippyPasteboardPreparer.prepare($0, on: $1)
+        },
+        writeObjects: ((NSPasteboard, [NSPasteboardWriting]) -> Bool)? = nil
     ) {
         self.pasteboard = pasteboard
         self.isProcessTrusted = isProcessTrusted
         self.postEvents = postEvents
         self.writeSentinel = writeSentinel
         self.prepareContent = preparer
+        self.writeObjects = writeObjects ?? { pasteboard, items in
+            pasteboard.writeObjects(items)
+        }
     }
 
     /// Whether the process can post the keystrokes required for automatic
@@ -47,68 +55,61 @@ public final class MacClippyPasteInjector {
         isProcessTrusted()
     }
 
-    @discardableResult
     public func prepareText(
         _ text: String,
         gate: MacClippyPasteInjectionGate? = nil
-    ) -> Bool {
-        prepare(.text(text), gate: gate)
+    ) throws {
+        try prepare(.text(text), gate: gate)
     }
 
     /// Writes text as a user-initiated copy so the pasteboard observer can
     /// record it in clipboard history. Automatic paste, snippet expansion,
     /// and regular in-app copy should continue using `prepareText`, which
     /// suppresses recapture through the write sentinel.
-    @discardableResult
     public func prepareTextForHistory(
         _ text: String,
         gate: MacClippyPasteInjectionGate? = nil
-    ) -> Bool {
-        prepareForHistory(.text(text), gate: gate)
+    ) throws {
+        try prepareForHistory(.text(text), gate: gate)
     }
 
-    @discardableResult
     public func prepare(
         _ content: MacClippyPasteboardContent,
         gate: MacClippyPasteInjectionGate? = nil
-    ) -> Bool {
-        if let gate {
-            return gate.withOpenGate {
-                withOperationLock { prepareLocked(content, writeSentinel: writeSentinel) }
-            } ?? false
+    ) throws {
+        try withOptionalGate(gate) {
+            try withOperationLock { try prepareLocked(content, writeSentinel: writeSentinel) }
         }
-        return withOperationLock { prepareLocked(content, writeSentinel: writeSentinel) }
     }
 
-    @discardableResult
     public func prepareForHistory(
         _ content: MacClippyPasteboardContent,
         gate: MacClippyPasteInjectionGate? = nil
-    ) -> Bool {
-        if let gate {
-            return gate.withOpenGate {
-                withOperationLock { prepareLocked(content, writeSentinel: nil) }
-            } ?? false
+    ) throws {
+        try withOptionalGate(gate) {
+            try withOperationLock { try prepareLocked(content, writeSentinel: nil) }
         }
-        return withOperationLock { prepareLocked(content, writeSentinel: nil) }
     }
 
     @discardableResult
     private func prepareLocked(
         _ content: MacClippyPasteboardContent,
         writeSentinel: MacClippyPasteboardWriteSentinel?
-    ) -> Bool {
+    ) throws {
         let original = snapshotPasteboard()
         // A promised item may expose its UTI before its provider can
         // materialize bytes. Refuse to clear an incomplete snapshot because
         // there is no lossless way to restore that item after a failed copy.
-        guard original.isComplete else { return false }
+        guard original.isComplete else {
+            throw MacClippyPasteboardPrepareError.incompleteSnapshot
+        }
 
         guard prepareContentLocked(content, writeSentinel: writeSentinel) else {
-            restore(original)
-            return false
+            if restore(original) {
+                throw MacClippyPasteboardPrepareError.writeFailed
+            }
+            throw MacClippyPasteboardPrepareError.restoreFailed
         }
-        return true
     }
 
     private func prepareContentLocked(
@@ -151,10 +152,28 @@ public final class MacClippyPasteInjector {
         }
     }
 
-    private func withOperationLock<T>(_ operation: () -> T) -> T {
+    private func withOptionalGate(
+        _ gate: MacClippyPasteInjectionGate?,
+        _ operation: () throws -> Void
+    ) throws {
+        guard let gate else {
+            try operation()
+            return
+        }
+        var captured: Result<Void, Error>?
+        let opened = gate.withOpenGate {
+            captured = Result { try operation() }
+        }
+        guard opened != nil, let captured else {
+            throw MacClippyPasteboardPrepareError.gateClosed
+        }
+        try captured.get()
+    }
+
+    private func withOperationLock<T>(_ operation: () throws -> T) rethrows -> T {
         operationLock.lock()
         defer { operationLock.unlock() }
-        return operation()
+        return try operation()
     }
 
     private func injectLocked(
@@ -169,13 +188,13 @@ public final class MacClippyPasteInjector {
         let expectedInjectedChangeCount = pasteboard.changeCount + 1
         guard prepareContentLocked(content, writeSentinel: writeSentinel) else {
             writeSentinel?.cancel(changeCount: expectedInjectedChangeCount)
-            restore(original)
+            _ = restore(original)
             return .manualPasteRequired
         }
 
         guard isProcessTrusted() else {
             writeSentinel?.cancel(changeCount: expectedInjectedChangeCount)
-            restore(original)
+            _ = restore(original)
             return .manualPasteRequired
         }
 
@@ -184,7 +203,7 @@ public final class MacClippyPasteInjector {
               let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false)
         else {
             writeSentinel?.cancel(changeCount: expectedInjectedChangeCount)
-            restore(original)
+            _ = restore(original)
             return .manualPasteRequired
         }
 
@@ -209,25 +228,55 @@ public final class MacClippyPasteInjector {
                 return (type: type, data: data)
             }
         }
-        return PasteboardSnapshot(items: items, isComplete: isComplete)
+        return PasteboardSnapshot(
+            items: items,
+            isComplete: isComplete,
+            changeCount: pasteboard.changeCount
+        )
     }
 
-    private func restore(_ snapshot: PasteboardSnapshot) {
-        let expectedChangeCount = pasteboard.changeCount + 1
-        writeSentinel?.beginWrite(expectedChangeCount: expectedChangeCount)
-        pasteboard.clearContents()
+    /// Restores a snapshot after a failed prepare/inject. Clears once, then
+    /// retries `writeObjects` without clearing again. Aborts if another writer
+    /// changed the pasteboard after that clear.
+    @discardableResult
+    private func restore(_ snapshot: PasteboardSnapshot) -> Bool {
+        let expectedPreparedChangeCount = snapshot.changeCount + 1
+        guard pasteboard.changeCount <= expectedPreparedChangeCount else {
+            return false
+        }
 
-        let restoredItems = snapshot.items.map { values -> NSPasteboardItem in
+        let restoredItems = snapshot.items.map { values -> NSPasteboardWriting in
             let item = NSPasteboardItem()
             for value in values {
                 _ = item.setData(value.data, forType: value.type)
             }
             return item
         }
-        if !restoredItems.isEmpty, !pasteboard.writeObjects(restoredItems) {
-            // The pasteboard was still cleared, so suppress that failed
-            // restore generation rather than retaining a stale token.
-            writeSentinel?.cancel(changeCount: expectedChangeCount)
+
+        let expectedAfterClear = pasteboard.changeCount + 1
+        writeSentinel?.beginWrite(expectedChangeCount: expectedAfterClear)
+        pasteboard.clearContents()
+        guard pasteboard.changeCount == expectedAfterClear else {
+            writeSentinel?.cancel(changeCount: expectedAfterClear)
+            return false
         }
+        if restoredItems.isEmpty {
+            return true
+        }
+        if writeObjects(pasteboard, restoredItems) {
+            return true
+        }
+        guard pasteboard.changeCount == expectedAfterClear else {
+            writeSentinel?.cancel(changeCount: expectedAfterClear)
+            return false
+        }
+        // The retry writes into the generation the clear above already opened.
+        // `writeObjects` does not bump changeCount, so registering a second
+        // token here would stamp the *next* foreign copy instead.
+        if writeObjects(pasteboard, restoredItems) {
+            return true
+        }
+        writeSentinel?.cancel(changeCount: expectedAfterClear)
+        return false
     }
 }

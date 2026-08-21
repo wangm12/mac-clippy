@@ -5,13 +5,24 @@ import Foundation
 import MacClippyCore
 import MacClippyPlatform
 
+private final class MacClippyThumbnailRuntimeHandle: @unchecked Sendable {
+    let runtime: MacClippyRuntime
+
+    init(_ runtime: MacClippyRuntime) {
+        self.runtime = runtime
+    }
+}
+
 private func macClippyLoadThumbnail(
     runtime: MacClippyRuntime,
     id: RecordID,
-    maxPixelSize: Int
+    maxPixelSize: Int,
+    isCancelled: () -> Bool
 ) -> CGImage? {
     do {
+        guard !isCancelled() else { return nil }
         let data = try runtime.imageData(id: id)
+        guard !isCancelled() else { return nil }
         guard let downsampled = MacClippyThumbnailDownsampler.image(
             data,
             maxPixelSize: maxPixelSize
@@ -46,46 +57,32 @@ private func macClippyLoadThumbnail(
 }
 
 extension MacClippyDockModel {
-    // Card thumbnails use their own non-cancelled path. The Space Preview
-    // loader is latest-wins by design, but using it for every visible image
-    // card would make thumbnails cancel one another. Downsample before the
-    // result reaches SwiftUI and cache by record ID.
+    static func makeThumbnailLoader(runtime: MacClippyRuntime) -> MacClippyCardThumbnailLoader {
+        let cache = NSCache<NSString, MacClippyCardThumbnailLoader.CacheEntry>()
+        cache.totalCostLimit = 64 * 1024 * 1024
+        let queue = OperationQueue()
+        queue.name = "com.macallyouneed.macclippy.thumbnail"
+        queue.qualityOfService = .utility
+        queue.maxConcurrentOperationCount = 2
+        let runtimeHandle = MacClippyThumbnailRuntimeHandle(runtime)
+        return MacClippyCardThumbnailLoader(
+            cache: cache,
+            queue: queue,
+            loadImage: { id, maxPixelSize, isCancelled in
+                macClippyLoadThumbnail(
+                    runtime: runtimeHandle.runtime,
+                    id: id,
+                    maxPixelSize: maxPixelSize,
+                    isCancelled: isCancelled
+                )
+            }
+        )
+    }
+
     func loadImageThumbnail(
         for id: RecordID,
-        maxPixelSize: Int = 480,
-        completion: @escaping @MainActor @Sendable (CGImage?) -> Void
-    ) {
-        let requestKey = ThumbnailRequestKey(id: id, maxPixelSize: max(1, maxPixelSize))
-        if let cached = thumbnailCache.object(forKey: requestKey.cacheKey) {
-            completion(cached.image)
-            return
-        }
-        if thumbnailCompletions[requestKey] != nil {
-            thumbnailCompletions[requestKey, default: []].append(completion)
-            return
-        }
-        thumbnailCompletions[requestKey] = [completion]
-
-        let runtimeReference = runtime
-        thumbnailQueue.addOperation { [weak self, runtimeReference] in
-            let thumbnailImage = macClippyLoadThumbnail(
-                runtime: runtimeReference,
-                id: id,
-                maxPixelSize: requestKey.maxPixelSize
-            )
-
-            DispatchQueue.main.async { [weak self, thumbnailImage] in
-                guard let self else { return }
-                if let thumbnailImage {
-                    self.thumbnailCache.setObject(
-                        ThumbnailCacheEntry(image: thumbnailImage),
-                        forKey: requestKey.cacheKey,
-                        cost: thumbnailImage.width * thumbnailImage.height * 4
-                    )
-                }
-                let completions = self.thumbnailCompletions.removeValue(forKey: requestKey) ?? []
-                completions.forEach { $0(thumbnailImage) }
-            }
-        }
+        maxPixelSize: Int = 480
+    ) async -> CGImage? {
+        await thumbnailLoader.image(for: id, maxPixelSize: maxPixelSize)
     }
 }

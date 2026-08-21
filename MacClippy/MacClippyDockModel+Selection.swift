@@ -29,17 +29,17 @@ extension MacClippyDockModel {
               let boardIndex = pinboards.firstIndex(where: { $0.id == pinboardID }) else { return }
         let board = pinboards[boardIndex]
         guard board.items.last?.id == itemID,
-              board.items.count < board.itemCount,
+              board.nextPageToken != nil,
               pinboardLoadingIDs.insert(pinboardID).inserted else { return }
-        loadPinboardItemsPage(pinboardID: pinboardID, offset: board.items.count)
+        loadPinboardItemsPage(pinboardID: pinboardID, pageToken: board.nextPageToken)
     }
 
     func retryPinboardItemPage() {
         guard case let .pinboard(pinboardID) = selectedTab,
-              let offset = pinboardItemPageRetryOffset,
+              pinboardItemPageRetryToken != nil,
               pinboardLoadingIDs.insert(pinboardID).inserted else { return }
         clearPageError()
-        loadPinboardItemsPage(pinboardID: pinboardID, offset: offset)
+        loadPinboardItemsPage(pinboardID: pinboardID, pageToken: pinboardItemPageRetryToken)
     }
 
     func retryCurrentPage() {
@@ -57,13 +57,21 @@ extension MacClippyDockModel {
         }
     }
 
-    private func loadPinboardItemsPage(pinboardID: RecordID, offset: Int) {
-        pinboardItemPageRetryOffset = offset
+    private func loadPinboardItemsPage(
+        pinboardID: RecordID,
+        pageToken: MacClippyPinboardSearchPageToken?
+    ) {
+        pinboardItemPageRetryToken = pageToken
         let session = sessionGeneration
         let loadGeneration = pinboardLoadGeneration
         let runtimeReference = runtime
         workQueue.async { [weak self, runtimeReference] in
-            let result = Result { try runtimeReference.pinboardItems(pinboardID: pinboardID, offset: offset) }
+            let result = Result {
+                try runtimeReference.pinboardItemsPage(
+                    pinboardID: pinboardID,
+                    pageToken: pageToken
+                )
+            }
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 guard self.sessionGeneration == session,
@@ -71,23 +79,10 @@ extension MacClippyDockModel {
                 self.pinboardLoadingIDs.remove(pinboardID)
                 guard
                     case .pinboard(pinboardID) = self.selectedTab,
-                    let currentIndex = self.pinboards.firstIndex(where: { $0.id == pinboardID }) else { return }
+                    self.pinboards.contains(where: { $0.id == pinboardID }) else { return }
                 switch result {
-                case let .success(items):
-                    self.pinboardItemPageRetryOffset = nil
-                    self.clearPageError()
-                    guard !items.isEmpty else { return }
-                    let current = self.pinboards[currentIndex]
-                    let existingIDs = Set(current.items.map(\.id))
-                    let additions = items.filter { !existingIDs.contains($0.id) }
-                    guard !additions.isEmpty else { return }
-                    self.pinboards[currentIndex] = MacClippyPinboardEntry(
-                        board: current.board,
-                        items: current.items + additions,
-                        itemCount: current.itemCount
-                    )
-                    self.rebindSelection()
-                    self.recomputeDedupRuns()
+                case let .success(page):
+                    self.applyPinboardItemsPage(page, pinboardID: pinboardID, pageToken: pageToken)
                 case let .failure(error):
                     self.pageError = MacClippyUserFacingError.message(
                         for: error,
@@ -96,6 +91,34 @@ extension MacClippyDockModel {
                 }
             }
         }
+    }
+
+    private func applyPinboardItemsPage(
+        _ page: MacClippyPinboardSearchPage,
+        pinboardID: RecordID,
+        pageToken: MacClippyPinboardSearchPageToken?
+    ) {
+        guard let currentIndex = pinboards.firstIndex(where: { $0.id == pinboardID }) else { return }
+        clearPageError()
+        let current = pinboards[currentIndex]
+        let existingIDs = Set(current.items.map(\.id))
+        let additions = page.items.filter { !existingIDs.contains($0.id) }
+        pinboards[currentIndex] = MacClippyPinboardEntry(
+            board: current.board,
+            items: current.items + additions,
+            itemCount: current.itemCount,
+            nextPageToken: page.nextPageToken
+        )
+        if additions.isEmpty,
+           let nextToken = page.nextPageToken,
+           nextToken.memberOffset > (pageToken?.memberOffset ?? -1) {
+            guard pinboardLoadingIDs.insert(pinboardID).inserted else { return }
+            loadPinboardItemsPage(pinboardID: pinboardID, pageToken: nextToken)
+            return
+        }
+        pinboardItemPageRetryToken = nil
+        rebindSelection()
+        recomputeDedupRuns()
     }
 
     /// Recompute the consecutive-duplicate run counts for the current visible

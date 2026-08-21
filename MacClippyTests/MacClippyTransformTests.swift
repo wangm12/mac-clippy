@@ -65,9 +65,8 @@ final class MacClippyTransformTests: XCTestCase {
     func testCopyTransformedWritesExpectedTextAndDoesNotPostPasteKeystroke() throws {
         let meta = try runtime.appendTestRecord(.text("hello world"))
 
-        let prepared = try runtime.copy(id: meta.id, transform: .uppercase)
+        try runtime.copy(id: meta.id, transform: .uppercase)
 
-        XCTAssertTrue(prepared, "copy(id:transform:) should prepare the pasteboard")
         XCTAssertEqual(pasteboard.string(forType: .string), "HELLO WORLD")
         // The core invariant: transformed copy must never post a paste keystroke.
         XCTAssertEqual(postedEventCount, 0, "copy(id:transform:) must not post a paste keystroke")
@@ -77,23 +76,23 @@ final class MacClippyTransformTests: XCTestCase {
         // One record per transform so each assertion is independent; the
         // pasteboard is shared but each copy overwrites it.
         let upper = try runtime.appendTestRecord(.text("abc"))
-        XCTAssertTrue(try runtime.copy(id: upper.id, transform: .uppercase))
+        try runtime.copy(id: upper.id, transform: .uppercase)
         XCTAssertEqual(pasteboard.string(forType: .string), "ABC")
 
         let lower = try runtime.appendTestRecord(.text("ABC"))
-        XCTAssertTrue(try runtime.copy(id: lower.id, transform: .lowercase))
+        try runtime.copy(id: lower.id, transform: .lowercase)
         XCTAssertEqual(pasteboard.string(forType: .string), "abc")
 
         let trimmed = try runtime.appendTestRecord(.text("  hi \n"))
-        XCTAssertTrue(try runtime.copy(id: trimmed.id, transform: .trim))
+        try runtime.copy(id: trimmed.id, transform: .trim)
         XCTAssertEqual(pasteboard.string(forType: .string), "hi")
 
         let json = try runtime.appendTestRecord(.text("{\"b\":2,\"a\":1}"))
-        XCTAssertTrue(try runtime.copy(id: json.id, transform: .prettyJSON))
+        try runtime.copy(id: json.id, transform: .prettyJSON)
         XCTAssertEqual(pasteboard.string(forType: .string), "{\n  \"a\" : 1,\n  \"b\" : 2\n}")
 
         let url = try runtime.appendTestRecord(.text("https://example.com?utm_medium=x&a=1"))
-        XCTAssertTrue(try runtime.copy(id: url.id, transform: .cleanTrackingURL))
+        try runtime.copy(id: url.id, transform: .cleanTrackingURL)
         XCTAssertEqual(pasteboard.string(forType: .string), "https://example.com?a=1")
 
         XCTAssertEqual(postedEventCount, 0, "no transform copy may post a paste keystroke")
@@ -105,7 +104,7 @@ final class MacClippyTransformTests: XCTestCase {
         // the existing MacClippyClipboardText path before the transform runs.
         let html = try runtime.appendTestRecord(.html("<p>hello <b>world</b></p>"))
 
-        XCTAssertTrue(try runtime.copy(id: html.id, transform: .uppercase))
+        try runtime.copy(id: html.id, transform: .uppercase)
         // The pasteboard carries the transformed plain text, not transformed
         // markup.
         let value = pasteboard.string(forType: .string)
@@ -122,7 +121,7 @@ final class MacClippyTransformTests: XCTestCase {
         let rtf = minimalRTF(carrying: "hello")
         let record = try runtime.appendTestRecord(.rtf(rtf))
 
-        XCTAssertTrue(try runtime.copy(id: record.id, transform: .uppercase))
+        try runtime.copy(id: record.id, transform: .uppercase)
         XCTAssertEqual(pasteboard.string(forType: .string), "HELLO")
         XCTAssertEqual(postedEventCount, 0)
     }

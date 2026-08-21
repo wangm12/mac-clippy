@@ -5,7 +5,28 @@ import UniformTypeIdentifiers
 import MacClippyCore
 import MacClippyPlatform
 
-struct MacClippyClipboardCardContext {
+struct MacClippyClipboardCardSnapshot: Equatable, Sendable {
+    let itemID: RecordID
+    let preview: String
+    let contentKind: ContentKind
+    let customLabel: String?
+    let fileNames: [String]
+    let typeMetadataSubtitle: String?
+    let sourceAppBundleID: String?
+    let sourceDisplayName: String
+    let modified: Date
+    let index: Int
+    let dedupRun: Int
+    let isSelected: Bool
+    let activeBorder: Bool
+    let isElevated: Bool
+    let categories: [MacClippyDockCategoryPresentation]
+    let highlightTerms: [String]
+    let isPreviewVisible: Bool
+    let sourcePresentationGeneration: UInt
+}
+
+struct MacClippyClipboardCardContext: Equatable {
     let item: MacClippyHistoryEntry
     let index: Int
     let source: MacClippySourceAppPresentation
@@ -14,6 +35,36 @@ struct MacClippyClipboardCardContext {
     let activeBorder: Bool
     let isElevated: Bool
     let categories: [MacClippyDockCategoryPresentation]
+    let highlightTerms: [String]
+    let isPreviewVisible: Bool
+    let sourcePresentationGeneration: UInt
+
+    var snapshot: MacClippyClipboardCardSnapshot {
+        MacClippyClipboardCardSnapshot(
+            itemID: item.id,
+            preview: item.preview,
+            contentKind: item.contentKind,
+            customLabel: item.customLabel,
+            fileNames: item.fileURLs.map(\.lastPathComponent),
+            typeMetadataSubtitle: item.typeMetadataSubtitle,
+            sourceAppBundleID: item.meta.sourceAppBundleID,
+            sourceDisplayName: source.displayName,
+            modified: item.meta.modified,
+            index: index,
+            dedupRun: dedupRun,
+            isSelected: isSelected,
+            activeBorder: activeBorder,
+            isElevated: isElevated,
+            categories: categories,
+            highlightTerms: highlightTerms,
+            isPreviewVisible: isPreviewVisible,
+            sourcePresentationGeneration: sourcePresentationGeneration
+        )
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.snapshot == rhs.snapshot
+    }
 }
 
 extension MacClippyDockView {
@@ -22,7 +73,7 @@ extension MacClippyDockView {
         let card = Button {
             handleCardClick(clickCount: 1, modifiers: currentModifierFlags(), focus: { model.focus(snippet) })
         } label: {
-            snippetCardContent(snippet, index: index, isFocused: isFocused)
+            snippetCardContent(snippet, isFocused: isFocused)
         }
         .buttonStyle(.plain)
         .simultaneousGesture(TapGesture(count: 2).onEnded {
@@ -88,7 +139,10 @@ extension MacClippyDockView {
             isSelected: isSelected,
             activeBorder: activeBorder,
             isElevated: isFocused,
-            categories: model.categories(for: item.id)
+            categories: model.categories(for: item.id),
+            highlightTerms: MacClippySearchGrammar.parse(model.query).bareTerms,
+            isPreviewVisible: model.isPreviewVisible,
+            sourcePresentationGeneration: sourcePresentationGeneration
         )
     }
 
@@ -105,7 +159,14 @@ extension MacClippyDockView {
                 selection: selectionHandler(for: item, index: index)
             )
         } label: {
-            clipboardCardLabel(context: context)
+            MacClippyClipboardCardLabel(
+                context: context,
+                loadThumbnail: { [weak model] id in
+                    guard let model else { return nil }
+                    return await model.loadImageThumbnail(for: id)
+                }
+            )
+            .equatable()
         }
         .buttonStyle(.plain)
         .simultaneousGesture(TapGesture(count: 2).onEnded {
@@ -167,6 +228,7 @@ extension MacClippyDockView {
             .foregroundStyle(MacClippyDockTheme.textColor)
             .modifier(MacClippyCardHoverModifier(enabled: !model.isPreviewVisible, reduceMotion: reduceMotion))
             .accessibilityLabel(cardAccessibilityLabel(context: context))
+            .accessibilityHint(cardAccessibilityHint(context: context) ?? "")
             .accessibilityAddTraits(context.isSelected ? .isSelected : [])
             .accessibilityAction(named: "Paste") {
                 focusCard()

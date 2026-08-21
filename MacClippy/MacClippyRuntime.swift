@@ -105,6 +105,9 @@ final class MacClippyRuntime: @unchecked Sendable {
     let storageDegradedReasons = MacClippyStorageDegradedReasons()
     let recognizeOCR: @Sendable (Data) async throws -> String
     let recognizeOCRLayout: @Sendable (CGImage) async throws -> MacClippyOCRResult
+    #if DEBUG
+        var failNextOCRSearchUpsertForTesting = false
+    #endif
 
     // `start`, `stop`, and permission-driven snippet changes touch AppKit
     // lifecycle resources outside `storeLock`. Keep their transition atomic

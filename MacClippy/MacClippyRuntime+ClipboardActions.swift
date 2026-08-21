@@ -33,31 +33,28 @@ extension MacClippyRuntime {
         }
     }
 
-    @discardableResult
-    func copy(id: RecordID) throws -> Bool {
+    func copy(id: RecordID) throws {
         try copy(id: id, plain: false)
     }
 
-    @discardableResult
     func copy(
         id: RecordID,
         plain: Bool,
         sideEffectGate: MacClippyPasteInjectionGate? = nil
-    ) throws -> Bool {
+    ) throws {
         let content = try withStoreLock {
             let body = try clipboardStore.body(for: id)
             return try pasteboardContent(for: body, plain: plain)
         }
-        return pasteInjector.prepare(content, gate: sideEffectGate)
+        try pasteInjector.prepare(content, gate: sideEffectGate)
     }
 
-    @discardableResult
     func copy(
         snippetID: RecordID,
         sideEffectGate: MacClippyPasteInjectionGate? = nil
-    ) throws -> Bool {
+    ) throws {
         let body = try withStoreLock { try snippetStore.fetch(id: snippetID).body }
-        return pasteInjector.prepareText(body, gate: sideEffectGate)
+        try pasteInjector.prepareText(body, gate: sideEffectGate)
     }
 
     /// Transformed copy/paste: read the record body under the existing store
@@ -72,14 +69,13 @@ extension MacClippyRuntime {
     /// paste injects Cmd+V and bumps frequency only when injection succeeds,
     /// matching paste(id:). Neither path mutates the stored record or the
     /// search index; the transform is a one-shot pasteboard operation.
-    @discardableResult
     func copy(
         id: RecordID,
         transform: TextTransform,
         sideEffectGate: MacClippyPasteInjectionGate? = nil
-    ) throws -> Bool {
+    ) throws {
         let text = try withStoreLock { try transformedPlainText(for: id, transform: transform) }
-        return pasteInjector.prepare(.text(text), gate: sideEffectGate)
+        try pasteInjector.prepare(.text(text), gate: sideEffectGate)
     }
 
     @discardableResult
@@ -341,6 +337,12 @@ extension MacClippyRuntime {
 
         func pendingOCRBytesForTest() -> Int {
             captureQueue.sync { pendingOCRBytes }
+        }
+
+        func failNextOCRSearchUpsertForTest() {
+            withStoreLock {
+                failNextOCRSearchUpsertForTesting = true
+            }
         }
     #endif
 

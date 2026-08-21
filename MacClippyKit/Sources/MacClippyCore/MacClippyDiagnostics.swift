@@ -34,6 +34,7 @@ public enum MacClippyErrorCode: String, Codable, Sendable, CaseIterable {
     case backupFailed
     case recoveryFailed
     case launchAtLoginUpdateFailed
+    case missedChangeCounts
 }
 
 public struct MacClippyDiagnosticsEvent: Codable, Sendable, Equatable {

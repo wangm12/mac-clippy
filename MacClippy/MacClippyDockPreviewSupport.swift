@@ -19,14 +19,17 @@ enum MacClippyDockPreviewTextCopyPolicy {
         return !selectedText.isEmpty
     }
 }
-
 extension MacClippyDockPreviewContent {
     var identity: String {
         switch self {
         case .loading:
             return "loading"
-        case let .text(id, _):
+        case let .text(id, _, _):
             return "text:\(id.rawValue)"
+        case let .richText(id, _, _):
+            return "richText:\(id.rawValue)"
+        case let .color(id, _, _):
+            return "color:\(id.rawValue)"
         case let .image(id, _):
             // Clipboard records are immutable. The record ID is therefore a
             // stable identity and avoids hashing an entire screenshot while
@@ -42,8 +45,25 @@ extension MacClippyDockPreviewContent {
     }
 
     var textValue: String? {
-        guard case let .text(_, value) = self else { return nil }
-        return value
+        switch self {
+        case let .text(_, value, _), let .color(_, value, _):
+            return value
+        case let .richText(_, _, plain):
+            return plain
+        case .loading, .image, .video, .files, .error:
+            return nil
+        }
+    }
+
+    func footerText(characterCount: Int) -> String? {
+        switch self {
+        case let .color(_, _, swatch):
+            return swatch.hex
+        case .loading, .error:
+            return nil
+        case .text, .richText, .image, .video, .files:
+            return characterCount > 0 ? "\(characterCount) characters" : nil
+        }
     }
 }
 
@@ -311,60 +331,5 @@ struct MacClippyDockPreviewImage: View {
                 onOCRResult?(nil)
             }
         }
-    }
-}
-
-struct MacClippyDockPreviewTextView: NSViewRepresentable {
-    let text: String
-    let monospaced: Bool
-    let foregroundColor: NSColor
-
-    func makeNSView(context: Context) -> NSScrollView {
-        let textView = NSTextView(frame: .zero)
-        textView.isEditable = false
-        textView.isSelectable = true
-        textView.isRichText = false
-        textView.usesFontPanel = false
-        textView.drawsBackground = false
-        textView.textContainerInset = NSSize(width: 8, height: 8)
-        textView.textContainer?.lineFragmentPadding = 0
-        textView.textContainer?.widthTracksTextView = true
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.autoresizingMask = [.width]
-        textView.minSize = NSSize(width: 0, height: 0)
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        textView.layoutManager?.allowsNonContiguousLayout = true
-
-        let scrollView = NSScrollView(frame: .zero)
-        scrollView.drawsBackground = false
-        scrollView.borderType = .noBorder
-        scrollView.hasVerticalScroller = true
-        scrollView.scrollerStyle = .overlay
-        scrollView.documentView = textView
-        update(textView, with: text)
-        return scrollView
-    }
-
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? NSTextView else { return }
-        if textView.string != text {
-            update(textView, with: text)
-        }
-    }
-
-    private func update(_ textView: NSTextView, with text: String) {
-        let font = monospaced
-            ? NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-            : NSFont.systemFont(ofSize: NSFont.systemFontSize)
-        textView.textStorage?.setAttributedString(
-            NSAttributedString(
-                string: text,
-                attributes: [
-                    .font: font,
-                    .foregroundColor: foregroundColor
-                ]
-            )
-        )
     }
 }

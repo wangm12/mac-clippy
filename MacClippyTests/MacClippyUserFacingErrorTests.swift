@@ -2,6 +2,7 @@ import XCTest
 
 @testable import MacClippy
 import MacClippyCore
+import MacClippyPlatform
 
 final class MacClippyUserFacingErrorTests: XCTestCase {
     func testStoreErrorsMapToSpecificCopy() {
@@ -32,6 +33,21 @@ final class MacClippyUserFacingErrorTests: XCTestCase {
         XCTAssertEqual(
             MacClippyUserFacingError.message(for: error, fallback: "fallback"),
             MacClippyUserFacingError.storage
+        )
+    }
+
+    func testPasteboardPrepareErrorsMapToClipboardCopy() {
+        XCTAssertEqual(
+            MacClippyUserFacingError.message(for: MacClippyPasteboardPrepareError.incompleteSnapshot),
+            MacClippyUserFacingError.clipboardBusy
+        )
+        XCTAssertEqual(
+            MacClippyUserFacingError.message(for: MacClippyPasteboardPrepareError.writeFailed),
+            MacClippyUserFacingError.clipboardWrite
+        )
+        XCTAssertEqual(
+            MacClippyUserFacingError.message(for: MacClippyPasteboardPrepareError.restoreFailed),
+            MacClippyUserFacingError.clipboardRestore
         )
     }
 }

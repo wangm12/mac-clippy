@@ -77,7 +77,7 @@ final class MacClippyPasteboardWriteSentinelTests: XCTestCase {
 
         // Internal write: the injector writes through the sentinel; the
         // observer should skip this changeCount.
-        XCTAssertTrue(injector.prepareText("internal"))
+        XCTAssertNoThrow(try injector.prepareText("internal"))
         observer.poll()
         XCTAssertEqual(capturedChanges.count, 1, "internal write should be suppressed by the sentinel")
 
@@ -103,7 +103,7 @@ final class MacClippyPasteboardWriteSentinelTests: XCTestCase {
 
         let injector = MacClippyPasteInjector(pasteboard: pasteboard, isProcessTrusted: { false })
 
-        XCTAssertTrue(injector.prepareText("no sentinel"))
+        XCTAssertNoThrow(try injector.prepareText("no sentinel"))
         observer.poll()
         XCTAssertEqual(capturedChanges.count, 1, "without a sentinel the injector write is recaptured")
 
@@ -128,7 +128,7 @@ final class MacClippyPasteboardWriteSentinelTests: XCTestCase {
             writeSentinel: sentinel
         )
 
-        XCTAssertTrue(injector.prepareTextForHistory("OCR text"))
+        XCTAssertNoThrow(try injector.prepareTextForHistory("OCR text"))
         XCTAssertEqual(sentinel.pendingCount, 0, "history copies must not register an internal-write token")
 
         observer.poll()

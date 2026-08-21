@@ -281,6 +281,7 @@ public final class MacClippyPasteboardObserver: @unchecked Sendable {
     let queue: DispatchQueue
     let lifecycleKey = DispatchSpecificKey<Void>()
     let retryState: MacClippyPasteboardReadRetryState
+    let diagnosticsRecorder: MacClippyDiagnosticsRecorder
     let lifecycleStateLock = NSLock()
     var lifecycleGeneration: UInt64 = 0
     var lifecycleStarted = false
@@ -292,7 +293,7 @@ public final class MacClippyPasteboardObserver: @unchecked Sendable {
         reader: PasteboardReading = SystemPasteboardReader(),
         exclusionRules: MacClippyCore.CaptureExclusionRules = MacClippyCore.CaptureExclusionRules(),
         writeSentinel: MacClippyPasteboardWriteSentinel? = nil,
-        pollInterval: TimeInterval = 0.25,
+        pollInterval: TimeInterval = 0.05,
         // Production default: a dedicated serial utility queue (NOT the main
         // queue) so polling and the synchronous retry helper's sleeps never
         // block the UI. Persistence is handed off to the caller's capture
@@ -303,7 +304,8 @@ public final class MacClippyPasteboardObserver: @unchecked Sendable {
             label: MacClippyPasteboardObserver.productionPollQueueLabel,
             qos: .userInitiated
         ),
-        retryState: MacClippyPasteboardReadRetryState = MacClippyPasteboardReadRetryState()
+        retryState: MacClippyPasteboardReadRetryState = MacClippyPasteboardReadRetryState(),
+        diagnosticsRecorder: MacClippyDiagnosticsRecorder = .shared
     ) {
         self.reader = reader
         self.exclusionRules = exclusionRules
@@ -311,6 +313,7 @@ public final class MacClippyPasteboardObserver: @unchecked Sendable {
         self.pollInterval = max(0.01, pollInterval)
         self.queue = queue
         self.retryState = retryState
+        self.diagnosticsRecorder = diagnosticsRecorder
         queue.setSpecific(key: lifecycleKey, value: ())
     }
 

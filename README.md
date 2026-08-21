@@ -13,7 +13,18 @@ content easy to paste.
 - Snippets with configurable trigger expansion
 - Text transforms such as case conversion, whitespace cleanup, and pretty JSON
 - Privacy filters for concealed, transient, auto-generated, and excluded content
-- Global `Command-Shift-V` shortcut for opening the clipboard dock
+- Global shortcut for opening the clipboard dock (default `Command-Shift-V`, customizable in Settings)
+- Colored pinboard categories, a details editor, and image Preview OCR text selection
+
+## Search
+
+History and Pinboard search understand:
+
+- Bare words and CJK substrings
+- Quoted phrases and prefix matches such as `clip*`
+- Filters including `type:text`, `type:image`, `type:url`, `type:files`, `app:`, `name:`, and `has:ocr`
+
+Snippets search name and trigger text only. A `type:` or date filter with no other words explains that those filters apply to History and Pinboard. A mixed query such as `hello type:text` still matches snippet text for `hello`.
 
 ## Installation
 
@@ -28,6 +39,8 @@ The result is written to:
 ```text
 dist/MacClippy.dmg
 ```
+
+If a local Apple Development identity is in the Keychain, `make dmg` signs the app with that identity so TCC permissions stay stable during local testing. That is not a Developer ID or notarized release. Without a signing identity, the DMG is unsigned.
 
 Open the DMG, drag `MacClippy.app` to `Applications`, and launch it from
 Finder. Clipboard capture works locally. Automatic paste injection and snippet
@@ -83,8 +96,9 @@ Git.
 
 ## Release packaging
 
-`make dmg` creates an unsigned arm64 Release DMG. `make release` is the signed
-archive → final DMG → notarize/staple/Gatekeeper verification flow.
+`make dmg` builds an arm64 Release DMG. It signs with a local Apple Development
+identity when one is available; otherwise the DMG is unsigned. `make release`
+is the Developer ID archive → final DMG → notarize/staple/Gatekeeper flow.
 
 To create a signed artifact, provide a Developer ID identity and team ID:
 

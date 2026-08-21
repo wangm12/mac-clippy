@@ -64,13 +64,7 @@ enum MacClippyDockCategoryRailPolicy {
 // text and accessibility label so nothing is lost.
 enum MacClippyDockURLPolicy {
     static func url(from preview: String) -> URL? {
-        let trimmed = preview.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.contains("://") || trimmed.hasPrefix("www.") else { return nil }
-        // Reject if there is whitespace inside (means it is prose, not a URL).
-        guard !trimmed.contains(" ") && !trimmed.contains("\n") else { return nil }
-        let candidate = trimmed.hasPrefix("www.") ? "https://\(trimmed)" : trimmed
-        guard let url = URL(string: candidate), url.scheme == "http" || url.scheme == "https" else { return nil }
-        return url
+        MacClippyClipboardPresentation.url(fromPlainText: preview)
     }
 }
 
@@ -80,39 +74,7 @@ enum MacClippyDockURLPolicy {
 // prose with a colon or slash.
 enum MacClippyDockCodePolicy {
     static func isCode(_ preview: String) -> Bool {
-        let trimmed = preview.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
-        let lines = trimmed.split(separator: "\n", omittingEmptySubsequences: false)
-
-        // Build/linker output is multiline and flag-heavy, but it is not source
-        // code. Keep it on the readable paper surface instead of turning every
-        // compiler diagnostic or command log into a terminal card.
-        let buildOutputMarkers = [
-            "-Xlinker",
-            "-install_name",
-            "LinkFileList",
-            ".swiftmodule",
-            ".dylib"
-        ]
-        let markerCount = buildOutputMarkers.reduce(into: 0) { count, marker in
-            if trimmed.contains(marker) { count += 1 }
-        }
-        if markerCount >= 2 { return false }
-
-        // A shebang is an unambiguous code/script signal.
-        if trimmed.hasPrefix("#!") { return true }
-        // Curly-brace structure + semicolons => code. Parentheses and square
-        // brackets are common in ordinary prompts (timestamps, shot lists,
-        // and explanations), so they are not code signals on their own.
-        let openBraces = trimmed.filter { $0 == "{" }.count
-        let semicolons = trimmed.filter { $0 == ";" }.count
-        if openBraces >= 2 || semicolons >= 2 { return true }
-        // Common keyword-at-line-start signatures.
-        let keywords = ["func ", "def ", "class ", "import ", "const ", "let ", "var ", "public ", "private ", "return ", "if ", "for ", "while "]
-        if lines.contains(where: { line in keywords.contains { line.trimmingCharacters(in: .whitespaces).hasPrefix($0) } }) {
-            return true
-        }
-        return false
+        MacClippyClipboardPresentation.isCode(preview)
     }
 }
 

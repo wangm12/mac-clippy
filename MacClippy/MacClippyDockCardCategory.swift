@@ -2,7 +2,7 @@ import SwiftUI
 
 import MacClippyCore
 
-extension MacClippyDockView {
+extension MacClippyClipboardCardLabel {
     @ViewBuilder
     func cardCategoryFooter(_ categories: [MacClippyDockCategoryPresentation]) -> some View {
         let visibleCategories = MacClippyDockCardCategoryPolicy.visibleCategories(from: categories)

@@ -72,8 +72,8 @@ extension MacClippyDockModel {
             if ids.isEmpty {
                 selection = MacClippyDockSelectionPolicy.clearingSelection(selection)
             }
-        case .failure:
-            setActionError(MacClippyUserFacingError.genericAction)
+        case let .failure(error):
+            setActionError(MacClippyUserFacingError.message(for: error))
         }
     }
 }

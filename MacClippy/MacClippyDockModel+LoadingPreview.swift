@@ -164,6 +164,7 @@ extension MacClippyDockModel {
         let currentHistoryGeneration = historyLoadGeneration
         pinboardLoadGeneration &+= 1
         pinboardLoadingIDs.removeAll()
+        pinboardItemPageRetryToken = nil
         resetPinboardSearchState()
         let query = query
         let runtimeReference = runtime

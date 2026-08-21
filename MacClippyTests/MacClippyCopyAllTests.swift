@@ -63,13 +63,12 @@ final class MacClippyCopyAllTests: XCTestCase {
         let second = try runtime.appendTestRecord(.text("beta"))
 
         let result = try runtime.copyOrdered(ids: [second.id, first.id])
-        guard case let .merged(prepared) = result else {
+        guard case .merged = result else {
             XCTFail("expected .merged for a homogeneous text selection, got \(result)")
             return
         }
 
         // The pasteboard must hold the merged text in visual order.
-        XCTAssertTrue(prepared)
         XCTAssertEqual(pasteboard.string(forType: .string), "beta\nalpha")
         // The P1 invariant: Copy all must never post a paste keystroke.
         XCTAssertEqual(postedEventCount, 0, "copyOrdered must not post a paste keystroke")
@@ -290,39 +289,6 @@ final class MacClippyCopyAllTests: XCTestCase {
 
         XCTAssertTrue(completionCalled)
         XCTAssertEqual(pasteboard.string(forType: .string), "copy and close")
-    }
-
-    @MainActor
-    func testCopyFocusedDoesNotShowSuccessWhenPrepareReturnsFalse() throws {
-        let failingRoot = tempRoot.appendingPathComponent("prepare-false", isDirectory: true)
-        try FileManager.default.createDirectory(at: failingRoot, withIntermediateDirectories: true)
-        let failingInjector = MacClippyPasteInjector(
-            pasteboard: pasteboard,
-            isProcessTrusted: { true },
-            postEvents: { [weak self] _, _ in
-                self?.postedEventCount &+= 1
-            },
-            preparer: { _, _ in false }
-        )
-        let failingRuntime = try MacClippyRuntime(
-            paths: try MacClippyPaths(rootURL: failingRoot),
-            pasteInjector: failingInjector
-        )
-        defer { failingRuntime.closeForTesting() }
-
-        let model = MacClippyDockModel(runtime: failingRuntime)
-        _ = try failingRuntime.appendTestRecord(.text("will not copy"))
-        model.reload()
-        wait { model.historyItems.count == 1 }
-        model.focusSelection(at: 0)
-
-        model.copyFocused(plain: false)
-
-        wait { model.actionError != nil || model.actionFeedback != nil }
-
-        XCTAssertEqual(model.actionError, MacClippyUserFacingError.genericAction)
-        XCTAssertNil(model.actionFeedback)
-        XCTAssertEqual(postedEventCount, 0)
     }
 
     // MARK: - Helpers

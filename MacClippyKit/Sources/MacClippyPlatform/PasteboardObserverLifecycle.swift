@@ -133,6 +133,11 @@ public extension MacClippyPasteboardObserver {
             return
         }
 
+        let pendingRetry = retryState.pending(for: observedChangeCount)
+        if pendingRetry == nil {
+            recordMissedChangeCountsIfNeeded(observedChangeCount: observedChangeCount)
+        }
+
         // Suppress only exact internal writes originating from Mac Clippy.
         // The sentinel consumes the token on first match so a later external
         // write is never hidden. External content (including concealed,
@@ -145,7 +150,7 @@ public extension MacClippyPasteboardObserver {
         // pending types so subsequent polls can re-read them. After the retry
         // budget, deliver the change with every still-unavailable advertised
         // UTI carried as an .unavailable marker instead of dropping the type.
-        if let pending = retryState.pending(for: observedChangeCount) {
+        if let pending = pendingRetry {
             processPendingRetry(pending, generation: generation)
             return
         }
@@ -248,5 +253,21 @@ public extension MacClippyPasteboardObserver {
             && projection.searchableText.map { rules.shouldExcludeText($0) } == true
         guard !textExcluded else { return }
         projectionHandler?(change, projection)
+    }
+
+    private func recordMissedChangeCountsIfNeeded(observedChangeCount: Int) {
+        guard let lastChangeCount,
+              observedChangeCount > lastChangeCount + 1 else {
+            return
+        }
+        diagnosticsRecorder.record(
+            MacClippyDiagnosticsEvent(
+                category: .capture,
+                code: .missedChangeCounts,
+                operation: "pasteboard_missed_change_counts",
+                recoveryAction: "continue_with_latest_change",
+                impact: "pasteboard_generation_gap"
+            )
+        )
     }
 }

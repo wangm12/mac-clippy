@@ -36,6 +36,66 @@ final class MacClippyDockEmptyStateTests: XCTestCase {
         )
     }
 
+    func testSnippetEmptyCopyExplainsStructuredFilters() {
+        XCTAssertEqual(
+            MacClippyDockEmptyStateCopy.snippetTitle(query: "type:text"),
+            "Filters apply to History and Pinboard"
+        )
+        XCTAssertEqual(
+            MacClippyDockEmptyStateCopy.snippetSubtitle(query: "type:image"),
+            "Snippets match name and trigger text. type: and date filters are not used here."
+        )
+        XCTAssertEqual(
+            MacClippyDockEmptyStateCopy.snippetTitle(query: "hello type:text"),
+            "No matching snippets"
+        )
+        XCTAssertEqual(
+            MacClippyDockEmptyStateCopy.snippetSubtitle(query: "hello type:text"),
+            "Try a different search."
+        )
+    }
+
+    func testSearchAnnouncementWaitsForLoadingAndReportsMoreAvailable() {
+        XCTAssertNil(
+            MacClippyDockSearchAnnouncementPolicy.announcement(
+                query: "clip",
+                tab: .history,
+                count: 16,
+                hasMore: true,
+                isLoading: true
+            )
+        )
+        XCTAssertEqual(
+            MacClippyDockSearchAnnouncementPolicy.announcement(
+                query: "clip",
+                tab: .history,
+                count: 16,
+                hasMore: true,
+                isLoading: false
+            ),
+            "16 clipboard results, more available"
+        )
+        XCTAssertEqual(
+            MacClippyDockSearchAnnouncementPolicy.announcement(
+                query: "clip",
+                tab: .history,
+                count: 1,
+                hasMore: false,
+                isLoading: false
+            ),
+            "1 clipboard result"
+        )
+        XCTAssertNil(
+            MacClippyDockSearchAnnouncementPolicy.announcement(
+                query: "",
+                tab: .history,
+                count: 16,
+                hasMore: false,
+                isLoading: false
+            )
+        )
+    }
+
     func testCardHeightGrowsForAccessibilityDynamicType() {
         XCTAssertGreaterThan(
             MacClippyDockCardMetrics.height(for: .accessibility3),

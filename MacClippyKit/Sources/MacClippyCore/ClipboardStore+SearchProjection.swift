@@ -145,5 +145,6 @@ extension MacClippyClipboardStore {
     private static let urlMatchPredicate =
         "(LOWER(IFNULL(detected_type, '')) LIKE '%url%'"
         + " OR LOWER(TRIM(preview)) LIKE 'http://%'"
-        + " OR LOWER(TRIM(preview)) LIKE 'https://%')"
+        + " OR LOWER(TRIM(preview)) LIKE 'https://%'"
+        + " OR LOWER(TRIM(preview)) LIKE 'www.%')"
 }

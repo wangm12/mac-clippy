@@ -1,4 +1,5 @@
 import XCTest
+import Carbon.HIToolbox
 
 import MacClippyCore
 import MacClippyPlatform
@@ -14,7 +15,8 @@ final class MacClippySnippetExpansionPlannerTests: XCTestCase {
             MacClippySnippetExpansionPlan(
                 body: "hello@example.com",
                 charactersToDelete: 6,
-                suppressCurrentEvent: true
+                suppressCurrentEvent: true,
+                suppressedDelimiterKeyCode: UInt16(kVK_Space)
             )
         )
     }
@@ -31,7 +33,8 @@ final class MacClippySnippetExpansionPlannerTests: XCTestCase {
             MacClippySnippetExpansionPlan(
                 body: "hello@example.com",
                 charactersToDelete: 6,
-                suppressCurrentEvent: true
+                suppressCurrentEvent: true,
+                suppressedDelimiterKeyCode: UInt16(kVK_Tab)
             )
         )
     }

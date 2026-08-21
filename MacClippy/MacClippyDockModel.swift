@@ -147,33 +147,7 @@ final class MacClippyDockModel: ObservableObject {
     let reloadQueue = DispatchQueue(label: "com.macallyouneed.macclippy.reload", qos: .userInitiated)
     let previewQueue = DispatchQueue(label: "com.macallyouneed.macclippy.preview", qos: .userInitiated)
     let snippetFilterQueue = DispatchQueue(label: "com.macallyouneed.macclippy.snippet-filter", qos: .userInitiated)
-    let thumbnailQueue: OperationQueue = {
-        let queue = OperationQueue()
-        queue.name = "com.macallyouneed.macclippy.thumbnail"
-        queue.qualityOfService = .utility
-        queue.maxConcurrentOperationCount = 2
-        return queue
-    }()
-
-    final class ThumbnailCacheEntry: NSObject {
-        let image: CGImage
-
-        init(image: CGImage) {
-            self.image = image
-        }
-    }
-
-    let thumbnailCache = NSCache<NSString, ThumbnailCacheEntry>()
-    struct ThumbnailRequestKey: Hashable {
-        let id: RecordID
-        let maxPixelSize: Int
-
-        var cacheKey: NSString {
-            "\(id.rawValue)#\(maxPixelSize)" as NSString
-        }
-    }
-
-    var thumbnailCompletions: [ThumbnailRequestKey: [(CGImage?) -> Void]] = [:]
+    let thumbnailLoader: MacClippyCardThumbnailLoader
     var requestID = 0
     var reloadWorkItem: MacClippyDispatchWorkItem?
     var previewWorkItem: MacClippyDispatchWorkItem?
@@ -228,7 +202,7 @@ final class MacClippyDockModel: ObservableObject {
     var modalPresentationToken: UInt = 0
     var pinboardLoadingIDs: Set<RecordID> = []
     var pinboardLoadGeneration: UInt = 0
-    var pinboardItemPageRetryOffset: Int?
+    var pinboardItemPageRetryToken: MacClippyPinboardSearchPageToken?
     var queuePasteCancellationToken: MacClippyCancellationToken?
     var sideEffectGate: MacClippyPasteInjectionGate?
 
@@ -240,7 +214,7 @@ final class MacClippyDockModel: ObservableObject {
 
     init(runtime: MacClippyRuntime) {
         self.runtime = runtime
-        thumbnailCache.totalCostLimit = 64 * 1024 * 1024
+        thumbnailLoader = MacClippyDockModel.makeThumbnailLoader(runtime: runtime)
         let observer = NotificationCenter.default.addObserver(
             forName: .macClippyHistoryDidChange,
             object: runtime,
@@ -294,6 +268,6 @@ final class MacClippyDockModel: ObservableObject {
         pinboardSearchCancellationToken?.cancel()
         selectAllWorkItem?.cancel()
         selectAllCancellationToken?.cancel()
-        thumbnailQueue.cancelAllOperations()
+        thumbnailLoader.queue.cancelAllOperations()
     }
 }

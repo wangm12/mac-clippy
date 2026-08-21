@@ -31,6 +31,15 @@ extension MacClippyDockView {
         return parts.joined(separator: ", ")
     }
 
+    func cardAccessibilityHint(context: MacClippyClipboardCardContext) -> String? {
+        switch context.item.contentKind {
+        case .text, .html, .rtf:
+            return "Preview to read content"
+        case .image, .files:
+            return nil
+        }
+    }
+
     func snippetAccessibilityLabel(_ snippet: MacClippySnippetEntry) -> String {
         var parts = ["Snippet \(snippet.name)"]
         if let trigger = snippet.trigger, !trigger.isEmpty {

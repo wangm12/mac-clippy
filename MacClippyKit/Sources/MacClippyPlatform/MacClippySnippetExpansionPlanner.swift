@@ -7,11 +7,18 @@ public struct MacClippySnippetExpansionPlan: Equatable, Sendable {
     public let body: String
     public let charactersToDelete: Int
     public let suppressCurrentEvent: Bool
+    public let suppressedDelimiterKeyCode: UInt16?
 
-    public init(body: String, charactersToDelete: Int, suppressCurrentEvent: Bool) {
+    public init(
+        body: String,
+        charactersToDelete: Int,
+        suppressCurrentEvent: Bool,
+        suppressedDelimiterKeyCode: UInt16? = nil
+    ) {
         self.body = body
         self.charactersToDelete = charactersToDelete
         self.suppressCurrentEvent = suppressCurrentEvent
+        self.suppressedDelimiterKeyCode = suppressedDelimiterKeyCode
     }
 }
 
@@ -60,13 +67,14 @@ public struct MacClippySnippetExpansionPlanner {
 
         if mode == .confirmWithTab, keyCode == Self.tabKeyCode {
             defer { reset() }
-            return expansionPlan()
+            return expansionPlan(suppressedDelimiterKeyCode: Self.tabKeyCode)
         }
 
         if character.isWhitespace || character.isNewline {
             defer { reset() }
             guard mode == .autoExpand else { return nil }
-            return expansionPlan()
+            let delimiterKeyCode = suppressedDelimiterKeyCode(for: character, keyCode: keyCode)
+            return expansionPlan(suppressedDelimiterKeyCode: delimiterKeyCode)
         }
 
         buffer.append(character)
@@ -80,14 +88,25 @@ public struct MacClippySnippetExpansionPlanner {
         buffer.removeAll(keepingCapacity: true)
     }
 
-    private func expansionPlan() -> MacClippySnippetExpansionPlan? {
+    private func suppressedDelimiterKeyCode(for character: Character, keyCode: UInt16?) -> UInt16? {
+        if keyCode == Self.tabKeyCode || character == "\t" {
+            return Self.tabKeyCode
+        }
+        if character == " " {
+            return UInt16(kVK_Space)
+        }
+        return nil
+    }
+
+    private func expansionPlan(suppressedDelimiterKeyCode: UInt16?) -> MacClippySnippetExpansionPlan? {
         guard let start = buffer.lastIndex(of: Self.triggerStart) else { return nil }
         let candidate = String(buffer[start...])
         guard candidate.count >= 2, let body = lookup(candidate) else { return nil }
         return MacClippySnippetExpansionPlan(
             body: body,
             charactersToDelete: candidate.count,
-            suppressCurrentEvent: true
+            suppressCurrentEvent: true,
+            suppressedDelimiterKeyCode: suppressedDelimiterKeyCode
         )
     }
 }

@@ -8,26 +8,36 @@ public enum MacClippyClipboardText {
         case let .text(value):
             value
         case let .html(value):
-            attributedText(from: Data(value.utf8), documentType: .html) ??
+            attributedString(from: record)?.string.trimmingCharacters(in: .whitespacesAndNewlines) ??
                 value.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
                 .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-        case let .rtf(data):
-            attributedText(from: data, documentType: .rtf)
+        case .rtf:
+            attributedString(from: record)?.string.trimmingCharacters(in: .whitespacesAndNewlines)
         case .image, .encryptedImage, .files:
             nil
         }
     }
 
-    private static func attributedText(
+    public static func attributedString(from record: ClipboardRecord) -> NSAttributedString? {
+        switch record {
+        case let .html(value):
+            attributedString(from: Data(value.utf8), documentType: .html)
+        case let .rtf(data):
+            attributedString(from: data, documentType: .rtf)
+        case .text, .image, .encryptedImage, .files:
+            nil
+        }
+    }
+
+    private static func attributedString(
         from data: Data,
         documentType: NSAttributedString.DocumentType
-    ) -> String? {
+    ) -> NSAttributedString? {
         let options: [NSAttributedString.DocumentReadingOptionKey: Any] = [
             .documentType: documentType,
             .characterEncoding: String.Encoding.utf8.rawValue
         ]
-        return (try? NSAttributedString(data: data, options: options, documentAttributes: nil))?.string
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return try? NSAttributedString(data: data, options: options, documentAttributes: nil)
     }
 }

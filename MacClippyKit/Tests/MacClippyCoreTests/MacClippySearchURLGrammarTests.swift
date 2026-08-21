@@ -39,7 +39,7 @@ final class MacClippySearchURLGrammarTests: XCTestCase {
         XCTAssertFalse(MacClippySearchGrammar.parse("type:text").hasConflictingContentTypes)
     }
 
-    func testListRequiresURLMatchesHTTPPreview() throws {
+    func testListRequiresURLMatchesSingleURLPreview() throws {
         let store = try ClipboardStore(
             database: MacClippyDatabase(inMemory: true),
             deviceKey: SymmetricKey(data: Data(repeating: 9, count: 32)),
@@ -47,11 +47,11 @@ final class MacClippySearchURLGrammarTests: XCTestCase {
         )
         let url = try store.append(.text("https://example.com/macclippy"))
         _ = try store.append(.text("just a sentence"))
-        _ = try store.append(.text("www.example.com"))
+        let www = try store.append(.text("www.example.com"))
         _ = try store.append(.text("http status 500"))
-        XCTAssertEqual(try store.list(limit: 10, requiresURL: true).map(\.id), [url.id])
+        XCTAssertEqual(try store.list(limit: 10, requiresURL: true).map(\.id), [www.id, url.id])
         XCTAssertTrue(MacClippySmartText.matchesURL("https://example.com/macclippy"))
-        XCTAssertFalse(MacClippySmartText.matchesURL("www.example.com"))
+        XCTAssertTrue(MacClippySmartText.matchesURL("www.example.com"))
         XCTAssertFalse(MacClippySmartText.matchesURL("http status 500"))
     }
 }

@@ -70,8 +70,8 @@ extension MacClippyRuntime {
             // The pasteInjector's prepare path uses the writeSentinel so Mac
             // Clippy's own write is suppressed by the observer, exactly like
             // the single copy(id:) path.
-            let prepared = pasteInjector.prepare(.text(text), gate: sideEffectGate)
-            return .merged(prepared: prepared)
+            try pasteInjector.prepare(.text(text), gate: sideEffectGate)
+            return .merged
         case let .mixed(supportedIDs, unsupportedIDs, unsupportedKinds):
             return .mixed(
                 supportedIDs: supportedIDs,

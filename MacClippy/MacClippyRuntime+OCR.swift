@@ -196,54 +196,7 @@ extension MacClippyRuntime {
             guard !text.isEmpty else { return }
 
             _ = try withCurrentLifecycleStoreLock(lifecycleToken) {
-                guard try !clipboardStore.metas(for: [recordID]).isEmpty else { return }
-                try clipboardStore.setOCRText(id: recordID, text: text)
-                do {
-                    // Re-read the latest body and metadata while the store
-                    // lock is held. OCR must rebuild the complete projection
-                    // rather than replacing the FTS row with OCR text alone;
-                    // otherwise a label or body update that completed before
-                    // this operation would be silently removed from search.
-                    guard let updatedMeta = try clipboardStore.metas(for: [recordID]).first else {
-                        try searchStore.remove(id: recordID)
-                        return
-                    }
-                    let body = try clipboardStore.body(for: recordID)
-                    let indexText = Self.searchableIndexText(
-                        for: body,
-                        ocrText: updatedMeta.ocrText,
-                        label: updatedMeta.customLabel,
-                        representationUTIs: try clipboardStore.representationUTIs(for: recordID)
-                    )
-                    guard !indexText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                        try searchStore.remove(id: recordID)
-                        return
-                    }
-                    try searchStore.upsert(id: recordID, text: indexText)
-
-                    if try clipboardStore.metas(for: [recordID]).isEmpty {
-                        try searchStore.remove(id: recordID)
-                    }
-                } catch {
-                    // The OCR text and its repair marker must be committed in
-                    // the same lifecycle fence. This covers body,
-                    // representation and cleanup failures as well as FTS
-                    // upsert failures after setOCRText has succeeded.
-                    do {
-                        try searchStore.markRepairNeeded()
-                        storageDegradedReasons.insert("fts-repair-needed")
-                    } catch {
-                        storageDegradedReasons.insert("fts-repair-needed")
-                        MacClippyLog.record(
-                            category: .storage,
-                            code: .databaseHealthFailed,
-                            operation: "persist_ocr_fts_repair_marker",
-                            recoveryAction: "export_diagnostics_and_repair_storage",
-                            impact: "ocr_search_repair_state_not_persisted"
-                        )
-                    }
-                    throw error
-                }
+                try persistOCRText(text, recordID: recordID)
             }
         } catch is CancellationError {
             return
@@ -256,5 +209,86 @@ extension MacClippyRuntime {
                 impact: "ocr_search_text_unavailable"
             )
         }
+    }
+
+    private func persistOCRText(_ text: String, recordID: RecordID) throws {
+        guard try !clipboardStore.metas(for: [recordID]).isEmpty else { return }
+        do {
+            try persistOCRSearchProjection(Self.limitedOCRText(text), recordID: recordID)
+        } catch {
+            try markOCRSearchRepairNeeded()
+            throw error
+        }
+    }
+
+    private func persistOCRSearchProjection(_ persistedOCRText: String, recordID: RecordID) throws {
+        // Re-read the latest body and metadata while the store lock is held.
+        // OCR must rebuild the complete projection rather than replacing the
+        // FTS row with OCR text alone; otherwise a prior label or body update
+        // would be silently removed from search.
+        guard let updatedMeta = try clipboardStore.metas(for: [recordID]).first else {
+            try searchStore.remove(id: recordID)
+            return
+        }
+        let body = try clipboardStore.body(for: recordID)
+        let indexText = Self.searchableIndexText(
+            for: body,
+            ocrText: persistedOCRText,
+            label: updatedMeta.customLabel,
+            representationUTIs: try clipboardStore.representationUTIs(for: recordID)
+        )
+        guard !indexText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            try searchStore.remove(id: recordID)
+            return
+        }
+        try upsertOCRSearchIndex(id: recordID, text: indexText)
+        try clipboardStore.setOCRText(id: recordID, text: persistedOCRText)
+
+        if try clipboardStore.metas(for: [recordID]).isEmpty {
+            try searchStore.remove(id: recordID)
+        }
+    }
+
+    private func markOCRSearchRepairNeeded() throws {
+        // Keep repair marking in the same lifecycle fence as the OCR
+        // projection attempt so a failed FTS write cannot be mistaken for a
+        // complete index.
+        do {
+            try searchStore.markRepairNeeded()
+            storageDegradedReasons.insert("fts-repair-needed")
+        } catch {
+            storageDegradedReasons.insert("fts-repair-needed")
+            MacClippyLog.record(
+                category: .storage,
+                code: .databaseHealthFailed,
+                operation: "persist_ocr_fts_repair_marker",
+                recoveryAction: "export_diagnostics_and_repair_storage",
+                impact: "ocr_search_repair_state_not_persisted"
+            )
+        }
+    }
+
+    private static func limitedOCRText(_ text: String) -> String {
+        let maxBytes = MacClippyCollectionLimits.maxOCRTextUTF8Bytes
+        guard text.utf8.count > maxBytes else { return text }
+
+        var endIndex = text.utf8.index(text.utf8.startIndex, offsetBy: maxBytes)
+        while endIndex > text.utf8.startIndex {
+            if let limitedText = String(bytes: text.utf8[..<endIndex], encoding: .utf8) {
+                return limitedText
+            }
+            endIndex = text.utf8.index(before: endIndex)
+        }
+        return ""
+    }
+
+    private func upsertOCRSearchIndex(id: RecordID, text: String) throws {
+        #if DEBUG
+            if failNextOCRSearchUpsertForTesting {
+                failNextOCRSearchUpsertForTesting = false
+                throw MacClippyStoreError.invalidStoredRecord
+            }
+        #endif
+        try searchStore.upsert(id: id, text: text)
     }
 }

@@ -105,10 +105,27 @@ struct MacClippySnippetEntry: Identifiable, Sendable {
 struct MacClippyRuntimePreviewText: Sendable {
     let displayText: String
     let characterCount: Int
+    let kind: MacClippyClipboardPresentationKind
+}
+
+// A rich-text preview is decoded once on the preview work queue and then only
+// read on the main actor. NSAttributedString is not Sendable, so that single
+// hand-off is expressed here instead of conforming all of Foundation's
+// attributed strings module-wide.
+// SAFETY: `attributed` is an immutable copy taken at construction, so no
+// reference the producer still holds can mutate it after the box is sent.
+struct MacClippyPreviewRichText: @unchecked Sendable {
+    let attributed: NSAttributedString
+
+    init(_ attributed: NSAttributedString) {
+        self.attributed = attributed.copy() as? NSAttributedString
+            ?? NSAttributedString(attributedString: attributed)
+    }
 }
 
 enum MacClippyRuntimePreviewPayload: Sendable {
     case text(MacClippyRuntimePreviewText)
+    case richText(MacClippyPreviewRichText, plain: String, characterCount: Int)
     case image(Data)
     case files([URL])
 }
@@ -158,11 +175,18 @@ struct MacClippyPinboardEntry: Identifiable, Sendable {
     let board: Pinboard
     let items: [MacClippyHistoryEntry]
     let itemCount: Int
+    let nextPageToken: MacClippyPinboardSearchPageToken?
 
-    init(board: Pinboard, items: [MacClippyHistoryEntry], itemCount: Int? = nil) {
+    init(
+        board: Pinboard,
+        items: [MacClippyHistoryEntry],
+        itemCount: Int? = nil,
+        nextPageToken: MacClippyPinboardSearchPageToken? = nil
+    ) {
         self.board = board
         self.items = items
         self.itemCount = itemCount ?? board.itemIDs.count
+        self.nextPageToken = nextPageToken
     }
 
     var id: RecordID { board.id }
@@ -199,7 +223,7 @@ enum MacClippyMultiPasteResult: Sendable, Equatable {
 }
 
 enum MacClippyMultiCopyResult: Sendable, Equatable {
-    case merged(prepared: Bool)
+    case merged
     case mixed(
         supportedIDs: [RecordID],
         unsupportedIDs: [RecordID],
