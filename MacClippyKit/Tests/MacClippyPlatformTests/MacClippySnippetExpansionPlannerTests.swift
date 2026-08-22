@@ -21,6 +21,22 @@ final class MacClippySnippetExpansionPlannerTests: XCTestCase {
         )
     }
 
+    func testAutoModeExpandsOnReturnAndSuppressesDelimiter() {
+        var planner = planner(mode: .autoExpand)
+
+        typeCharacters(";email", into: &planner)
+
+        XCTAssertEqual(
+            planner.handle("\n", keyCode: UInt16(kVK_Return)),
+            MacClippySnippetExpansionPlan(
+                body: "hello@example.com",
+                charactersToDelete: 6,
+                suppressCurrentEvent: true,
+                suppressedDelimiterKeyCode: UInt16(kVK_Return)
+            )
+        )
+    }
+
     func testConfirmWithTabExpandsOnlyOnTab() {
         var planner = planner(mode: .confirmWithTab)
         typeCharacters(";email", into: &planner)

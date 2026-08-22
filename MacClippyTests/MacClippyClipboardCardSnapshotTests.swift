@@ -121,6 +121,29 @@ final class MacClippyClipboardCardSnapshotTests: XCTestCase {
     }
 
     @MainActor
+    func testFileCardSnapshotIncludesPathNotJustFileName() throws {
+        let url = URL(fileURLWithPath: "/Users/me/H1B/passport.pdf")
+        let item = MacClippyHistoryEntry(
+            meta: ClipboardItemMeta(
+                id: .generate(),
+                created: Date(timeIntervalSince1970: 1),
+                modified: Date(timeIntervalSince1970: 1),
+                deviceID: try XCTUnwrap(DeviceID(rawValue: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")),
+                lamport: 1,
+                preview: "passport.pdf"
+            ),
+            contentKind: .files,
+            preview: "passport.pdf",
+            fileURLs: [url]
+        )
+        let context = cardContext(item: item, terms: [], selected: false, generation: 0)
+
+        XCTAssertEqual(context.snapshot.fileNames, ["passport.pdf"])
+        XCTAssertEqual(context.snapshot.filePaths, ["/Users/me/H1B/passport.pdf"])
+        XCTAssertEqual(context.snapshot.typeMetadataSubtitle, "1 file")
+    }
+
+    @MainActor
     func testThumbnailEqualityDependsOnlyOnItemID() throws {
         let first = try historyEntry(preview: "one")
         let second = try historyEntry(preview: "two")

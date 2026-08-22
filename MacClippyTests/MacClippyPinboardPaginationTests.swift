@@ -71,6 +71,50 @@ final class MacClippyPinboardPaginationTests: XCTestCase {
         XCTAssertNil(secondPage.nextPageToken)
     }
 
+    func testPinboardsRetryBoardChangeDuringInitialPage() throws {
+        let board = try runtime.createPinboard(name: "Reload conflict", color: nil)
+        let first = try runtime.appendTestRecord(.text("first pin"))
+        let concurrent = try runtime.appendTestRecord(.text("concurrent pin"))
+        try runtime.pin(recordID: first.id, to: board.id)
+        var cancelChecks = 0
+
+        let loaded = try runtime.pinboards {
+            cancelChecks += 1
+            if cancelChecks == 1 {
+                try? self.runtime.pin(recordID: concurrent.id, to: board.id)
+            }
+            return false
+        }.first(where: { $0.id == board.id })
+
+        XCTAssertEqual(loaded?.items.map(\.id), [first.id, concurrent.id])
+        XCTAssertEqual(loaded?.itemCount, loaded?.items.count)
+    }
+
+    func testPinboardsFallbackDoesNotExposeUnreachableNextPageToken() throws {
+        let board = try runtime.createPinboard(name: "Repeated conflict", color: nil)
+        let first = try runtime.appendTestRecord(.text("stable pin"))
+        let second = try runtime.appendTestRecord(.text("first concurrent pin"))
+        let third = try runtime.appendTestRecord(.text("second concurrent pin"))
+        try runtime.pin(recordID: first.id, to: board.id)
+
+        var cancelChecks = 0
+        let loaded = try runtime.pinboards {
+            cancelChecks += 1
+            if cancelChecks == 1 {
+                try? self.runtime.pin(recordID: second.id, to: board.id)
+            }
+            if cancelChecks == 3 {
+                try? self.runtime.pin(recordID: third.id, to: board.id)
+            }
+            return false
+        }.first(where: { $0.id == board.id })
+
+        let fallback = try XCTUnwrap(loaded)
+        XCTAssertTrue(fallback.items.isEmpty)
+        XCTAssertEqual(fallback.itemCount, 3)
+        XCTAssertNil(fallback.nextPageToken)
+    }
+
     @MainActor
     func testDockPinboardLoadMoreUsesMemberOffsetPastMissingMembers() throws {
         let board = try runtime.createPinboard(name: "Dock sparse", color: nil)
@@ -105,6 +149,50 @@ final class MacClippyPinboardPaginationTests: XCTestCase {
         XCTAssertEqual(loaded.items.map(\.id), liveIDs)
         XCTAssertEqual(Set(loaded.items.map(\.id)).count, 70)
         XCTAssertNil(loaded.nextPageToken)
+    }
+
+    @MainActor
+    func testDockPinboardBoardChangedRestartsInsteadOfRetryingStaleToken() throws {
+        let board = try runtime.createPinboard(name: "Dock conflict", color: nil)
+        var liveIDs: [RecordID] = []
+        for index in 0 ..< 65 {
+            let record = try runtime.appendTestRecord(.text("dock conflict \(index)"))
+            liveIDs.append(record.id)
+            try runtime.pin(recordID: record.id, to: board.id)
+        }
+
+        let model = MacClippyDockModel(runtime: runtime)
+        model.beginSession()
+        model.reload()
+        wait {
+            model.pinboards.first(where: { $0.id == board.id })?.items.count == 64
+        }
+        model.selectTab(.pinboard(board.id))
+        let firstPage = try XCTUnwrap(model.pinboards.first(where: { $0.id == board.id }))
+        XCTAssertNotNil(firstPage.nextPageToken)
+
+        let concurrent = try runtime.appendTestRecord(.text("new pin after first page"))
+        try runtime.pin(recordID: concurrent.id, to: board.id)
+        _ = try runtime.pinboardStore.mutate(id: board.id) { board in
+            board.itemIDs.removeAll { $0 == concurrent.id }
+            board.itemIDs.insert(concurrent.id, at: 0)
+        }
+        model.loadMorePinboardIfNeeded(after: firstPage.items.last!.id)
+        wait {
+            model.pinboards.first(where: { $0.id == board.id })?.items.first?.id == concurrent.id
+                && model.pinboardItemPageRetryToken == nil
+                && model.pageError == nil
+        }
+
+        wait {
+            model.pinboards.first(where: { $0.id == board.id })?.items.count == 64
+                && model.pinboardItemPageRetryToken == nil
+                && model.pageError == nil
+        }
+        let restarted = try XCTUnwrap(model.pinboards.first(where: { $0.id == board.id }))
+        XCTAssertEqual(restarted.items.first?.id, concurrent.id)
+        XCTAssertTrue(restarted.items.contains(where: { $0.id == concurrent.id }))
+        XCTAssertEqual(restarted.items.map(\.id), [concurrent.id] + Array(liveIDs.prefix(63)))
     }
 
     func testPinboardRecordIDsThrowAfterRepeatedBoardChanges() throws {
@@ -164,7 +252,7 @@ final class MacClippyPinboardPaginationTests: XCTestCase {
         model.reload()
         wait {
             model.pinboards.first(where: { $0.id == board.id })?.items.count == 1
-                && model.historyItems.count == 8
+                && model.historyItems.count == 9
         }
         model.selectTab(.pinboard(board.id))
         let pinboardIDs = model.pinboards.first(where: { $0.id == board.id })?.items.map(\.id)
@@ -182,11 +270,21 @@ final class MacClippyPinboardPaginationTests: XCTestCase {
             XCTFail("restartHistoryQuery must not change the selected pinboard tab")
         }
     }
+}
 
-    private func wait(until condition: () -> Bool, timeout: TimeInterval = 2.0) {
+private extension MacClippyPinboardPaginationTests {
+    private func wait(
+        until condition: () -> Bool,
+        timeout: TimeInterval = 2.0,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline, !condition() {
             RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        if !condition() {
+            XCTFail("Timed out waiting for condition", file: file, line: line)
         }
     }
 }

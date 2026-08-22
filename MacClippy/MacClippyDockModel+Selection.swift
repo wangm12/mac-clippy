@@ -59,9 +59,10 @@ extension MacClippyDockModel {
 
     private func loadPinboardItemsPage(
         pinboardID: RecordID,
-        pageToken: MacClippyPinboardSearchPageToken?
+        pageToken: MacClippyPinboardSearchPageToken?,
+        reset: Bool = false
     ) {
-        pinboardItemPageRetryToken = pageToken
+        pinboardItemPageRetryToken = reset ? nil : pageToken
         let session = sessionGeneration
         let loadGeneration = pinboardLoadGeneration
         let runtimeReference = runtime
@@ -82,8 +83,17 @@ extension MacClippyDockModel {
                     self.pinboards.contains(where: { $0.id == pinboardID }) else { return }
                 switch result {
                 case let .success(page):
-                    self.applyPinboardItemsPage(page, pinboardID: pinboardID, pageToken: pageToken)
+                    self.applyPinboardItemsPage(
+                        page,
+                        pinboardID: pinboardID,
+                        pageToken: pageToken,
+                        reset: reset
+                    )
                 case let .failure(error):
+                    if error is MacClippyPinboardSearchPageError {
+                        self.restartPinboardItemQuery(pinboardID: pinboardID)
+                        return
+                    }
                     self.pageError = MacClippyUserFacingError.message(
                         for: error,
                         fallback: MacClippyUserFacingError.historyLoad
@@ -96,16 +106,18 @@ extension MacClippyDockModel {
     private func applyPinboardItemsPage(
         _ page: MacClippyPinboardSearchPage,
         pinboardID: RecordID,
-        pageToken: MacClippyPinboardSearchPageToken?
+        pageToken: MacClippyPinboardSearchPageToken?,
+        reset: Bool = false
     ) {
         guard let currentIndex = pinboards.firstIndex(where: { $0.id == pinboardID }) else { return }
         clearPageError()
         let current = pinboards[currentIndex]
-        let existingIDs = Set(current.items.map(\.id))
+        let sourceItems = reset ? [] : current.items
+        let existingIDs = Set(sourceItems.map(\.id))
         let additions = page.items.filter { !existingIDs.contains($0.id) }
         pinboards[currentIndex] = MacClippyPinboardEntry(
             board: current.board,
-            items: current.items + additions,
+            items: sourceItems + additions,
             itemCount: current.itemCount,
             nextPageToken: page.nextPageToken
         )
@@ -121,6 +133,13 @@ extension MacClippyDockModel {
         recomputeDedupRuns()
     }
 
+    private func restartPinboardItemQuery(pinboardID: RecordID) {
+        pinboardItemPageRetryToken = nil
+        clearPageError()
+        guard pinboardLoadingIDs.insert(pinboardID).inserted else { return }
+        loadPinboardItemsPage(pinboardID: pinboardID, pageToken: nil, reset: true)
+    }
+
     /// Recompute the consecutive-duplicate run counts for the current visible
     /// list. O(n) once per list change; the card view then reads an O(1) lookup.
     /// A run is a maximal group of adjacent items with the same contentKind +
@@ -134,7 +153,13 @@ extension MacClippyDockModel {
         for itemIndex in 1 ... items.count {
             let breaksRun = (itemIndex == items.count)
                 || items[itemIndex].contentKind != items[runStart].contentKind
-                || items[itemIndex].preview != items[runStart].preview
+                || MacClippyFilePresentation.dedupKey(
+                    preview: items[itemIndex].preview,
+                    fileURLs: items[itemIndex].fileURLs
+                ) != MacClippyFilePresentation.dedupKey(
+                    preview: items[runStart].preview,
+                    fileURLs: items[runStart].fileURLs
+                )
             if breaksRun {
                 let runLength = itemIndex - runStart
                 counts[items[runStart].id] = runLength

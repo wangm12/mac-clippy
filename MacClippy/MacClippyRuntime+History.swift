@@ -243,7 +243,8 @@ extension MacClippyRuntime {
                     for: editedRecord,
                     ocrText: updated.ocrText,
                     label: updated.customLabel,
-                    representationUTIs: try clipboardStore.representationUTIs(for: id)
+                    representationUTIs: try clipboardStore.representationUTIs(for: id),
+                    sourceAppBundleID: updated.sourceAppBundleID
                 )
                 if indexText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     try searchStore.remove(kind: .clipboardItem, id: id)
@@ -288,7 +289,8 @@ extension MacClippyRuntime {
                         for: oldRecord,
                         ocrText: restoredMeta.ocrText,
                         label: restoredMeta.customLabel,
-                        representationUTIs: try clipboardStore.representationUTIs(for: id)
+                        representationUTIs: try clipboardStore.representationUTIs(for: id),
+                        sourceAppBundleID: restoredMeta.sourceAppBundleID
                     )
                     if restoredIndexText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         try searchStore.remove(kind: .clipboardItem, id: id)

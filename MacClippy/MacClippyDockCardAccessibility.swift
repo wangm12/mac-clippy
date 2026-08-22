@@ -21,8 +21,9 @@ extension MacClippyDockView {
                 parts.append(dimensions)
             }
         case .files:
-            if let subtitle = context.item.typeMetadataSubtitle {
-                parts.append(subtitle)
+            parts.append(MacClippyFilePresentation.title(fileCount: context.item.fileURLs.count))
+            if let url = context.item.fileURLs.first {
+                parts.append(MacClippyFilePresentation.displayName(for: url))
             }
         }
         if let categorySummary = MacClippyDockCardCategoryPolicy.accessibilitySummary(for: context.categories) {

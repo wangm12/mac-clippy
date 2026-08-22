@@ -79,6 +79,46 @@ final class MacClippyCardThumbnailLoaderTests: XCTestCase {
         XCTAssertNotNil(loader.cachedImage(id: id, maxPixelSize: 32))
     }
 
+    func testNewWaiterDoesNotJoinCancelledExecutingFlight() throws {
+        let id = RecordID.generate()
+        let firstStarted = expectation(description: "first thumbnail work started")
+        let secondStarted = expectation(description: "second thumbnail work started")
+        let secondDone = expectation(description: "second waiter receives thumbnail")
+        let releaseFirstDecode = DispatchSemaphore(value: 0)
+        let releaseSecondDecode = DispatchSemaphore(value: 0)
+        let loadCount = MacClippyLockedCounter()
+        let loader = makeLoader { _, _, isCancelled in
+            loadCount.increment()
+            if loadCount.value == 1 {
+                firstStarted.fulfill()
+                releaseFirstDecode.wait()
+                XCTAssertTrue(isCancelled())
+                return nil
+            }
+            secondStarted.fulfill()
+            releaseSecondDecode.wait()
+            XCTAssertFalse(isCancelled())
+            return Self.pngImage()
+        }
+
+        let first = loader.load(id: id, maxPixelSize: 32) { _ in
+            XCTFail("cancelled waiter must not receive a thumbnail")
+        }
+        wait(for: [firstStarted], timeout: 2)
+        first.release()
+
+        _ = loader.load(id: id, maxPixelSize: 32) { image in
+            XCTAssertNotNil(image)
+            secondDone.fulfill()
+        }
+        releaseFirstDecode.signal()
+        wait(for: [secondStarted], timeout: 2)
+        releaseSecondDecode.signal()
+        wait(for: [secondDone], timeout: 2)
+        XCTAssertEqual(loadCount.value, 2)
+        XCTAssertNotNil(loader.cachedImage(id: id, maxPixelSize: 32))
+    }
+
     func testSecondWaiterReusesInFlightLoad() throws {
         let id = RecordID.generate()
         let started = expectation(description: "thumbnail work started")

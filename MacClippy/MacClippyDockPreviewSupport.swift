@@ -35,8 +35,6 @@ extension MacClippyDockPreviewContent {
             // stable identity and avoids hashing an entire screenshot while
             // SwiftUI recomputes the preview body.
             return "image:\(id.rawValue)"
-        case let .video(url):
-            return "video:\(url.absoluteString)"
         case let .files(urls):
             return "files:\(urls.map(\.absoluteString).joined(separator: "|"))"
         case .error:
@@ -50,7 +48,7 @@ extension MacClippyDockPreviewContent {
             return value
         case let .richText(_, _, plain):
             return plain
-        case .loading, .image, .video, .files, .error:
+        case .loading, .image, .files, .error:
             return nil
         }
     }
@@ -61,7 +59,9 @@ extension MacClippyDockPreviewContent {
             return swatch.hex
         case .loading, .error:
             return nil
-        case .text, .richText, .image, .video, .files:
+        case .files:
+            return nil
+        case .text, .richText, .image:
             return characterCount > 0 ? "\(characterCount) characters" : nil
         }
     }

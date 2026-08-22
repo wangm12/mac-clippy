@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import MacClippyPlatform
 import QuartzCore
+import QuickLookUI
 import SwiftUI
 
 extension MacClippyDockController {
@@ -82,7 +83,8 @@ extension MacClippyDockController {
                   for: interactionMode,
                   isVisible: isVisible,
                   isClosing: isClosing,
-                  isExternalWindowPresented: snippetEditorWindow.isPresented
+                  isExternalWindowPresented: snippetEditorWindow.isPresented,
+                  isSystemQuickLookVisible: isSystemQuickLookVisible
               ) else { return }
         takeKeyboardOwnership(of: dockPanel)
     }
@@ -124,7 +126,7 @@ extension MacClippyDockController {
             return
         }
         if dockPanel.frame.contains(location) {
-            if interactionMode == .preview {
+            if interactionMode == .preview, !isSystemQuickLookVisible {
                 hidePreview()
             } else if interactionMode == .details {
                 hideDetails()
@@ -136,6 +138,11 @@ extension MacClippyDockController {
         // button action runs, so treat it as in-bounds here; clicks elsewhere
         // keep dismissing normally.
         if let previewPanel, previewPanel.isVisible, previewPanel.frame.contains(location) {
+            return
+        }
+        if QLPreviewPanel.sharedPreviewPanelExists(),
+           QLPreviewPanel.shared().isVisible,
+           QLPreviewPanel.shared().frame.contains(location) {
             return
         }
         guard MacClippyDockOutsideClickPolicy.shouldDismiss(
@@ -177,9 +184,13 @@ extension MacClippyDockController {
     func takeKeyboardOwnership(
         of dockPanel: MacClippyDockPanel,
         restoreFirstResponder: Bool = true,
-        attempt: Int = 0
+        attempt: Int = 0,
+        retryLimit: Int = 3
     ) {
         guard dockPanel.isVisible, !isClosing else { return }
+        guard MacClippyDockKeyboardOwnershipPolicy.shouldTakeKeyboardOwnership(
+            isSystemQuickLookVisible: isSystemQuickLookVisible
+        ) else { return }
 
         dockPanel.orderFrontRegardless()
         dockPanel.makeKeyAndOrderFront(nil)
@@ -187,6 +198,8 @@ extension MacClippyDockController {
            MacClippyDockKeyboardOwnershipPolicy.shouldRestoreFirstResponder(for: self.interactionMode) {
             dockPanel.makeFirstResponder(dockPanel.contentView)
         }
+
+        guard retryLimit > 0 else { return }
 
         let expectedMode = interactionMode
         let expectedMonitorGeneration = monitorGeneration
@@ -207,11 +220,12 @@ extension MacClippyDockController {
 
             let ownsKeyboard = dockPanel.isKeyWindow
                 && NSApp.keyWindow === dockPanel
-            if !ownsKeyboard, attempt < 3 {
+            if !ownsKeyboard, attempt < retryLimit {
                 self.takeKeyboardOwnership(
                     of: dockPanel,
                     restoreFirstResponder: restoreFirstResponder,
-                    attempt: attempt + 1
+                    attempt: attempt + 1,
+                    retryLimit: retryLimit
                 )
             }
         }

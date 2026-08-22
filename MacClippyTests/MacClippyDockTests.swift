@@ -81,6 +81,14 @@ final class MacClippyDockTests: XCTestCase {
         XCTAssertFalse(
             MacClippyDockKeyboardOwnershipPolicy.shouldRestoreFirstResponder(for: .modal)
         )
+        XCTAssertFalse(
+            MacClippyDockKeyboardOwnershipPolicy.shouldRestoreKeyboard(
+                for: .preview,
+                isVisible: true,
+                isClosing: false,
+                isSystemQuickLookVisible: true
+            )
+        )
     }
 
     func testMenuBarToggleUsesAppKitVisibilityDuringCloseAnimation() {
@@ -232,15 +240,14 @@ final class MacClippyDockTests: XCTestCase {
         XCTAssertEqual(feedback.systemImage, "checkmark.circle.fill")
     }
 
-    // A single movie URL is promoted to a video preview; a single non-video
-    // file and any multi-URL selection stay on the file list. This keeps the
-    // pasted-file preview picking the right surface without surprising users.
-    func testPreviewContentPolicyRoutesVideoVersusFiles() {
+    // Movie URLs stay on `.files`. SwiftUI VideoPlayer is not a content case;
+    // AppKit Quick Look renders the existing path instead.
+    func testPreviewContentPolicyKeepsMoviesOnTheFileSurface() {
         let video = MacClippyDockPreviewContentPolicy.content(forFiles: [URL(fileURLWithPath: "/tmp/clip.mp4")])
-        if case let .video(url) = video {
-            XCTAssertEqual(url.path, "/tmp/clip.mp4")
+        if case let .files(urls) = video {
+            XCTAssertEqual(urls.map(\.path), ["/tmp/clip.mp4"])
         } else {
-            XCTFail("expected .video for a single movie URL, got \(video)")
+            XCTFail("expected .files for a single movie URL, got \(video)")
         }
 
         let image = MacClippyDockPreviewContentPolicy.content(forFiles: [URL(fileURLWithPath: "/tmp/photo.png")])
@@ -262,6 +269,241 @@ final class MacClippyDockTests: XCTestCase {
         }
     }
 
+    func testPreviewFileSurfaceUsesFirstExistingPathForNativeQuickLook() throws {
+        let missing = URL(fileURLWithPath: "/tmp/macclippy-missing-\(UUID().uuidString).mp4")
+        XCTAssertNil(MacClippyDockPreviewFileSurface.nativePreviewURL(in: [missing]))
+        XCTAssertNil(MacClippyDockPreviewFileSurface.nativePreviewURL(in: []))
+
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("macclippy-ql-\(UUID().uuidString).png")
+        try Data([0x89, 0x50]).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        XCTAssertEqual(MacClippyDockPreviewFileSurface.nativePreviewURL(in: [file])?.path, file.path)
+        XCTAssertEqual(
+            MacClippyDockPreviewFileSurface.nativePreviewURL(in: [missing, file])?.path,
+            file.path
+        )
+        XCTAssertEqual(
+            MacClippySystemQuickLookPolicy.existingFileURLs(in: [missing, file]).map(\.path),
+            [file.path]
+        )
+        XCTAssertFalse(
+            MacClippySystemQuickLookPolicy.prefersSystemQuickLook(
+                contentKind: .files,
+                fileURLs: [file]
+            ),
+            "Raster images must stay in the in-app panel; QLPreviewPanel freezes fullscreen Spaces"
+        )
+        XCTAssertFalse(
+            MacClippySystemQuickLookPolicy.prefersSystemQuickLook(
+                contentKind: .files,
+                fileURLs: [missing]
+            )
+        )
+        XCTAssertFalse(
+            MacClippySystemQuickLookPolicy.prefersSystemQuickLook(
+                contentKind: .image,
+                fileURLs: [file]
+            )
+        )
+        XCTAssertFalse(
+            MacClippySystemQuickLookPolicy.prefersSystemQuickLook(
+                contentKind: .text,
+                fileURLs: []
+            )
+        )
+    }
+
+    func testSystemQuickLookSkipsImageFilesThatHangFullscreenSpaces() throws {
+        let jpeg = FileManager.default.temporaryDirectory
+            .appendingPathComponent("macclippy-wechat-\(UUID().uuidString).jpg")
+        try Data([0xFF, 0xD8, 0xFF]).write(to: jpeg)
+        defer { try? FileManager.default.removeItem(at: jpeg) }
+
+        XCTAssertFalse(
+            MacClippySystemQuickLookPolicy.prefersSystemQuickLook(
+                contentKind: .files,
+                fileURLs: [jpeg]
+            )
+        )
+
+        let pdf = FileManager.default.temporaryDirectory
+            .appendingPathComponent("macclippy-doc-\(UUID().uuidString).pdf")
+        try Data("%PDF-1.4".utf8).write(to: pdf)
+        defer { try? FileManager.default.removeItem(at: pdf) }
+        XCTAssertTrue(
+            MacClippySystemQuickLookPolicy.prefersSystemQuickLook(
+                contentKind: .files,
+                fileURLs: [pdf]
+            )
+        )
+    }
+
+    func testFileThumbnailPolicyUsesImageIOForRasterImages() {
+        XCTAssertTrue(
+            MacClippyFileThumbnailPolicy.usesImageIO(
+                for: URL(fileURLWithPath: "/Users/me/Library/WeChat/c133.jpg")
+            )
+        )
+        XCTAssertFalse(
+            MacClippyFileThumbnailPolicy.usesImageIO(
+                for: URL(fileURLWithPath: "/tmp/passport.pdf")
+            )
+        )
+    }
+
+    func testFileThumbnailLoaderDecodesJPEGWithoutQuickLook() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("macclippy-thumb-\(UUID().uuidString).jpg")
+        let image = NSImage(size: NSSize(width: 8, height: 8))
+        image.lockFocus()
+        NSColor.red.setFill()
+        NSBezierPath(rect: NSRect(x: 0, y: 0, width: 8, height: 8)).fill()
+        image.unlockFocus()
+        guard let tiff = image.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff),
+              let jpeg = rep.representation(using: .jpeg, properties: [:]) else {
+            return XCTFail("could not encode jpeg")
+        }
+        try jpeg.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let loaded = await MacClippyFileThumbnailLoader.image(
+            for: url,
+            pointSize: CGSize(width: 16, height: 16)
+        )
+        XCTAssertNotNil(loaded)
+    }
+
+    func testSystemQuickLookArrowSwitchReloadsWithoutStealingKeyboard() {
+        XCTAssertEqual(
+            MacClippySystemQuickLookPresentationPolicy.action(panelIsVisible: false),
+            .open
+        )
+        XCTAssertEqual(
+            MacClippySystemQuickLookPresentationPolicy.action(panelIsVisible: true),
+            .reload
+        )
+        XCTAssertFalse(
+            MacClippySystemQuickLookPresentationPolicy.shouldTakeDockKeyboard(for: .open)
+        )
+        XCTAssertFalse(
+            MacClippySystemQuickLookPresentationPolicy.shouldTakeDockKeyboard(for: .reload)
+        )
+        XCTAssertFalse(
+            MacClippyDockKeyboardOwnershipPolicy.shouldTakeKeyboardOwnership(
+                isSystemQuickLookVisible: true
+            )
+        )
+        XCTAssertTrue(
+            MacClippyDockKeyboardOwnershipPolicy.shouldTakeKeyboardOwnership(
+                isSystemQuickLookVisible: false
+            )
+        )
+    }
+
+    func testSystemQuickLookEndDoesNotDropPreviewDuringProgrammaticClose() {
+        XCTAssertFalse(
+            MacClippySystemQuickLookPresentationPolicy.shouldExitPreviewOnEnd(
+                isProgrammaticClose: true,
+                customPreviewVisible: false
+            )
+        )
+        XCTAssertFalse(
+            MacClippySystemQuickLookPresentationPolicy.shouldExitPreviewOnEnd(
+                isProgrammaticClose: false,
+                customPreviewVisible: true
+            )
+        )
+        XCTAssertTrue(
+            MacClippySystemQuickLookPresentationPolicy.shouldExitPreviewOnEnd(
+                isProgrammaticClose: false,
+                customPreviewVisible: false
+            )
+        )
+    }
+
+    func testPreviewSurfaceSwitchSkipsQuickLookZoomAndLoadingReset() {
+        XCTAssertEqual(MacClippyPreviewSurfacePolicy.transition(isOpening: true), .openSession)
+        XCTAssertEqual(MacClippyPreviewSurfacePolicy.transition(isOpening: false), .switchSurface)
+
+        XCTAssertTrue(MacClippyPreviewSurfacePolicy.shouldAnimateSystemQuickLook(for: .openSession))
+        XCTAssertTrue(MacClippyPreviewSurfacePolicy.shouldAnimateSystemQuickLook(for: .closeSession))
+        XCTAssertFalse(MacClippyPreviewSurfacePolicy.shouldAnimateSystemQuickLook(for: .switchSurface))
+
+        XCTAssertFalse(MacClippyPreviewSurfacePolicy.shouldResetCustomPreviewToLoading(for: .switchSurface))
+        XCTAssertTrue(MacClippyPreviewSurfacePolicy.shouldResetCustomPreviewToLoading(for: .closeSession))
+        XCTAssertFalse(MacClippyPreviewSurfacePolicy.shouldResetCustomPreviewToLoading(for: .openSession))
+
+        XCTAssertEqual(
+            MacClippyPreviewSurfacePolicy.keyboardOwnershipRetryLimit(for: .switchSurface),
+            0
+        )
+        XCTAssertEqual(
+            MacClippyPreviewSurfacePolicy.keyboardOwnershipRetryLimit(for: .openSession),
+            3
+        )
+        XCTAssertEqual(
+            MacClippyPreviewSurfacePolicy.keyboardOwnershipRetryLimit(for: .closeSession),
+            3
+        )
+        XCTAssertEqual(
+            MacClippyPreviewSurfacePolicy.quickLookAnimationBehavior(animated: true),
+            .default
+        )
+        XCTAssertEqual(
+            MacClippyPreviewSurfacePolicy.quickLookAnimationBehavior(animated: false),
+            .none
+        )
+    }
+
+    func testSystemQuickLookForwardsPickerNavigationKeys() {
+        XCTAssertTrue(MacClippySystemQuickLookEventPolicy.shouldHandleInPicker(keyCode: 123))
+        XCTAssertTrue(MacClippySystemQuickLookEventPolicy.shouldHandleInPicker(keyCode: 124))
+        XCTAssertTrue(MacClippySystemQuickLookEventPolicy.shouldHandleInPicker(keyCode: 49))
+        XCTAssertTrue(MacClippySystemQuickLookEventPolicy.shouldHandleInPicker(keyCode: 36))
+        XCTAssertTrue(MacClippySystemQuickLookEventPolicy.shouldHandleInPicker(keyCode: 76))
+        XCTAssertTrue(MacClippySystemQuickLookEventPolicy.shouldHandleInPicker(keyCode: 53))
+        XCTAssertFalse(MacClippySystemQuickLookEventPolicy.shouldHandleInPicker(keyCode: 0))
+    }
+
+    func testPreviewFileSurfaceUsesInlineVideoControlsForMoviesOnly() {
+        XCTAssertTrue(
+            MacClippyDockPreviewFileSurface.usesInlineVideoControls(
+                for: URL(fileURLWithPath: "/tmp/clip.mp4")
+            )
+        )
+        XCTAssertTrue(
+            MacClippyDockPreviewFileSurface.usesInlineVideoControls(
+                for: URL(fileURLWithPath: "/tmp/clip.mov")
+            )
+        )
+        XCTAssertFalse(
+            MacClippyDockPreviewFileSurface.usesInlineVideoControls(
+                for: URL(fileURLWithPath: "/tmp/photo.png")
+            )
+        )
+        XCTAssertFalse(
+            MacClippyDockPreviewFileSurface.usesInlineVideoControls(
+                for: URL(fileURLWithPath: "/tmp/notes.pdf")
+            )
+        )
+        XCTAssertEqual(MacClippyVideoClock.string(0), "0:00")
+        XCTAssertEqual(MacClippyVideoClock.string(65), "1:05")
+        XCTAssertEqual(MacClippyVideoClock.string(3661), "1:01:01")
+    }
+
+    func testPreviewFilesFooterUsesFileCountNotCharacterCount() {
+        let content = MacClippyDockPreviewContent.files([URL(fileURLWithPath: "/tmp/passport.pdf")])
+        XCTAssertNil(content.footerText(characterCount: 9))
+        XCTAssertEqual(MacClippyFilePresentation.title(fileCount: 1), "1 file")
+        XCTAssertEqual(
+            MacClippyFilePresentation.displayPath(for: URL(fileURLWithPath: "/tmp/passport.pdf")),
+            "/tmp/passport.pdf"
+        )
+    }
+
     func testCodePolicyKeepsBuildOutputOnTheReadableSurface() {
         let buildOutput = """
         -normal/arm64/
@@ -269,12 +511,12 @@ final class MacClippyDockTests: XCTestCase {
         -install_name @rpath/MacClippy.debug.dylib -Xlinker /usr/lib/swift
         """
 
-        XCTAssertFalse(MacClippyDockCodePolicy.isCode(buildOutput))
+        XCTAssertFalse(MacClippyClipboardPresentation.isCode(buildOutput))
     }
 
     func testCodePolicyStillRecognizesSourceCode() {
         XCTAssertTrue(
-            MacClippyDockCodePolicy.isCode("""
+            MacClippyClipboardPresentation.isCode("""
             func greet() {
                 return \"hello\";
             }
@@ -284,7 +526,7 @@ final class MacClippyDockTests: XCTestCase {
 
     func testCodePolicyKeepsPromptWithParenthesesAndTimestampsReadable() {
         XCTAssertFalse(
-            MacClippyDockCodePolicy.isCode("""
+            MacClippyClipboardPresentation.isCode("""
             Structure: 3-shot sequence (Start Scene → Insert Close-up → Lab Scene).
             SHOT 1: Camera lock (00:00.000–00:03.000).
             """)

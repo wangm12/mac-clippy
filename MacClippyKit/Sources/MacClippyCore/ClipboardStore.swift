@@ -538,7 +538,7 @@ public final class MacClippyClipboardStore {
         case .rtf: "(rich text)"
         case let .html(value): String(stripHTML(value).prefix(120))
         case let .image(_, width, height), let .encryptedImage(_, width, height): "(image \(width)x\(height))"
-        case let .files(urls): "(\(urls.count) file\(urls.count == 1 ? "" : "s"))"
+        case let .files(urls): MacClippyFilePresentation.storePreview(for: urls)
         }
     }
 

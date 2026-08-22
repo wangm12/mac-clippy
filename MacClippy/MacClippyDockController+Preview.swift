@@ -3,10 +3,11 @@ import Foundation
 import MacClippyCore
 import MacClippyPlatform
 import QuartzCore
+import QuickLookUI
 import SwiftUI
 import os.signpost
 
-extension MacClippyDockController {
+extension MacClippyDockController: MacClippySystemQuickLookHosting {
     func showPreview() {
         if interactionMode == .details {
             guard hideDetails() else { return }
@@ -22,82 +23,12 @@ extension MacClippyDockController {
             return
         }
         cancelPreviewRetry()
-        guard let screen = screen(for: dockPanel) else {
-            return
-        }
-        guard let previewFrame = frameForPreview(above: dockPanel.frame, on: screen) else {
-            return
-        }
 
         previewRequestID &+= 1
-        let requestID = previewRequestID
-        let preview: MacClippyPreviewPanel
-        let shouldAnimate: Bool
-        if let existing = previewPanel {
-            preview = existing
-            shouldAnimate = !existing.isVisible || previewIsClosing
-        } else {
-            preview = MacClippyPreviewPanel(contentRect: previewFrame)
-            let hosting = MacClippyPreviewHostingView(rootView: previewView(content: .loading))
-            previewHostingView = hosting
-            preview.contentView = hosting
-            previewPanel = preview
-            shouldAnimate = true
-        }
-
-        previewIsClosing = false
-        previewAnimationGeneration &+= 1
-        resetPreviewPanelState(preview)
-        preview.setFrame(previewFrame, display: false, animate: false)
-        preview.orderFrontRegardless()
         dockPanel.interceptsPickerKeys = true
         interactionMode = .preview
         model.isPreviewVisible = true
-        // Keep keyboard ownership on the Dock. Preview remains mouse-enabled
-        // for its chevrons, but must not steal selection/Space responder state.
-        takeKeyboardOwnership(of: dockPanel)
-        if let previousSignpostID = previewPerformanceSignpostID {
-            MacClippyPerformance.end("preview_open", id: previousSignpostID)
-        }
-        let previewSignpostID = MacClippyPerformance.begin("preview_open")
-        previewPerformanceSignpostID = previewSignpostID
-        if shouldAnimate && !shouldReduceMotion {
-            preview.alphaValue = 0
-            preview.setFrame(
-                previewFrame.offsetBy(dx: 0, dy: -MacClippyMotion.panelOffset),
-                display: false,
-                animate: false
-            )
-            // Short ease-out entrance so the preview appears quickly without
-            // introducing a second, hard-coded motion duration.
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = MacClippyMotion.entranceDuration
-                context.timingFunction = MacClippyMotion.entranceTimingFunction
-                preview.animator().setFrame(previewFrame, display: true)
-                preview.animator().alphaValue = 1
-            }
-        }
-
-        model.loadPreview(for: target) { [weak self] result in
-            guard let self else {
-                MacClippyPerformance.end("preview_open", id: previewSignpostID)
-                return
-            }
-            defer { self.finishPreviewPerformance(signpostID: previewSignpostID) }
-            guard
-                  self.previewRequestID == requestID,
-                  self.interactionMode == .preview,
-                  self.model.focusedPreviewTarget == target,
-                  let hosting = self.previewHostingView else { return }
-            switch result {
-            case let .success(payload):
-                self.model.clearPreviewError()
-                hosting.rootView = self.previewView(content: Self.previewContent(for: payload, id: target.recordID))
-            case .failure:
-                self.model.setPreviewError(MacClippyUserFacingError.itemLoad)
-                hosting.rootView = self.previewView(content: .error)
-            }
-        }
+        presentPreview(for: target, requestID: previewRequestID, isOpening: true)
     }
 
     func retryPreviewWhenReady(attempt: Int) {
@@ -146,15 +77,128 @@ extension MacClippyDockController {
 
     func refreshPreview() {
         guard interactionMode == .preview,
-              let target = model.focusedPreviewTarget,
-              let hosting = previewHostingView else { return }
+              let target = model.focusedPreviewTarget else { return }
         previewRequestID &+= 1
-        let requestID = previewRequestID
+        presentPreview(for: target, requestID: previewRequestID, isOpening: false)
+    }
+
+    func presentPreview(
+        for target: MacClippyDockPreviewTarget,
+        requestID: UInt,
+        isOpening: Bool
+    ) {
+        let transition = MacClippyPreviewSurfacePolicy.transition(isOpening: isOpening)
+        if case .item = target,
+           let item = model.focusedItem,
+           MacClippySystemQuickLookPolicy.prefersSystemQuickLook(
+               contentKind: item.contentKind,
+               fileURLs: item.fileURLs
+           ) {
+            let urls = MacClippySystemQuickLookPolicy.existingFileURLs(in: item.fileURLs)
+            presentSystemQuickLook(urls: urls, transition: transition)
+            return
+        }
+
+        closeSystemQuickLook(animated: MacClippyPreviewSurfacePolicy.shouldAnimateSystemQuickLook(for: transition))
+        presentCustomPreview(for: target, requestID: requestID, transition: transition)
+    }
+
+    func presentSystemQuickLook(urls: [URL], transition: MacClippyPreviewSurfaceTransition) {
+        guard panel?.isVisible == true, !urls.isEmpty else { return }
+        hideCustomPreviewSurface(
+            resetToLoading: MacClippyPreviewSurfacePolicy.shouldResetCustomPreviewToLoading(for: transition)
+        )
+        isClosingSystemQuickLook = false
+        systemQuickLookSession.setURLs(urls)
+        model.clearPreviewError()
+        finishPreviewPerformance(signpostID: previewPerformanceSignpostID)
+        isSystemQuickLookVisible = true
+        guard let previewPanel = QLPreviewPanel.shared() else { return }
+        let action = MacClippySystemQuickLookPresentationPolicy.action(panelIsVisible: previewPanel.isVisible)
+        if MacClippySystemQuickLookPresentationPolicy.shouldTakeDockKeyboard(for: action),
+           let dockPanel = panel {
+            takeKeyboardOwnership(of: dockPanel)
+        }
+        switch action {
+        case .reload:
+            previewPanel.reloadData()
+            previewPanel.currentPreviewItemIndex = 0
+        case .open:
+            let animated = MacClippyPreviewSurfacePolicy.shouldAnimateSystemQuickLook(for: transition)
+            performSystemQuickLookVisibilityChange(on: previewPanel, animated: animated) { panel in
+                panel.updateController()
+                panel.makeKeyAndOrderFront(nil)
+            }
+        }
+    }
+
+    func presentCustomPreview(
+        for target: MacClippyDockPreviewTarget,
+        requestID: UInt,
+        transition: MacClippyPreviewSurfaceTransition
+    ) {
+        guard let dockPanel = panel, dockPanel.isVisible else { return }
+        guard let screen = screen(for: dockPanel) else { return }
+        guard let previewFrame = frameForPreview(above: dockPanel.frame, on: screen) else {
+            return
+        }
+
+        let isOpening = transition == .openSession
+        let preview: MacClippyPreviewPanel
+        let shouldAnimate: Bool
+        if let existing = previewPanel {
+            preview = existing
+            shouldAnimate = isOpening && (!existing.isVisible || previewIsClosing)
+        } else {
+            preview = MacClippyPreviewPanel(contentRect: previewFrame)
+            let hosting = MacClippyPreviewHostingView(rootView: previewView(content: .loading))
+            previewHostingView = hosting
+            preview.contentView = hosting
+            previewPanel = preview
+            shouldAnimate = isOpening
+        }
+
+        previewIsClosing = false
+        previewAnimationGeneration &+= 1
+        resetPreviewPanelState(preview)
+        preview.setFrame(previewFrame, display: false, animate: false)
+        preview.orderFrontRegardless()
+        // In-app preview stays display-only. Dock keeps Space / Return.
+        takeKeyboardOwnership(
+            of: dockPanel,
+            retryLimit: MacClippyPreviewSurfacePolicy.keyboardOwnershipRetryLimit(for: transition)
+        )
+        if let previousSignpostID = previewPerformanceSignpostID {
+            MacClippyPerformance.end("preview_open", id: previousSignpostID)
+        }
+        let previewSignpostID = MacClippyPerformance.begin("preview_open")
+        previewPerformanceSignpostID = previewSignpostID
+        if shouldAnimate && !shouldReduceMotion {
+            preview.alphaValue = 0
+            preview.setFrame(
+                previewFrame.offsetBy(dx: 0, dy: -MacClippyMotion.panelOffset),
+                display: false,
+                animate: false
+            )
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = MacClippyMotion.entranceDuration
+                context.timingFunction = MacClippyMotion.entranceTimingFunction
+                preview.animator().setFrame(previewFrame, display: true)
+                preview.animator().alphaValue = 1
+            }
+        }
+
         model.loadPreview(for: target) { [weak self] result in
-            guard let self,
+            guard let self else {
+                MacClippyPerformance.end("preview_open", id: previewSignpostID)
+                return
+            }
+            defer { self.finishPreviewPerformance(signpostID: previewSignpostID) }
+            guard
                   self.previewRequestID == requestID,
                   self.interactionMode == .preview,
-                  self.model.focusedPreviewTarget == target else { return }
+                  self.model.focusedPreviewTarget == target,
+                  let hosting = self.previewHostingView else { return }
             switch result {
             case let .success(payload):
                 self.model.clearPreviewError()
@@ -164,6 +208,81 @@ extension MacClippyDockController {
                 hosting.rootView = self.previewView(content: .error)
             }
         }
+    }
+
+    func hideCustomPreviewSurface(resetToLoading: Bool) {
+        if resetToLoading, previewHostingView != nil {
+            previewHostingView?.rootView = previewView(content: .loading)
+        }
+        previewPanel?.orderOut(nil)
+        previewIsClosing = false
+    }
+
+    func closeSystemQuickLook(animated: Bool) {
+        guard isSystemQuickLookVisible
+                || (QLPreviewPanel.sharedPreviewPanelExists() && QLPreviewPanel.shared().isVisible) else {
+            isSystemQuickLookVisible = false
+            return
+        }
+        isClosingSystemQuickLook = true
+        isSystemQuickLookVisible = false
+        systemQuickLookSession.setURLs([])
+        if QLPreviewPanel.sharedPreviewPanelExists(),
+           let previewPanel = QLPreviewPanel.shared() {
+            performSystemQuickLookVisibilityChange(on: previewPanel, animated: animated) { panel in
+                panel.orderOut(nil)
+            }
+        }
+    }
+
+    func performSystemQuickLookVisibilityChange(
+        on panel: QLPreviewPanel,
+        animated: Bool,
+        _ body: (QLPreviewPanel) -> Void
+    ) {
+        let previousBehavior = panel.animationBehavior
+        panel.animationBehavior = MacClippyPreviewSurfacePolicy.quickLookAnimationBehavior(animated: animated)
+        body(panel)
+        if animated {
+            return
+        }
+        DispatchQueue.main.async {
+            panel.animationBehavior = previousBehavior == .none ? .default : previousBehavior
+        }
+    }
+
+    func acceptsSystemQuickLook(_ panel: QLPreviewPanel) -> Bool {
+        isSystemQuickLookVisible || !systemQuickLookSession.urls.isEmpty
+    }
+
+    func beginSystemQuickLook(_ panel: QLPreviewPanel) {
+        panel.dataSource = systemQuickLookSession
+        panel.delegate = systemQuickLookSession
+        panel.reloadData()
+    }
+
+    func endSystemQuickLook(_ panel: QLPreviewPanel) {
+        panel.dataSource = nil
+        panel.delegate = nil
+        let programmatic = isClosingSystemQuickLook
+        isClosingSystemQuickLook = false
+        isSystemQuickLookVisible = false
+        systemQuickLookSession.setURLs([])
+        guard MacClippySystemQuickLookPresentationPolicy.shouldExitPreviewOnEnd(
+            isProgrammaticClose: programmatic,
+            customPreviewVisible: previewPanel?.isVisible == true
+        ) else { return }
+        guard interactionMode == .preview else { return }
+        interactionMode = .picker
+        model.isPreviewVisible = false
+        model.resetSearchFocus()
+        if let dockPanel = self.panel, dockPanel.isVisible {
+            takeKeyboardOwnership(of: dockPanel)
+        }
+    }
+
+    func handleSystemQuickLookEvent(_ event: NSEvent) -> Bool {
+        routeKeyEvent(event) == nil
     }
 
     // The single helper that moves model focus and refreshes the preview. Both
@@ -271,6 +390,9 @@ extension MacClippyDockController {
         cancelPreviewRetry()
         previewRequestID &+= 1
         model.clearPreviewError()
+        closeSystemQuickLook(
+            animated: MacClippyPreviewSurfacePolicy.shouldAnimateSystemQuickLook(for: .closeSession)
+        )
         // Ordering out an NSPanel does not necessarily remove its hosting view
         // from the SwiftUI hierarchy. Replace the root before the close
         // animation so image decode/Vision tasks are cancelled immediately and
@@ -330,6 +452,7 @@ extension MacClippyDockController {
         previewRequestID &+= 1
         previewAnimationGeneration &+= 1
         previewIsClosing = false
+        closeSystemQuickLook(animated: false)
         interactionMode = .picker
         model.isPreviewVisible = false
         previewPanel?.contentView?.layer?.removeAllAnimations()

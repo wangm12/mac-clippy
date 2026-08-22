@@ -78,8 +78,16 @@ public final class MacClippySearchStore {
                 INSERT OR IGNORE INTO macclippy_search_state(key, value)
                     VALUES ('index_revision', 0);
             """)
+        },
+        MacClippyDatabaseMigration(identifier: "004-source-projection") { database in
+            try database.execute(sql: """
+                INSERT OR IGNORE INTO macclippy_search_state(key, value)
+                    VALUES ('source_projection_version', 0);
+            """)
         }
     ]
+
+    public static let currentSourceProjectionVersion: Int64 = 1
 
     let database: MacClippyDatabase
 
@@ -165,6 +173,28 @@ public final class MacClippySearchStore {
                 connection,
                 sql: "SELECT value FROM macclippy_search_state WHERE key = 'index_revision'"
             ) ?? 0
+        }
+    }
+
+    public func sourceProjectionVersion() throws -> Int64 {
+        try database.queue.read { connection in
+            try Int64.fetchOne(
+                connection,
+                sql: "SELECT value FROM macclippy_search_state WHERE key = 'source_projection_version'"
+            ) ?? 0
+        }
+    }
+
+    public func setSourceProjectionVersion(_ value: Int64) throws {
+        try database.queue.write { connection in
+            try connection.execute(
+                sql: """
+                    INSERT INTO macclippy_search_state(key, value)
+                    VALUES ('source_projection_version', ?)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                    """,
+                arguments: [value]
+            )
         }
     }
 

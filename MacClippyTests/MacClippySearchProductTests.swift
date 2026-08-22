@@ -14,10 +14,12 @@ final class MacClippySearchProductTests: XCTestCase {
             isDirectory: true
         )
         try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        MacClippySourceAppResolver.testDisplayNames = [:]
         runtime = try MacClippyRuntime(paths: try MacClippyPaths(rootURL: tempRoot))
     }
 
     override func tearDownWithError() throws {
+        MacClippySourceAppResolver.testDisplayNames = [:]
         runtime?.closeForTesting()
         runtime = nil
         if let tempRoot {
@@ -47,6 +49,70 @@ final class MacClippySearchProductTests: XCTestCase {
 
         XCTAssertEqual(try runtime.history(limit: 16, query: "世界").map(\.id), [cjk.id])
         XCTAssertEqual(try runtime.history(limit: 16, query: "\"project alpha\"").map(\.id), [phrase.id])
+    }
+
+    func testBareSearchMatchesWordAndFilenamePrefixes() throws {
+        let file = try runtime.appendTestRecord(
+            .files([URL(fileURLWithPath: "/tmp/docs/passport.pdf")]),
+            sourceAppBundleID: nil,
+            now: Date(timeIntervalSince1970: 1_000)
+        )
+        _ = try runtime.setCustomLabel(id: file.id, label: "file")
+        let text = try runtime.appendTestRecord(
+            .text("renew the passport tomorrow"),
+            sourceAppBundleID: nil,
+            now: Date(timeIntervalSince1970: 2_000)
+        )
+        _ = try runtime.setCustomLabel(id: text.id, label: "text")
+        let miss = try runtime.appendTestRecord(
+            .text("unrelated note"),
+            sourceAppBundleID: nil,
+            now: Date(timeIntervalSince1970: 3_000)
+        )
+        _ = try runtime.setCustomLabel(id: miss.id, label: "other")
+
+        XCTAssertEqual(
+            Set(try runtime.history(limit: 16, query: "pas").map(\.id)),
+            [file.id, text.id]
+        )
+        XCTAssertEqual(
+            Set(try runtime.history(limit: 16, query: "passport").map(\.id)),
+            [file.id, text.id]
+        )
+        XCTAssertEqual(
+            Set(try runtime.history(limit: 16, query: "ss").map(\.id)),
+            [file.id, text.id]
+        )
+    }
+
+    func testBareSearchMatchesASCIIInfixInsideWordsAndFilenames() throws {
+        let file = try runtime.appendTestRecord(
+            .files([URL(fileURLWithPath: "/tmp/docs/passport.pdf")]),
+            sourceAppBundleID: nil,
+            now: Date(timeIntervalSince1970: 1_000)
+        )
+        _ = try runtime.setCustomLabel(id: file.id, label: "file")
+        let text = try runtime.appendTestRecord(
+            .text("renew the passport tomorrow"),
+            sourceAppBundleID: nil,
+            now: Date(timeIntervalSince1970: 2_000)
+        )
+        _ = try runtime.setCustomLabel(id: text.id, label: "text")
+        let miss = try runtime.appendTestRecord(
+            .text("unrelated note"),
+            sourceAppBundleID: nil,
+            now: Date(timeIntervalSince1970: 3_000)
+        )
+        _ = try runtime.setCustomLabel(id: miss.id, label: "other")
+
+        XCTAssertEqual(
+            Set(try runtime.history(limit: 16, query: "ss").map(\.id)),
+            [file.id, text.id]
+        )
+        XCTAssertEqual(
+            Set(try runtime.history(limit: 16, query: "pas").map(\.id)),
+            [file.id, text.id]
+        )
     }
 
     func testBareSearchSupportsPrefixStarAndStripsFTSMarkers() throws {
@@ -100,7 +166,7 @@ final class MacClippySearchProductTests: XCTestCase {
         XCTAssertEqual(try runtime.history(limit: 16, query: "type:url").map(\.id), [url.id])
     }
 
-    func testTypeURLRejectsWWWAndHTTPStatusText() throws {
+    func testTypeURLRejectsHTTPStatusText() throws {
         let url = try runtime.appendTestRecord(
             .text("https://example.com/macclippy"),
             sourceAppBundleID: nil,
@@ -120,7 +186,10 @@ final class MacClippySearchProductTests: XCTestCase {
         )
         _ = try runtime.setCustomLabel(id: status.id, label: "status")
 
-        XCTAssertEqual(try runtime.history(limit: 16, query: "type:url").map(\.id), [url.id])
+        XCTAssertEqual(
+            Set(try runtime.history(limit: 16, query: "type:url").map(\.id)),
+            [url.id, www.id]
+        )
     }
 
     func testBareSearchCombinesASCIIPrefixAndCJKSubstring() throws {
@@ -218,6 +287,63 @@ final class MacClippySearchProductTests: XCTestCase {
             query: "type:url",
             limit: 16
         )
-        XCTAssertEqual(page.items.map(\.id), [url.id])
+        XCTAssertEqual(Set(page.items.map(\.id)), [url.id, www.id])
+    }
+
+    func testBareSearchAndAppClauseFindSourceAppName() throws {
+        let safari = try runtime.appendTestRecord(
+            .text("unrelated note from a browser"),
+            sourceAppBundleID: "com.apple.Safari",
+            now: Date(timeIntervalSince1970: 1_000)
+        )
+        _ = try runtime.setCustomLabel(id: safari.id, label: "browser")
+        let other = try runtime.appendTestRecord(
+            .text("unrelated note from an editor"),
+            sourceAppBundleID: "com.example.Editor",
+            now: Date(timeIntervalSince1970: 2_000)
+        )
+        _ = try runtime.setCustomLabel(id: other.id, label: "editor")
+
+        XCTAssertEqual(try runtime.history(limit: 16, query: "safari").map(\.id), [safari.id])
+        XCTAssertEqual(try runtime.history(limit: 16, query: "Safari").map(\.id), [safari.id])
+        XCTAssertEqual(try runtime.history(limit: 16, query: "app:safari").map(\.id), [safari.id])
+        XCTAssertEqual(try runtime.history(limit: 16, query: "app:EDITOR").map(\.id), [other.id])
+    }
+
+    func testBareSearchAndAppClauseFindLocalizedSourceDisplayName() throws {
+        MacClippySourceAppResolver.testDisplayNames["com.tencent.xinWeChat"] = "微信"
+        MacClippySourceAppResolver.testDisplayNames["com.apple.MobileSMS"] = "Messages"
+        let weChat = try runtime.appendTestRecord(
+            .text("chat excerpt without the app name"),
+            sourceAppBundleID: "com.tencent.xinWeChat",
+            now: Date(timeIntervalSince1970: 1_000)
+        )
+        _ = try runtime.setCustomLabel(id: weChat.id, label: "chat")
+        let messages = try runtime.appendTestRecord(
+            .text("sms excerpt without the app name"),
+            sourceAppBundleID: "com.apple.MobileSMS",
+            now: Date(timeIntervalSince1970: 2_000)
+        )
+        _ = try runtime.setCustomLabel(id: messages.id, label: "sms")
+
+        XCTAssertEqual(try runtime.history(limit: 16, query: "微信").map(\.id), [weChat.id])
+        XCTAssertEqual(try runtime.history(limit: 16, query: "app:微信").map(\.id), [weChat.id])
+        XCTAssertEqual(try runtime.history(limit: 16, query: "Messages").map(\.id), [messages.id])
+        XCTAssertEqual(try runtime.history(limit: 16, query: "app:Messages").map(\.id), [messages.id])
+    }
+
+    func testSearchableIndexTextIncludesSourceSegments() {
+        let indexed = MacClippyRuntime.searchableIndexText(
+            for: .text("body only"),
+            ocrText: nil,
+            label: nil,
+            sourceAppBundleID: "com.tencent.xinWeChat",
+            sourceAppDisplayName: "微信"
+        )
+        XCTAssertTrue(indexed.contains("body only"))
+        XCTAssertTrue(indexed.contains("com.tencent.xinWeChat"))
+        XCTAssertTrue(indexed.contains("xinWeChat"))
+        XCTAssertTrue(indexed.contains("微信"))
+        XCTAssertFalse(indexed.contains("Unknown source"))
     }
 }

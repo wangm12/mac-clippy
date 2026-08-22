@@ -59,25 +59,6 @@ enum MacClippyDockCategoryRailPolicy {
     }
 }
 
-// URL detection for the URL-smart card body. Only a single, trimmed URL is
-// recognized (not prose containing a URL); the full URL stays in the preview
-// text and accessibility label so nothing is lost.
-enum MacClippyDockURLPolicy {
-    static func url(from preview: String) -> URL? {
-        MacClippyClipboardPresentation.url(fromPlainText: preview)
-    }
-}
-
-// Code detection for the dark-terminal card body. Conservative: a preview is
-// treated as code only if it has a strong code signature (braces, semicolons,
-// common keywords, leading indentation, or a shebang). Avoids misclassifying
-// prose with a colon or slash.
-enum MacClippyDockCodePolicy {
-    static func isCode(_ preview: String) -> Bool {
-        MacClippyClipboardPresentation.isCode(preview)
-    }
-}
-
 enum MacClippyDockCardMetrics {
     // Compact card size restored to the prior vertical height. Cards stay
     // fixed-size and the carousel scrolls horizontally; the metrics are the

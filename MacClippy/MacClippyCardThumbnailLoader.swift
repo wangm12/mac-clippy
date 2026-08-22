@@ -85,7 +85,7 @@ final class MacClippyCardThumbnailLoader: @unchecked Sendable {
         }
     }
 
-    private final class Flight {
+    private final class Flight: @unchecked Sendable {
         let accounting = MacClippyFileIconWaiterAccounting()
         let operation = BlockOperation()
         var waiters: [UUID: @Sendable (CGImage?) -> Void] = [:]
@@ -146,13 +146,16 @@ final class MacClippyCardThumbnailLoader: @unchecked Sendable {
         }
 
         let waiterID = UUID()
-        if let existing = flights[key] {
+        if let existing = flights[key], !existing.operation.isCancelled {
             existing.accounting.addWaiter()
             existing.waiters[waiterID] = completion
             lock.unlock()
             return MacClippyCardThumbnailWaiter { [weak self] in
                 self?.releaseWaiter(key, waiterID: waiterID)
             }
+        }
+        if flights[key]?.operation.isCancelled == true {
+            flights.removeValue(forKey: key)
         }
 
         let flight = Flight()
@@ -165,7 +168,7 @@ final class MacClippyCardThumbnailLoader: @unchecked Sendable {
         operation.addExecutionBlock { [weak self] in
             guard let self else { return }
             guard !operation.isCancelled else {
-                self.finish(key, image: nil)
+                self.finish(key, flight: flight, image: nil)
                 return
             }
             let isCancelled: @Sendable () -> Bool = {
@@ -173,7 +176,7 @@ final class MacClippyCardThumbnailLoader: @unchecked Sendable {
             }
             let image = loadImage(id, key.maxPixelSize, isCancelled)
             afterDecode()
-            self.finish(key, image: image)
+            self.finish(key, flight: flight, image: image)
         }
         lock.unlock()
         queue.addOperation(operation)
@@ -196,19 +199,20 @@ final class MacClippyCardThumbnailLoader: @unchecked Sendable {
             let shouldFinishNow = !operation.isExecuting && !operation.isFinished
             lock.unlock()
             if shouldFinishNow {
-                finish(key, image: nil)
+                finish(key, flight: flight, image: nil)
             }
             return
         }
         lock.unlock()
     }
 
-    private func finish(_ key: RequestKey, image: CGImage?) {
+    private func finish(_ key: RequestKey, flight: Flight, image: CGImage?) {
         lock.lock()
-        guard let flight = flights.removeValue(forKey: key) else {
+        guard flights[key] === flight else {
             lock.unlock()
             return
         }
+        flights.removeValue(forKey: key)
         flight.accounting.markFinished()
         let waiters = flight.waiters
         flight.waiters = [:]

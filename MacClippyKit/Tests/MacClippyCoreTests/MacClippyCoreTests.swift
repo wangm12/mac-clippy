@@ -109,7 +109,7 @@ final class MacClippyCoreTests: XCTestCase {
         _ = try SearchStore(database: searchDatabase)
         XCTAssertEqual(
             try appliedMigrations(in: searchDatabase),
-            ["001-search-core", "002-search-repair-state", "003-search-index-revision"]
+            ["001-search-core", "002-search-repair-state", "003-search-index-revision", "004-source-projection"]
         )
 
         let pinboardDatabase = try MacClippyDatabase(inMemory: true)
@@ -202,6 +202,9 @@ final class MacClippyCoreTests: XCTestCase {
         XCTAssertEqual(try search.indexRevision(), 3)
         try search.remove(id: id)
         XCTAssertEqual(try search.indexRevision(), 3)
+        XCTAssertEqual(try search.sourceProjectionVersion(), 0)
+        try search.setSourceProjectionVersion(SearchStore.currentSourceProjectionVersion)
+        XCTAssertEqual(try search.sourceProjectionVersion(), SearchStore.currentSourceProjectionVersion)
     }
 
     func testSearchKeysetCursorContinuesAfterRankAndRowID() throws {
@@ -260,6 +263,77 @@ final class MacClippyCoreTests: XCTestCase {
         try search.insert(id: RecordID.generate(), text: "unrelated")
 
         XCTAssertEqual(try search.search(terms: ["clip*"], limit: 10).map(\.id), [matching])
+    }
+
+    func testSearchTermsFindASCIIInfixInsideAToken() throws {
+        let search = try searchStore()
+        let matching = RecordID.generate()
+        try search.insert(id: matching, text: "renew the passport")
+        try search.insert(id: RecordID.generate(), text: "unrelated note")
+
+        XCTAssertEqual(try search.search(terms: ["ss"], limit: 10).map(\.id), [matching])
+    }
+
+    func testSearchTermsPreferPrefixHitsBeforeInfix() throws {
+        let search = try searchStore()
+        let prefix = RecordID.generate()
+        let infix = RecordID.generate()
+        try search.insert(id: prefix, text: "ssl certificate")
+        try search.insert(id: infix, text: "renew the passport")
+
+        XCTAssertEqual(try search.search(terms: ["ss"], limit: 10).map(\.id), [prefix, infix])
+    }
+
+    func testSearchTermsRequireEveryWordOnPrefixOrInfix() throws {
+        let search = try searchStore()
+        let both = RecordID.generate()
+        try search.insert(id: both, text: "renew the passport")
+        try search.insert(id: RecordID.generate(), text: "the past event")
+        try search.insert(id: RecordID.generate(), text: "harbor seaport")
+
+        XCTAssertEqual(try search.search(terms: ["pas", "port"], limit: 10).map(\.id), [both])
+    }
+
+    func testSearchTermsPagePrefixHitsBeforeInfixWithoutRepeats() throws {
+        let search = try searchStore()
+        var prefixIDs: [RecordID] = []
+        for index in 0..<3 {
+            let id = RecordID.generate()
+            prefixIDs.append(id)
+            try search.insert(id: id, text: "ssl token \(index)")
+        }
+        let infix = RecordID.generate()
+        try search.insert(id: infix, text: "renew the passport")
+
+        let first = try search.search(terms: ["ss"], limit: 2)
+        XCTAssertEqual(first.count, 2)
+        XCTAssertTrue(Set(first.map(\.id)).isSubset(of: Set(prefixIDs)))
+        guard let last = first.last else {
+            return XCTFail("expected a prefix page")
+        }
+
+        let rest = try search.search(
+            terms: ["ss"],
+            limit: 8,
+            after: MacClippySearchCursor(rank: last.rank, rowID: last.rowID)
+        )
+        let complete = first.map(\.id) + rest.map(\.id)
+        XCTAssertEqual(Set(complete).count, complete.count)
+        XCTAssertEqual(Set(complete), Set(prefixIDs + [infix]))
+        XCTAssertEqual(complete.last, infix)
+    }
+
+    func testSearchTermsKeepPhrasesAndDottedNamesOffInfix() throws {
+        let search = try searchStore()
+        let phrase = RecordID.generate()
+        let dotted = RecordID.generate()
+        try search.insert(id: phrase, text: "project alpha notes")
+        try search.insert(id: RecordID.generate(), text: "xxproject alphayy")
+        try search.insert(id: dotted, text: "invoice.pdf")
+        try search.insert(id: RecordID.generate(), text: "fooinvoice.pdfbar")
+
+        XCTAssertEqual(try search.search(terms: ["project alpha"], limit: 10).map(\.id), [phrase])
+        XCTAssertEqual(try search.search(terms: ["invoice.pdf"], limit: 10).map(\.id), [dotted])
     }
 
     func clipboardStore() throws -> ClipboardStore {

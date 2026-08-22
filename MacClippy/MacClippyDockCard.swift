@@ -11,6 +11,7 @@ struct MacClippyClipboardCardSnapshot: Equatable, Sendable {
     let contentKind: ContentKind
     let customLabel: String?
     let fileNames: [String]
+    let filePaths: [String]
     let typeMetadataSubtitle: String?
     let sourceAppBundleID: String?
     let sourceDisplayName: String
@@ -45,7 +46,8 @@ struct MacClippyClipboardCardContext: Equatable {
             preview: item.preview,
             contentKind: item.contentKind,
             customLabel: item.customLabel,
-            fileNames: item.fileURLs.map(\.lastPathComponent),
+            fileNames: item.fileURLs.map(MacClippyFilePresentation.displayName),
+            filePaths: item.fileURLs.map(MacClippyFilePresentation.displayPath),
             typeMetadataSubtitle: item.typeMetadataSubtitle,
             sourceAppBundleID: item.meta.sourceAppBundleID,
             sourceDisplayName: source.displayName,

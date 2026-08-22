@@ -135,6 +135,10 @@ extension MacClippyDockController {
         }
 
         let dockPanel = MacClippyDockPanel(contentRect: frame)
+        dockPanel.systemQuickLookHost = self
+        systemQuickLookSession.handlePickerEvent = { [weak self] event in
+            self?.handleSystemQuickLookEvent(event) ?? false
+        }
         dockPanel.onPickerKey = { [weak self] event in
             self?.consumePanelKey(event) ?? false
         }

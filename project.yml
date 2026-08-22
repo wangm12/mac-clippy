@@ -114,6 +114,10 @@ targets:
       - path: MacClippy/MacClippyDockPreviewImageSelectionDrawing.swift
       - path: MacClippy/MacClippyVideoPreview.swift
       - path: MacClippy/MacClippyFileIconLoader.swift
+      - path: MacClippy/MacClippyFileThumbnailLoader.swift
+      - path: MacClippy/MacClippyQuickLookPreview.swift
+      - path: MacClippy/MacClippySystemQuickLook.swift
+      - path: MacClippy/MacClippyVideoPlayerPreview.swift
       - path: MacClippy/MacClippyDetails.swift
       - path: MacClippy/MacClippyDockController.swift
       - path: MacClippy/MacClippyDockController+Lifecycle.swift
@@ -142,6 +146,9 @@ targets:
         product: MacClippyCore
       - package: MacClippyKit
         product: MacClippyPlatform
+      - sdk: QuickLookUI.framework
+      - sdk: AVKit.framework
+      - sdk: AVFoundation.framework
 
   MacClippyTests:
     type: bundle.unit-test

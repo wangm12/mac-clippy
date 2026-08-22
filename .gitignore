@@ -39,6 +39,7 @@ MacClippy.xcodeproj/project.xcworkspace/xcuserdata/
 
 # Local design/agent context
 .impeccable.md
+.superpowers/
 
 # Keep Swift package resolution state under version control so clean builds
 # use the reviewed dependency revision instead of re-resolving a floating 7.x.

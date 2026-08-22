@@ -6,18 +6,35 @@ import MacClippyPlatform
 extension MacClippyRuntime {
     private static let pinboardPageSize = 64
 
-    func pinboards() throws -> [MacClippyPinboardEntry] {
+    func pinboards(shouldCancel: () -> Bool = { false }) throws -> [MacClippyPinboardEntry] {
         let boards = try withStoreLock { try pinboardStore.list() }
-        return try boards.map { board in
-            let page = try pinboardItemsPage(
-                pinboardID: board.id,
-                limit: Self.pinboardPageSize
-            )
+        return try boards.compactMap { board in
+            for _ in 0 ..< 2 {
+                do {
+                    let page = try pinboardItemsPage(
+                        pinboardID: board.id,
+                        limit: Self.pinboardPageSize,
+                        shouldCancel: shouldCancel
+                    )
+                    let latestBoard = try withStoreLock { try pinboardStore.fetch(id: board.id) }
+                    return MacClippyPinboardEntry(
+                        board: latestBoard,
+                        items: page.items,
+                        itemCount: latestBoard.itemIDs.count,
+                        nextPageToken: page.nextPageToken
+                    )
+                } catch MacClippyPinboardSearchPageError.boardChanged {
+                    continue
+                }
+            }
+            guard let latestBoard = try? withStoreLock({ try pinboardStore.fetch(id: board.id) }) else {
+                return nil
+            }
             return MacClippyPinboardEntry(
-                board: board,
-                items: page.items,
-                itemCount: board.itemIDs.count,
-                nextPageToken: page.nextPageToken
+                board: latestBoard,
+                items: [],
+                itemCount: latestBoard.itemIDs.count,
+                nextPageToken: nil
             )
         }
     }

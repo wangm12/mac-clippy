@@ -155,7 +155,8 @@ extension MacClippyRuntime {
                 for: record,
                 ocrText: meta.ocrText,
                 label: meta.customLabel,
-                representationUTIs: representations.map(\.uti)
+                representationUTIs: representations.map(\.uti),
+                sourceAppBundleID: meta.sourceAppBundleID
             )
             if !searchableText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 do {
@@ -347,6 +348,9 @@ extension MacClippyRuntime {
             }
         )
         let searchHealth = searchStore.databaseHealth()
+        if try searchStore.sourceProjectionVersion() < SearchStore.currentSourceProjectionVersion {
+            try searchStore.markRepairNeeded()
+        }
         let repairMarker = try searchStore.repairNeeded()
         let shouldRepairFTS = result.missingFTSRecordCount > 0
             || repairMarker

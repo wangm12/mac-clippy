@@ -67,15 +67,53 @@ final class PasteboardMappingTests: XCTestCase {
         XCTAssertFalse(MacClippyCaptureMapper.shouldExclude(payload, using: try RegexBlocklist()))
     }
 
+    func testFinderFileCopyPrefersFileURLOverFilenameText() throws {
+        let fileURL = Data("file:///tmp/progress.md".utf8)
+        let change = PasteboardChange(
+            changeCount: 1,
+            items: [PasteboardItem(
+                types: [
+                    "public.file-url",
+                    "public.utf16-external-plain-text",
+                    "public.utf8-plain-text"
+                ],
+                representations: [
+                    "public.file-url": fileURL,
+                    "public.utf16-external-plain-text": Data("progress.md".utf8),
+                    "public.utf8-plain-text": Data("progress.md".utf8)
+                ]
+            )],
+            sourceAppBundleID: "com.apple.finder"
+        )
+
+        guard case let .files(urls) = try XCTUnwrap(MacClippyCaptureMapper.payload(for: change)) else {
+            return XCTFail("Expected Finder file copies to use the file URL, not the filename text")
+        }
+        XCTAssertEqual(urls, [URL(string: "file:///tmp/progress.md")])
+    }
+
     func testNonImageRepresentationsUseDeterministicPriority() throws {
         let rtf = Data("{\\rtf1 rich}".utf8)
         let html = Data("<b>html</b>".utf8)
         let fileURL = Data("file:///tmp/example.txt".utf8)
 
-        let textChange = PasteboardChange(changeCount: 1, items: [PasteboardItem(
+        let finderLikeChange = PasteboardChange(changeCount: 1, items: [PasteboardItem(
             types: ["public.file-url", "public.html", "public.rtf", "public.utf8-plain-text"],
             representations: [
                 "public.file-url": fileURL,
+                "public.html": html,
+                "public.rtf": rtf,
+                "public.utf8-plain-text": Data("example.txt".utf8)
+            ]
+        )])
+        guard case let .files(urls) = try XCTUnwrap(MacClippyCaptureMapper.payload(for: finderLikeChange)) else {
+            return XCTFail("Expected file URL to win over filename text, RTF, and HTML")
+        }
+        XCTAssertEqual(urls, [URL(string: "file:///tmp/example.txt")])
+
+        let textChange = PasteboardChange(changeCount: 2, items: [PasteboardItem(
+            types: ["public.html", "public.rtf", "public.utf8-plain-text"],
+            representations: [
                 "public.html": html,
                 "public.rtf": rtf,
                 "public.utf8-plain-text": Data("text".utf8)
@@ -85,24 +123,24 @@ final class PasteboardMappingTests: XCTestCase {
             return XCTFail("Expected text payload")
         }
 
-        let rtfChange = PasteboardChange(changeCount: 2, items: [PasteboardItem(
-            types: ["public.file-url", "public.html", "public.rtf"],
-            representations: ["public.file-url": fileURL, "public.html": html, "public.rtf": rtf]
+        let rtfChange = PasteboardChange(changeCount: 3, items: [PasteboardItem(
+            types: ["public.html", "public.rtf"],
+            representations: ["public.html": html, "public.rtf": rtf]
         )])
         guard case .rtf = try XCTUnwrap(MacClippyCaptureMapper.payload(for: rtfChange)) else {
             return XCTFail("Expected RTF payload")
         }
 
-        let htmlChange = PasteboardChange(changeCount: 3, items: [PasteboardItem(
-            types: ["public.file-url", "public.html"],
-            representations: ["public.file-url": fileURL, "public.html": html]
+        let htmlChange = PasteboardChange(changeCount: 4, items: [PasteboardItem(
+            types: ["public.html"],
+            representations: ["public.html": html]
         )])
         guard case .html = try XCTUnwrap(MacClippyCaptureMapper.payload(for: htmlChange)) else {
             return XCTFail("Expected HTML payload")
         }
 
         let fileChange = PasteboardChange(
-            changeCount: 4,
+            changeCount: 5,
             items: [PasteboardItem(types: ["public.file-url"], representations: ["public.file-url": fileURL])]
         )
         guard case .files = try XCTUnwrap(MacClippyCaptureMapper.payload(for: fileChange)) else {

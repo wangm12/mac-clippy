@@ -7,7 +7,7 @@ final class MacClippySearchQueryTests: XCTestCase {
     func testFTSMatchQueryKeepsQuotedPhrasesAsOneToken() {
         XCTAssertEqual(
             MacClippySearchQuery.ftsMatchQuery(from: ["project alpha", "memo"]),
-            "\"project alpha\" \"memo\""
+            "\"project alpha\" \"memo\"*"
         )
     }
 
@@ -15,6 +15,18 @@ final class MacClippySearchQueryTests: XCTestCase {
         XCTAssertEqual(
             MacClippySearchQuery.ftsMatchQuery(from: ["clip*"]),
             "\"clip\"*"
+        )
+    }
+
+    func testFTSMatchQueryAppliesImplicitPrefixToBareASCIITokens() {
+        XCTAssertEqual(MacClippySearchQuery.ftsMatchQuery(from: ["pas"]), "\"pas\"*")
+        XCTAssertEqual(
+            MacClippySearchQuery.ftsMatchQuery(from: ["project alpha", "memo"]),
+            "\"project alpha\" \"memo\"*"
+        )
+        XCTAssertEqual(
+            MacClippySearchQuery.ftsMatchQuery(from: ["invoice.pdf"]),
+            "\"invoice.pdf\""
         )
     }
 
@@ -31,6 +43,21 @@ final class MacClippySearchQueryTests: XCTestCase {
             MacClippySearchQuery.likePatterns(for: ["100%", "a_b"]),
             ["%100\\%%", "%a\\_b%"]
         )
+    }
+
+    func testInfixTermsEmitLikePatternsForBareASCIIAndCJK() {
+        XCTAssertEqual(MacClippySearchQuery.infixTerms(in: ["ss", "世界"]), ["ss", "世界"])
+        XCTAssertEqual(
+            MacClippySearchQuery.likePatterns(for: MacClippySearchQuery.infixTerms(in: ["ss"])),
+            ["%ss%"]
+        )
+        XCTAssertEqual(MacClippySearchQuery.ftsMatchQuery(from: ["ss"]), "\"ss\"*")
+    }
+
+    func testInfixTermsSkipPhrasesDottedFilenamesAndPrefixStars() {
+        XCTAssertTrue(MacClippySearchQuery.infixTerms(in: ["project alpha"]).isEmpty)
+        XCTAssertTrue(MacClippySearchQuery.infixTerms(in: ["invoice.pdf"]).isEmpty)
+        XCTAssertTrue(MacClippySearchQuery.infixTerms(in: ["clip*"]).isEmpty)
     }
 
     func testFTSSnippetMarkersAreStrippedForDisplay() {

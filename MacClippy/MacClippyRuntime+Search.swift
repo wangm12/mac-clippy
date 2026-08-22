@@ -117,8 +117,11 @@ extension MacClippyRuntime {
         var filter = MacClippyClipboardMetadataFilter(contentKind: contentKind)
         for clause in query.clauses {
             switch clause {
-            case let .app(value):
-                filter.sourceAppContains.append(value)
+            case .app:
+                // Display names are resolved at predicate time and are not
+                // stored on source_app. Pushing app: into SQL would drop
+                // `app:微信` / `app:Messages` before SearchRecord can match.
+                break
             case let .label(value):
                 filter.labelContains.append(value)
             case .hasLabel:

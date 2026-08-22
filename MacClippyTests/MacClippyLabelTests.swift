@@ -240,10 +240,11 @@ final class MacClippyLabelTests: XCTestCase {
         XCTAssertEqual(imageEntry?.typeMetadataSubtitle, "640×480")
     }
 
-    func testHistoryEntrySingleFileSubtitleUsesFileName() throws {
+    func testHistoryEntrySingleFileSubtitleUsesFileCountTitle() throws {
         let meta = try runtime.appendTestRecord(.files([URL(fileURLWithPath: "/tmp/report.pdf")]))
         let entry = try runtime.history(limit: 10, query: "").first(where: { $0.id == meta.id })
-        XCTAssertEqual(entry?.typeMetadataSubtitle, "report.pdf")
+        XCTAssertEqual(entry?.typeMetadataSubtitle, "1 file")
+        XCTAssertEqual(entry?.preview, "report.pdf")
     }
 
     func testHistoryEntryCustomLabelAndDisplayTitle() throws {

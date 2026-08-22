@@ -1,4 +1,5 @@
 import AppKit
+import QuickLookUI
 import SwiftUI
 
 final class MacClippyDockPanelContentView: NSView {
@@ -107,6 +108,7 @@ final class MacClippyDockBackdropView: NSView {
 final class MacClippyDockPanel: NSPanel {
     var interceptsPickerKeys = false
     var onPickerKey: ((NSEvent) -> Bool)?
+    weak var systemQuickLookHost: MacClippySystemQuickLookHosting?
 
     init(contentRect: NSRect) {
         super.init(
@@ -149,6 +151,24 @@ final class MacClippyDockPanel: NSPanel {
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
+        MainActor.assumeIsolated {
+            systemQuickLookHost?.acceptsSystemQuickLook(panel) ?? false
+        }
+    }
+
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        MainActor.assumeIsolated {
+            systemQuickLookHost?.beginSystemQuickLook(panel)
+        }
+    }
+
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        MainActor.assumeIsolated {
+            systemQuickLookHost?.endSystemQuickLook(panel)
+        }
+    }
 
 }
 

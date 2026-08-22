@@ -66,6 +66,7 @@ public enum MacClippySearchGrammar {
     public struct SearchRecord: Equatable, Sendable {
         public let contentKind: MacClippyContentKind
         public let sourceAppBundleID: String?
+        public let sourceAppDisplayName: String?
         public let customLabel: String?
         public let ocrText: String?
         public let modified: Date
@@ -74,6 +75,7 @@ public enum MacClippySearchGrammar {
         public init(
             contentKind: MacClippyContentKind,
             sourceAppBundleID: String?,
+            sourceAppDisplayName: String? = nil,
             customLabel: String?,
             ocrText: String?,
             modified: Date,
@@ -81,15 +83,21 @@ public enum MacClippySearchGrammar {
         ) {
             self.contentKind = contentKind
             self.sourceAppBundleID = sourceAppBundleID
+            self.sourceAppDisplayName = sourceAppDisplayName
             self.customLabel = customLabel
             self.ocrText = ocrText
             self.modified = modified
             self.isURL = isURL
         }
 
-        public init(meta: ClipboardItemMeta, contentKind: MacClippyContentKind) {
+        public init(
+            meta: ClipboardItemMeta,
+            contentKind: MacClippyContentKind,
+            sourceAppDisplayName: String? = nil
+        ) {
             self.contentKind = contentKind
             self.sourceAppBundleID = meta.sourceAppBundleID
+            self.sourceAppDisplayName = sourceAppDisplayName
             self.customLabel = meta.customLabel
             self.ocrText = meta.ocrText
             self.modified = meta.modified
@@ -348,7 +356,9 @@ public enum MacClippySearchGrammar {
         case .type(let kind):
             return record.contentKind == kind
         case .app(let value):
-            return record.sourceAppBundleID?.localizedCaseInsensitiveContains(value) ?? false
+            return sourceHaystacks(for: record).contains {
+                $0.localizedCaseInsensitiveContains(value)
+            }
         case .label(let value):
             return record.customLabel?.localizedCaseInsensitiveContains(value) ?? false
         case .hasLabel:
@@ -368,6 +378,13 @@ public enum MacClippySearchGrammar {
         case .url:
             return record.isURL
         }
+    }
+
+    private static func sourceHaystacks(for record: SearchRecord) -> [String] {
+        MacClippySourceAppSearch.segments(
+            bundleID: record.sourceAppBundleID,
+            displayName: record.sourceAppDisplayName
+        )
     }
 }
 

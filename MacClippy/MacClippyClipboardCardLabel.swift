@@ -212,17 +212,29 @@ extension MacClippyClipboardCardLabel {
 
     @ViewBuilder
     func cardFilesBody(_ item: MacClippyHistoryEntry) -> some View {
-        let names = item.fileURLs.map(\.lastPathComponent)
+        let urls = item.fileURLs
+        let names = urls.map(MacClippyFilePresentation.displayName)
 
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 6) {
+            if let url = urls.first {
+                MacClippyFileThumbnail(url: url, pointSize: CGSize(width: 216, height: 88))
+                    .equatable()
+                    .frame(maxWidth: .infinity, maxHeight: 88, alignment: .center)
+            }
+
+            Text(MacClippyFilePresentation.title(fileCount: urls.count))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(MacClippyDockTheme.mutedColor)
+                .lineLimit(1)
+
             if names.isEmpty {
                 Text(item.typeMetadataSubtitle ?? label(for: item.contentKind))
                     .font(MacClippyDockCardMetrics.contentFont)
                     .foregroundStyle(MacClippyDockTheme.contentTextColor)
-                    .lineLimit(3)
+                    .lineLimit(2)
                     .multilineTextAlignment(.leading)
             } else {
-                ForEach(Array(names.prefix(3).enumerated()), id: \.offset) { _, name in
+                ForEach(Array(names.prefix(2).enumerated()), id: \.offset) { _, name in
                     highlighted(
                         name.isEmpty ? "(file)" : name,
                         font: MacClippyDockCardMetrics.contentFont
@@ -230,12 +242,22 @@ extension MacClippyClipboardCardLabel {
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
-                if names.count > 3 {
-                    Text("+\(names.count - 3) more")
+                if names.count > 2 {
+                    Text("+\(names.count - 2) more")
                         .font(MacClippyDockCardMetrics.contentFont)
                         .foregroundStyle(MacClippyDockTheme.contentMutedColor)
                 }
             }
+
+            if let url = urls.first {
+                Text(MacClippyFilePresentation.displayPath(for: url))
+                    .font(.caption)
+                    .foregroundStyle(MacClippyDockTheme.contentMutedColor)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            MacClippyFileByteCountLabel(urls: urls, font: .caption)
             Spacer(minLength: 0)
         }
     }

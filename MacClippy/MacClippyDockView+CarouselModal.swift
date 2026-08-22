@@ -240,8 +240,8 @@ extension MacClippyDockView {
         HStack(spacing: 0) {
             LinearGradient(
                 colors: [
-                    MacClippyDockTheme.panelStrongColor,
-                    MacClippyDockTheme.panelStrongColor.opacity(0)
+                    MacClippyDockTheme.backdropColor,
+                    MacClippyDockTheme.backdropColor.opacity(0)
                 ],
                 startPoint: .leading,
                 endPoint: .trailing
@@ -250,8 +250,8 @@ extension MacClippyDockView {
             Spacer(minLength: 0)
             LinearGradient(
                 colors: [
-                    MacClippyDockTheme.panelStrongColor.opacity(0),
-                    MacClippyDockTheme.panelStrongColor
+                    MacClippyDockTheme.backdropColor.opacity(0),
+                    MacClippyDockTheme.backdropColor
                 ],
                 startPoint: .leading,
                 endPoint: .trailing

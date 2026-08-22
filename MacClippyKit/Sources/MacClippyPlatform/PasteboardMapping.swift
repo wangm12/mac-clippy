@@ -63,15 +63,14 @@ public enum MacClippyCaptureMapper {
 
     public static func payload(for change: PasteboardChange) -> MacClippyCapturePayload? {
         if let image = imagePayload(in: change.items) { return image }
+        // Finder file copies advertise public.file-url plus the filename as
+        // public.utf8-plain-text. Prefer the file URL so history/paste keep
+        // the file object instead of collapsing to the filename string.
+        if let files = filePayload(in: change.items) { return files }
         if let text = firstString(for: stringType, in: change.items), !text.isEmpty { return .text(text) }
         if let data = firstData(for: rtfType, in: change.items), !data.isEmpty { return .rtf(data) }
         if let html = firstString(for: htmlType, in: change.items), !html.isEmpty { return .html(html) }
-
-        let fileURLs = change.items.flatMap { item -> [URL] in
-            guard let data = item.data(forType: fileURLType) else { return [] }
-            return urls(from: data)
-        }
-        return fileURLs.isEmpty ? nil : .files(fileURLs)
+        return nil
     }
 
     public static func shouldExclude(_ payload: MacClippyCapturePayload, using blocklist: RegexBlocklist) -> Bool {
@@ -262,6 +261,14 @@ public enum MacClippyCaptureMapper {
         let width = (properties?[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue ?? 0
         let height = (properties?[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue ?? 0
         return .image(data: data, width: width, height: height)
+    }
+
+    private static func filePayload(in items: [PasteboardItem]) -> MacClippyCapturePayload? {
+        let fileURLs = items.flatMap { item -> [URL] in
+            guard let data = item.data(forType: fileURLType) else { return [] }
+            return urls(from: data)
+        }
+        return fileURLs.isEmpty ? nil : .files(fileURLs)
     }
 
     private static func firstData(for type: String, in items: [PasteboardItem]) -> Data? {

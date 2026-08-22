@@ -106,7 +106,7 @@ extension MacClippyDockModel {
                         entry.preview,
                         entry.meta.ocrText ?? "",
                         entry.meta.customLabel ?? ""
-                    ]
+                    ] + MacClippySourceAppResolver.searchHaystacks(for: entry.meta.sourceAppBundleID)
                 )
             }
         }
@@ -114,6 +114,9 @@ extension MacClippyDockModel {
             let record = MacClippySearchGrammar.SearchRecord(
                 contentKind: entry.contentKind,
                 sourceAppBundleID: entry.meta.sourceAppBundleID,
+                sourceAppDisplayName: MacClippySourceAppResolver.displayName(
+                    for: entry.meta.sourceAppBundleID
+                ),
                 customLabel: entry.meta.customLabel,
                 ocrText: entry.meta.ocrText,
                 modified: entry.meta.modified,
@@ -127,7 +130,7 @@ extension MacClippyDockModel {
                     entry.preview,
                     entry.meta.ocrText ?? "",
                     entry.meta.customLabel ?? ""
-                ]
+                ] + MacClippySourceAppResolver.searchHaystacks(for: entry.meta.sourceAppBundleID)
             )
         }
     }

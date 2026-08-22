@@ -15,7 +15,8 @@ extension MacClippyRuntime {
                 for: body,
                 ocrText: meta.ocrText,
                 label: meta.customLabel,
-                representationUTIs: try clipboardStore.representationUTIs(for: id)
+                representationUTIs: try clipboardStore.representationUTIs(for: id),
+                sourceAppBundleID: meta.sourceAppBundleID
             )
             if indexText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 do {
@@ -54,7 +55,9 @@ extension MacClippyRuntime {
         for record: ClipboardRecord,
         ocrText: String?,
         label: String?,
-        representationUTIs: [String] = []
+        representationUTIs: [String] = [],
+        sourceAppBundleID: String? = nil,
+        sourceAppDisplayName: String? = nil
     ) -> String {
         var segments: [String] = []
         if let bodyText = MacClippyClipboardText.plainText(from: record),
@@ -70,9 +73,15 @@ extension MacClippyRuntime {
             segments.append(label)
         }
         if case let .files(urls) = record {
-            segments.append(contentsOf: urls.map(\.lastPathComponent))
+            segments.append(contentsOf: MacClippyFilePresentation.searchSegments(for: urls))
         }
         segments.append(contentsOf: representationUTIs)
+        segments.append(
+            contentsOf: MacClippySourceAppSearch.segments(
+                bundleID: sourceAppBundleID,
+                displayName: sourceAppDisplayName ?? MacClippySourceAppResolver.displayName(for: sourceAppBundleID)
+            )
+        )
         let text = segments.joined(separator: "\n")
         return String(
             bytes: text.utf8.prefix(MacClippyRuntime.searchIndexTextByteLimit),
@@ -233,6 +242,10 @@ extension MacClippyRuntime {
         } else {
             kind = .text
         }
-        return MacClippySearchGrammar.SearchRecord(meta: meta, contentKind: kind)
+        return MacClippySearchGrammar.SearchRecord(
+            meta: meta,
+            contentKind: kind,
+            sourceAppDisplayName: MacClippySourceAppResolver.displayName(for: meta.sourceAppBundleID)
+        )
     }
 }

@@ -82,6 +82,9 @@ enum MacClippyDockTheme {
     static var cardColor: Color { Color(nsColor: card) }
     static var cardHoverColor: Color { Color(nsColor: cardHover) }
     static var panelStrongColor: Color { Color(nsColor: panelStrong) }
+    // Matches the AppKit dock backdrop gradient's top stop so edge fades
+    // do not paint a cooler, near-white stripe over bg0/bg1.
+    static var backdropColor: Color { Color(nsColor: isDark ? bg0Dark : bg0) }
 
     static func sourceCardBackground(accent: NSColor) -> some View {
         ZStack {

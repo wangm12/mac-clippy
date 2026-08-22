@@ -13,6 +13,13 @@ public enum MacClippySearchQuery {
         terms.filter { !containsCJK($0) }
     }
 
+    /// Terms that should also run as `LIKE %term%` infix matches: CJK and
+    /// bare ASCII words. Quoted phrases, dotted filenames, and explicit
+    /// `clip*` prefixes stay on the MATCH-only path.
+    public static func infixTerms(in terms: [String]) -> [String] {
+        terms.filter { containsCJK($0) || shouldImplicitPrefix($0) }
+    }
+
     public static func containsCJK(_ value: String) -> Bool {
         value.unicodeScalars.contains { scalar in
             (0x3400...0x4DBF).contains(scalar.value)
@@ -133,7 +140,15 @@ public enum MacClippySearchQuery {
             }
             return quoted(stem) + "*"
         }
+        if shouldImplicitPrefix(trimmed) {
+            return quoted(trimmed) + "*"
+        }
         return quoted(trimmed)
+    }
+
+    private static func shouldImplicitPrefix(_ term: String) -> Bool {
+        !term.contains(where: \.isWhitespace)
+            && term.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" }
     }
 
     private static func quoted(_ value: String) -> String {

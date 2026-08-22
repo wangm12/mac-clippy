@@ -179,6 +179,7 @@ final class MacClippySearchGrammarTests: XCTestCase {
     private func record(
         kind: MacClippyContentKind = .text,
         app: String? = nil,
+        appDisplayName: String? = nil,
         label: String? = nil,
         ocr: String? = nil,
         modified: Date = Date(timeIntervalSince1970: 1_783_728_000) // 2026-07-09 12:00 UTC
@@ -186,6 +187,7 @@ final class MacClippySearchGrammarTests: XCTestCase {
         MacClippySearchGrammar.SearchRecord(
             contentKind: kind,
             sourceAppBundleID: app,
+            sourceAppDisplayName: appDisplayName,
             customLabel: label,
             ocrText: ocr,
             modified: modified
@@ -210,6 +212,15 @@ final class MacClippySearchGrammarTests: XCTestCase {
     func testPredicateAppNilNeverMatches() {
         let r = record(app: nil)
         XCTAssertFalse(MacClippySearchGrammar.matches(.app("anything"), record: r))
+    }
+
+    func testPredicateAppMatchesDisplayNameWhenBundleIDDoesNot() {
+        let messages = record(app: "com.apple.MobileSMS", appDisplayName: "Messages")
+        XCTAssertTrue(MacClippySearchGrammar.matches(.app("messages"), record: messages))
+        XCTAssertTrue(MacClippySearchGrammar.matches(.app("MobileSMS"), record: messages))
+        let weChat = record(app: "com.tencent.xinWeChat", appDisplayName: "微信")
+        XCTAssertTrue(MacClippySearchGrammar.matches(.app("微信"), record: weChat))
+        XCTAssertFalse(MacClippySearchGrammar.matches(.app("Safari"), record: weChat))
     }
 
     func testPredicateLabelIsCaseInsensitiveSubstringOnCustomLabel() {

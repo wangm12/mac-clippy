@@ -39,14 +39,21 @@ enum MacClippyDockKeyboardOwnershipPolicy {
         for mode: MacClippyDockInteractionMode,
         isVisible: Bool,
         isClosing: Bool,
-        isExternalWindowPresented: Bool = false
+        isExternalWindowPresented: Bool = false,
+        isSystemQuickLookVisible: Bool = false
     ) -> Bool {
-        guard isVisible, !isClosing, !isExternalWindowPresented else { return false }
+        guard isVisible, !isClosing, !isExternalWindowPresented, !isSystemQuickLookVisible else {
+            return false
+        }
         return mode == .picker || mode == .preview || mode == .modal
     }
 
     static func shouldRestoreFirstResponder(for mode: MacClippyDockInteractionMode) -> Bool {
         mode == .picker || mode == .preview
+    }
+
+    static func shouldTakeKeyboardOwnership(isSystemQuickLookVisible: Bool) -> Bool {
+        !isSystemQuickLookVisible
     }
 }
 
@@ -143,6 +150,9 @@ final class MacClippyDockController {
     var animationTransaction: MacClippyDockAnimationTransaction?
     var previewPanel: MacClippyPreviewPanel?
     var previewHostingView: NSHostingView<MacClippyDockPreviewView>?
+    let systemQuickLookSession = MacClippySystemQuickLookSession()
+    var isSystemQuickLookVisible = false
+    var isClosingSystemQuickLook = false
     var detailsPanel: MacClippyDetailsPanel?
     var detailsHostingView: NSHostingView<AnyView>?
     var details: MacClippyItemDetails?

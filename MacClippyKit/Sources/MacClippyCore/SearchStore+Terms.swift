@@ -2,6 +2,10 @@ import Foundation
 import GRDB
 
 extension MacClippySearchStore {
+    /// Substring pages continue by rowid and stamp this rank on the cursor so
+    /// a later page does not restart the prefix MATCH pass.
+    private static let substringRank: Double = 1
+
     public func search(
         kind: RecordKind? = .clipboardItem,
         terms: [String],
@@ -14,17 +18,76 @@ extension MacClippySearchStore {
         guard !normalized.isEmpty, limit > 0 else { return [] }
         let cjkTerms = MacClippySearchQuery.cjkTerms(in: normalized)
         let ftsTerms = MacClippySearchQuery.ftsTerms(in: normalized)
+        let infixTerms = MacClippySearchQuery.infixTerms(in: normalized)
+        let asciiInfixTerms = infixTerms.filter { !MacClippySearchQuery.containsCJK($0) }
         if ftsTerms.isEmpty {
             return try substringSearch(kind: kind, terms: cjkTerms, limit: limit, after: cursor)
         }
-        let query = MacClippySearchQuery.ftsMatchQuery(from: ftsTerms)
-        return try matchRawFTS(
+        if asciiInfixTerms.isEmpty {
+            return try matchRawFTS(
+                kind: kind,
+                query: MacClippySearchQuery.ftsMatchQuery(from: ftsTerms),
+                likePatterns: MacClippySearchQuery.likePatterns(for: cjkTerms),
+                limit: limit,
+                after: cursor
+            )
+        }
+        return try searchPrefixThenInfix(
             kind: kind,
-            query: query,
-            likePatterns: MacClippySearchQuery.likePatterns(for: cjkTerms),
+            ftsTerms: ftsTerms,
+            cjkTerms: cjkTerms,
+            infixTerms: infixTerms,
+            asciiInfixTerms: asciiInfixTerms,
             limit: limit,
             after: cursor
         )
+    }
+
+    private func searchPrefixThenInfix(
+        kind: RecordKind?,
+        ftsTerms: [String],
+        cjkTerms: [String],
+        infixTerms: [String],
+        asciiInfixTerms: [String],
+        limit: Int,
+        after cursor: MacClippySearchCursor?
+    ) throws -> [SearchHit] {
+        let prefixQuery = MacClippySearchQuery.ftsMatchQuery(from: ftsTerms)
+        let cjkPatterns = MacClippySearchQuery.likePatterns(for: cjkTerms)
+        let prefixHits: [SearchHit]
+        if isSubstringCursor(cursor) {
+            prefixHits = []
+        } else {
+            prefixHits = try matchRawFTS(
+                kind: kind,
+                query: prefixQuery,
+                likePatterns: cjkPatterns,
+                limit: limit,
+                after: cursor
+            )
+            if prefixHits.count >= limit {
+                return prefixHits
+            }
+        }
+
+        let matchOnlyTerms = ftsTerms.filter { term in
+            !asciiInfixTerms.contains(term)
+        }
+        let matchOnlyQuery = MacClippySearchQuery.ftsMatchQuery(from: matchOnlyTerms)
+        let infixHits = try substringSearch(
+            kind: kind,
+            terms: infixTerms,
+            matchQuery: matchOnlyQuery.isEmpty ? nil : matchOnlyQuery,
+            excludingMatchQuery: prefixQuery,
+            excludingLikePatterns: cjkPatterns,
+            limit: limit - prefixHits.count,
+            after: isSubstringCursor(cursor) ? cursor : nil
+        )
+        return prefixHits + infixHits
+    }
+
+    private func isSubstringCursor(_ cursor: MacClippySearchCursor?) -> Bool {
+        cursor?.rank == Self.substringRank
     }
 
     private func matchRawFTS(
@@ -77,6 +140,9 @@ extension MacClippySearchStore {
     private func substringSearch(
         kind: RecordKind?,
         terms: [String],
+        matchQuery: String? = nil,
+        excludingMatchQuery: String? = nil,
+        excludingLikePatterns: [String] = [],
         limit: Int,
         after cursor: MacClippySearchCursor?
     ) throws -> [SearchHit] {
@@ -93,9 +159,30 @@ extension MacClippySearchStore {
                 sql += " AND kind = ?"
                 arguments.append(kind.rawValue)
             }
+            if let matchQuery, !matchQuery.isEmpty {
+                sql += " AND macclippy_search_index MATCH ?"
+                arguments.append(matchQuery)
+            }
             for pattern in patterns {
                 sql += " AND content LIKE ? ESCAPE '\\'"
                 arguments.append(pattern)
+            }
+            if let excludingMatchQuery, !excludingMatchQuery.isEmpty {
+                sql += """
+                     AND macclippy_search_index.rowid NOT IN (
+                        SELECT rowid FROM macclippy_search_index
+                        WHERE macclippy_search_index MATCH ?
+                    """
+                arguments.append(excludingMatchQuery)
+                if let kind {
+                    sql += " AND kind = ?"
+                    arguments.append(kind.rawValue)
+                }
+                for pattern in excludingLikePatterns {
+                    sql += " AND content LIKE ? ESCAPE '\\'"
+                    arguments.append(pattern)
+                }
+                sql += ")"
             }
             if let cursor {
                 sql += " AND macclippy_search_index.rowid > ?"
@@ -117,7 +204,7 @@ extension MacClippySearchStore {
                     kind: kind,
                     id: id,
                     snippet: Self.substringSnippet(content, terms: terms),
-                    rank: 0,
+                    rank: Self.substringRank,
                     rowID: rowID
                 )
             }
@@ -127,7 +214,8 @@ extension MacClippySearchStore {
     private static func substringSnippet(_ content: String, terms: [String]) -> String {
         let haystack = content
         let needle = terms.first { MacClippySearchQuery.containsCJK($0) } ?? terms.first ?? ""
-        guard !needle.isEmpty, let found = haystack.range(of: needle) else {
+        guard !needle.isEmpty,
+              let found = haystack.range(of: needle, options: .caseInsensitive) else {
             return String(haystack.prefix(80))
         }
         let start = haystack.index(found.lowerBound, offsetBy: -24, limitedBy: haystack.startIndex)

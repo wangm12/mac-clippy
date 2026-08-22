@@ -2,6 +2,8 @@ import AppKit
 import Foundation
 import SwiftUI
 
+import MacClippyCore
+
 struct MacClippySourceRGB: Equatable {
     let red: CGFloat
     let green: CGFloat
@@ -133,6 +135,9 @@ enum MacClippySourceAppResolver {
     // that this is an intentional lock-protected boundary for the utility
     // resolution queue rather than an actor-owned UI state value.
     nonisolated(unsafe) private static var inFlight = Set<String>()
+    #if DEBUG
+    nonisolated(unsafe) static var testDisplayNames: [String: String] = [:]
+    #endif
 
     static func presentation(for bundleIdentifier: String?) -> MacClippySourceAppPresentation {
         guard let bundleIdentifier, !bundleIdentifier.isEmpty else {
@@ -146,6 +151,41 @@ enum MacClippySourceAppResolver {
 
         scheduleResolution(for: bundleIdentifier)
         return .unknown
+    }
+
+    /// Resolves the localized app name on the calling thread and caches it.
+    /// Search must not use `presentation(for:)`, which returns
+    /// "Unknown source" until the async icon path finishes.
+    static func displayName(for bundleIdentifier: String?) -> String? {
+        guard let bundleIdentifier, !bundleIdentifier.isEmpty else { return nil }
+        #if DEBUG
+        if let override = testDisplayNames[bundleIdentifier] {
+            return override
+        }
+        #endif
+        let key = bundleIdentifier as NSString
+        if let cached = cache.object(for: key) {
+            return usableDisplayName(cached.presentation.displayName)
+        }
+        let presentation = resolve(bundleIdentifier: bundleIdentifier)
+        cache.setObject(CacheEntry(presentation), forKey: bundleIdentifier)
+        return usableDisplayName(presentation.displayName)
+    }
+
+    static func searchHaystacks(for bundleIdentifier: String?) -> [String] {
+        MacClippySourceAppSearch.segments(
+            bundleID: bundleIdentifier,
+            displayName: displayName(for: bundleIdentifier)
+        )
+    }
+
+    private static func usableDisplayName(_ name: String) -> String? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              trimmed.caseInsensitiveCompare(MacClippySourceAppSearch.unknownDisplayName) != .orderedSame else {
+            return nil
+        }
+        return trimmed
     }
 
     private static func scheduleResolution(for bundleIdentifier: String) {

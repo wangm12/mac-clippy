@@ -28,6 +28,7 @@ public struct MacClippySnippetExpansionPlanner {
     private static let maxBufferLength = 64
     private static let triggerStart: Character = ";"
     private static let tabKeyCode = UInt16(kVK_Tab)
+    private static let returnKeyCode = UInt16(kVK_Return)
 
     private var buffer = ""
     private let modeProvider: () -> MacClippySnippetExpansionMode
@@ -91,6 +92,9 @@ public struct MacClippySnippetExpansionPlanner {
     private func suppressedDelimiterKeyCode(for character: Character, keyCode: UInt16?) -> UInt16? {
         if keyCode == Self.tabKeyCode || character == "\t" {
             return Self.tabKeyCode
+        }
+        if keyCode == Self.returnKeyCode || character.isNewline {
+            return Self.returnKeyCode
         }
         if character == " " {
             return UInt16(kVK_Space)

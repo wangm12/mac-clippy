@@ -2,7 +2,6 @@ import AppKit
 import MacClippyCore
 import MacClippyPlatform
 import SwiftUI
-import UniformTypeIdentifiers
 
 enum MacClippyDockPreviewContent {
     case loading
@@ -10,7 +9,6 @@ enum MacClippyDockPreviewContent {
     case richText(id: RecordID, attributed: NSAttributedString, plain: String)
     case color(id: RecordID, value: String, swatch: MacClippyColorSwatch)
     case image(id: RecordID, data: Data)
-    case video(URL)
     case files([URL])
     case error
 }
@@ -50,18 +48,13 @@ enum MacClippyDockPreviewTextPolicy {
             + "\n\n— Preview shortened for performance · \(remaining) more characters —"
     }
 }
-// Maps a file-URL payload to the right preview content. A single pasted file
-// URL whose extension conforms to UTType.movie is represented as a video
-// preview; multiple files or non-video files keep the existing file list.
+// File URLs stay on `.files`. The files surface embeds AppKit Quick Look
+// for an existing path (image, movie, PDF) so Space matches Finder. Do not
+// route movies into SwiftUI VideoPlayer — that AVKit representable aborts
+// during NSHostingView.layout on current macOS.
 enum MacClippyDockPreviewContentPolicy {
     static func content(forFiles urls: [URL]) -> MacClippyDockPreviewContent {
-        if urls.count == 1,
-           let url = urls.first,
-           let type = UTType(filenameExtension: url.pathExtension),
-           type.conforms(to: .movie) {
-            return .video(url)
-        }
-        return .files(urls)
+        .files(urls)
     }
 }
 
@@ -145,6 +138,11 @@ struct MacClippyDockPreviewView: View {
         .onChange(of: contentIdentity) { _, _ in
             imageOCRText = nil
             selectedImageText = nil
+        }
+        .transaction { transaction in
+            if reduceMotion {
+                transaction.animation = nil
+            }
         }
     }
 
@@ -235,7 +233,9 @@ struct MacClippyDockPreviewView: View {
     // Footer: character count + exit hint, QuickLook-style.
     private var previewFooter: some View {
         HStack(spacing: 8) {
-            if let footerText = content.footerText(characterCount: metadata.characterCount) {
+            if case .files = content {
+                EmptyView()
+            } else if let footerText = content.footerText(characterCount: metadata.characterCount) {
                 Text(footerText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -301,25 +301,28 @@ struct MacClippyDockPreviewView: View {
                     onCopyText?(selectedText)
                 }
             )
-        case let .video(url):
-            MacClippyVideoPreview(url: url, reduceMotion: reduceMotion)
         case let .files(urls):
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(urls, id: \.self) { url in
-                        HStack(spacing: 8) {
-                            MacClippyDockPreviewFileIcon(url: url)
-                            Text(url.lastPathComponent.isEmpty ? url.path : url.lastPathComponent)
-                                .lineLimit(1)
-                            Spacer(minLength: 0)
-                        }
-                    }
-                }
-            }
+            filePreview(urls)
         case .error:
             unavailableView
         }
 }
+
+    @ViewBuilder
+    private func filePreview(_ urls: [URL]) -> some View {
+        if let url = MacClippyDockPreviewFileSurface.nativePreviewURL(in: urls) {
+            switch MacClippyFilePresentation.mediaKind(for: url) {
+            case .image:
+                MacClippyFileImagePreview(url: url)
+            case .movie:
+                MacClippyVideoPreview(url: url, reduceMotion: reduceMotion)
+            case .other:
+                MacClippyQuickLookPreview(url: url, autostarts: !reduceMotion)
+            }
+        } else {
+            unavailableView
+        }
+    }
 
     private var unavailableView: some View {
         VStack(spacing: 8) {

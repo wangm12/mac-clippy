@@ -31,6 +31,21 @@ final class MacClippySnippetExpanderRestoreTests: XCTestCase {
         XCTAssertEqual(pasteEventCount, 0)
     }
 
+    func testRestoresSuppressedReturnWhenAutomaticInjectionFails() {
+        var postedKeys: [PostedKey] = []
+        let expander = expander(postedKeys: { postedKeys.append($0) })
+        let plan = MacClippySnippetExpansionPlan(
+            body: "replacement",
+            charactersToDelete: 6,
+            suppressCurrentEvent: true,
+            suppressedDelimiterKeyCode: UInt16(kVK_Return)
+        )
+
+        expander.expandForTesting(using: plan)
+
+        XCTAssertTrue(postedKeys.contains { $0.keyCode == UInt16(kVK_Return) })
+    }
+
     func testExpanderKeysAreNotPostedIntoTheSessionTap() {
         var postedKeys: [PostedKey] = []
         let expander = expander(postedKeys: { postedKeys.append($0) })

@@ -78,6 +78,7 @@ extension MacClippyRuntime {
         }, shouldCancel: shouldCancel)
         if failedDocuments == 0 {
             try searchStore.clearRepairNeeded()
+            try searchStore.setSourceProjectionVersion(SearchStore.currentSourceProjectionVersion)
             storageDegradedReasons.remove("fts-repair-needed")
         } else {
             try searchStore.markRepairNeeded()
@@ -114,7 +115,8 @@ extension MacClippyRuntime {
             for: body,
             ocrText: meta.ocrText,
             label: meta.customLabel,
-            representationUTIs: try clipboardStore.representationUTIs(for: meta.id)
+            representationUTIs: try clipboardStore.representationUTIs(for: meta.id),
+            sourceAppBundleID: meta.sourceAppBundleID
         )
         return MacClippySearchDocument(id: meta.id, text: text)
     }

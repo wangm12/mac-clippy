@@ -54,11 +54,7 @@ struct MacClippyHistoryEntry: Identifiable, Sendable {
         switch contentKind {
         case .files:
             if fileURLs.isEmpty { return nil }
-            if fileURLs.count == 1 {
-                let name = fileURLs.first?.lastPathComponent
-                return name?.isEmpty ?? true ? nil : name
-            }
-            return "\(fileURLs.count) files"
+            return MacClippyFilePresentation.title(fileCount: fileURLs.count)
         case .image:
             guard let dimensions = imageDimensions else { return nil }
             return "\(Int(dimensions.width))×\(Int(dimensions.height))"

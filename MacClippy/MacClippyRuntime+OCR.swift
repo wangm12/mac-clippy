@@ -235,7 +235,8 @@ extension MacClippyRuntime {
             for: body,
             ocrText: persistedOCRText,
             label: updatedMeta.customLabel,
-            representationUTIs: try clipboardStore.representationUTIs(for: recordID)
+            representationUTIs: try clipboardStore.representationUTIs(for: recordID),
+            sourceAppBundleID: updatedMeta.sourceAppBundleID
         )
         guard !indexText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             try searchStore.remove(id: recordID)
