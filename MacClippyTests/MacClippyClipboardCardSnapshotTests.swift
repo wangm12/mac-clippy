@@ -60,7 +60,7 @@ final class MacClippyClipboardCardSnapshotTests: XCTestCase {
     }
 
     @MainActor
-    func testClipboardCardHeaderOmitsQuickPasteBadge() throws {
+    func testClipboardCardCaptionOmitsQuickPasteBadge() throws {
         let futureModified = Date().addingTimeInterval(3600)
         let item = try historyEntry(preview: "clip text", modified: futureModified)
         let context = MacClippyClipboardCardContext(
@@ -81,15 +81,15 @@ final class MacClippyClipboardCardSnapshotTests: XCTestCase {
             sourcePresentationGeneration: 0
         )
 
-        let trailingLabel = MacClippyCardHeaderTrailingLabel.text(for: context)
-        XCTAssertNil(trailingLabel)
-        XCTAssertFalse((trailingLabel ?? "").contains("⌘1"))
+        let caption = MacClippyCardCaptionLabel.text(for: context)
+        XCTAssertNil(caption)
+        XCTAssertFalse((caption ?? "").contains("⌘1"))
     }
 
     @MainActor
-    func testClipboardCardHeaderTrailingLabelKeepsTimestamp() throws {
-        let pastModified = Date().addingTimeInterval(-120)
-        let item = try historyEntry(preview: "clip text", modified: pastModified)
+    func testClipboardCardCaptionUsesLongRelativeTimestamp() throws {
+        let now = Date()
+        let item = try historyEntry(preview: "clip text", modified: now.addingTimeInterval(-120))
         let context = MacClippyClipboardCardContext(
             item: item,
             index: 0,
@@ -108,7 +108,97 @@ final class MacClippyClipboardCardSnapshotTests: XCTestCase {
             sourcePresentationGeneration: 0
         )
 
-        XCTAssertEqual(MacClippyCardHeaderTrailingLabel.text(for: context), "2m")
+        XCTAssertEqual(MacClippyCardCaptionLabel.text(for: context, now: now), "2 minutes ago")
+    }
+
+    func testTimestampCaptionLabelUsesLongRelativeCopy() {
+        let now = Date()
+        XCTAssertEqual(
+            MacClippyDockTimestampPolicy.captionLabel(for: now.addingTimeInterval(-45), now: now),
+            "1 minute ago"
+        )
+        XCTAssertEqual(
+            MacClippyDockTimestampPolicy.captionLabel(for: now.addingTimeInterval(-120), now: now),
+            "2 minutes ago"
+        )
+        XCTAssertEqual(
+            MacClippyDockTimestampPolicy.captionLabel(for: now.addingTimeInterval(-3600), now: now),
+            "1 hour ago"
+        )
+        XCTAssertEqual(
+            MacClippyDockTimestampPolicy.captionLabel(for: now.addingTimeInterval(-13 * 3600), now: now),
+            "13 hours ago"
+        )
+        XCTAssertEqual(
+            MacClippyDockTimestampPolicy.captionLabel(for: now.addingTimeInterval(-90_000), now: now),
+            "Yesterday"
+        )
+        XCTAssertNil(MacClippyDockTimestampPolicy.captionLabel(for: now.addingTimeInterval(60), now: now))
+    }
+
+    func testClipboardCarouselHeightIncludesBelowCardCaption() {
+        let bodyAndPadding = MacClippyDockCardMetrics.height
+            + MacClippyDockCardMetrics.carouselVerticalPadding * 2
+        XCTAssertEqual(
+            MacClippyDockCardMetrics.carouselHeight(for: .large),
+            bodyAndPadding
+                + MacClippyDockCardMetrics.captionSpacing
+                + MacClippyDockCardMetrics.captionHeight
+        )
+    }
+
+    func testClipboardCardSourceIsIconOnlyChrome() throws {
+        let source = try appSource(named: "MacClippyClipboardCardLabel.swift")
+
+        XCTAssertFalse(source.contains("clipboardCardHeader"))
+        XCTAssertFalse(source.contains("cardCategoryFooter"))
+        XCTAssertFalse(source.contains("Text(context.source.displayName)"))
+        XCTAssertFalse(source.contains("MacClippyCardHeaderTrailingLabel"))
+        XCTAssertTrue(source.contains("sourceCardBackground"))
+        XCTAssertTrue(source.contains("context.source.accent"))
+        XCTAssertFalse(source.contains("sourceBadgeFill"))
+        XCTAssertTrue(source.contains("bottomTrailing"))
+        XCTAssertTrue(source.contains(".help("))
+        XCTAssertTrue(source.contains("accessibilityHidden"))
+    }
+
+    func testClipboardCardSourceIconSitsOutsideTheCardCorner() {
+        XCTAssertEqual(MacClippyDockCardMetrics.sourceBadgeSize, 48)
+        XCTAssertEqual(MacClippyDockCardMetrics.sourceBadgeOverlap, 20)
+        XCTAssertEqual(MacClippyDockCardMetrics.gap, 32)
+        XCTAssertEqual(MacClippyDockCardMetrics.padding, 24)
+    }
+
+    @MainActor
+    func testClipboardCardAccessibilityKeepsSourceNameAndCategories() throws {
+        let now = Date()
+        let item = try historyEntry(preview: "clip text", modified: now.addingTimeInterval(-120))
+        let context = MacClippyClipboardCardContext(
+            item: item,
+            index: 0,
+            source: MacClippySourceAppPresentation(
+                displayName: "Safari",
+                icon: nil,
+                accent: NSColor.systemBlue
+            ),
+            dedupRun: 3,
+            isSelected: false,
+            activeBorder: false,
+            isElevated: false,
+            categories: [
+                MacClippyDockCategoryPresentation(id: .generate(), name: "Work", colorHex: "#3366FF")
+            ],
+            highlightTerms: [],
+            isPreviewVisible: false,
+            sourcePresentationGeneration: 0
+        )
+
+        let label = MacClippyDockCardAccessibilityPolicy.label(for: context, now: now)
+        XCTAssertTrue(label.contains("from Safari"))
+        XCTAssertTrue(label.contains("2 minutes ago"))
+        XCTAssertTrue(label.contains("Categories: Work"))
+        XCTAssertTrue(label.contains("3 copies"))
+        XCTAssertFalse(label.contains("⌘1"))
     }
 
     // Snippet cards are held to the same honesty rule as clipboard cards: no

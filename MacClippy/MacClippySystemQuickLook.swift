@@ -15,11 +15,11 @@ enum MacClippySystemQuickLookPolicy {
         fileURLs: [URL]
     ) -> Bool {
         guard contentKind == .files else { return false }
-        let existing = existingFileURLs(in: fileURLs)
-        guard !existing.isEmpty else { return false }
-        // Images and movies stay in the non-key overlay. QLPreviewPanel
-        // becomes key, can change Spaces, and freezes fullscreen hosts.
-        return existing.contains { MacClippyFilePresentation.mediaKind(for: $0) == .other }
+        guard !existingFileURLs(in: fileURLs).isEmpty else { return false }
+        // Never hand Space to QLPreviewPanel. That system window sits below
+        // the dock, becomes key, can change Spaces, and freeze fullscreen
+        // hosts. Documents, images, and movies stay on the in-app overlay.
+        return false
     }
 }
 

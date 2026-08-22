@@ -176,6 +176,12 @@ extension MacClippySettingsView {
                     .font(.caption2.monospaced())
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
+                if !MacClippyPermissionTrustPolicy.permissionsCanPersist(MacClippyCodeSignature.kind()) {
+                    Text(MacClippyPermissionTrustPolicy.unsignedCopyExplanation())
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 HStack(spacing: 8) {
                     Button("Refresh") { refreshPermissionStatus() }
                     if !accessibilityTrusted || !inputMonitoringTrusted {

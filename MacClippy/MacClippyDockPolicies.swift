@@ -68,8 +68,8 @@ enum MacClippyDockCardMetrics {
     // Compact card body that still leaves room for URL and code previews.
     static let height: CGFloat = 220
     static let radius: CGFloat = 22
-    static let gap: CGFloat = 12
-    static let padding: CGFloat = 16
+    static let gap: CGFloat = 32
+    static let padding: CGFloat = 24
     // Use semantic text styles so macOS accessibility font settings scale the
     // card body instead of being trapped at a fixed 13pt size.
     static let contentFont = Font.callout
@@ -77,7 +77,15 @@ enum MacClippyDockCardMetrics {
     // Vertical padding inside the horizontal carousel ScrollViews (applied to
     // the card row). Kept generous enough that the card border never clips
     // against the scroll view's bounds or the panel's top clip shape.
-    static let carouselVerticalPadding: CGFloat = 10
+    static let carouselVerticalPadding: CGFloat = 16
+    // Below-card relative timestamp. Kept outside the rounded face so the
+    // card itself stays content-only, matching the reference caption.
+    static let captionSpacing: CGFloat = 16
+    static let captionHeight: CGFloat = 18
+    // Native app icon sits on the card corner, half outside the rounded
+    // face. It must not be drawn inside the clipped card content.
+    static let sourceBadgeSize: CGFloat = 48
+    static let sourceBadgeOverlap: CGFloat = 20
 }
 
 struct MacClippyDockCategoryPresentation: Identifiable, Equatable, Sendable {
@@ -118,8 +126,8 @@ enum MacClippyDockTimestampPolicy {
         return formatter
     }()
 
-    // Compact relative timestamp for the card header. Mirrors the reference
-    // prototype's "2m / 12m / Yesterday / Tue" style so the header stays short.
+    // Compact relative timestamp for dense chrome such as the preview
+    // header. Card captions use `captionLabel` instead.
     static func relativeLabel(for date: Date, now: Date = Date()) -> String? {
         let interval = now.timeIntervalSince(date)
         if interval < 0 { return nil }
@@ -134,6 +142,40 @@ enum MacClippyDockTimestampPolicy {
             let hours = Int(interval / hour)
             return "\(hours)h"
         }
+        return calendarOrDateLabel(for: date, interval: interval, day: day)
+    }
+
+    // Long relative timestamp for the below-card caption:
+    // "2 minutes ago" / "1 hour ago" / Yesterday / weekday / short date.
+    static func captionLabel(for date: Date, now: Date = Date()) -> String? {
+        let interval = now.timeIntervalSince(date)
+        if interval < 0 { return nil }
+        let minute: TimeInterval = 60
+        let hour: TimeInterval = 3600
+        let day: TimeInterval = 86400
+        if interval < hour {
+            let minutes = max(Int(interval / minute), 1)
+            return minutes == 1 ? "1 minute ago" : "\(minutes) minutes ago"
+        }
+        if interval < day {
+            let hours = max(Int(interval / hour), 1)
+            return hours == 1 ? "1 hour ago" : "\(hours) hours ago"
+        }
+        return calendarOrDateLabel(for: date, interval: interval, day: day)
+    }
+
+    static func displayLabel(for relativeLabel: String) -> String {
+        if relativeLabel.hasSuffix("m") || relativeLabel.hasSuffix("h") {
+            return "\(relativeLabel) ago"
+        }
+        return relativeLabel
+    }
+
+    private static func calendarOrDateLabel(
+        for date: Date,
+        interval: TimeInterval,
+        day: TimeInterval
+    ) -> String? {
         if interval < day * 2 {
             return "Yesterday"
         }
@@ -143,13 +185,6 @@ enum MacClippyDockTimestampPolicy {
             return symbols.indices.contains(weekdayIndex - 1) ? symbols[weekdayIndex - 1] : nil
         }
         return shortDateFormatter.string(from: date)
-    }
-
-    static func displayLabel(for relativeLabel: String) -> String {
-        if relativeLabel.hasSuffix("m") || relativeLabel.hasSuffix("h") {
-            return "\(relativeLabel) ago"
-        }
-        return relativeLabel
     }
 }
 

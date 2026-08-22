@@ -151,6 +151,33 @@ final class MacClippySettingsTests: XCTestCase {
         )
     }
 
+    func testPermissionTrustRequiresATeamSignedCopy() {
+        XCTAssertEqual(
+            MacClippyPermissionTrustPolicy.kind(isSigned: true, isAdhoc: false, teamID: "ABCDE12345"),
+            .teamSigned(teamID: "ABCDE12345")
+        )
+        XCTAssertEqual(
+            MacClippyPermissionTrustPolicy.kind(isSigned: true, isAdhoc: true, teamID: nil),
+            .adhoc
+        )
+        XCTAssertEqual(
+            MacClippyPermissionTrustPolicy.kind(isSigned: false, isAdhoc: false, teamID: nil),
+            .unsigned
+        )
+        XCTAssertTrue(
+            MacClippyPermissionTrustPolicy.permissionsCanPersist(.teamSigned(teamID: "ABCDE12345"))
+        )
+        XCTAssertFalse(MacClippyPermissionTrustPolicy.permissionsCanPersist(.adhoc))
+        XCTAssertFalse(MacClippyPermissionTrustPolicy.permissionsCanPersist(.unsigned))
+    }
+
+    func testPermissionTrustExplainsUnsignedDMGCopies() {
+        let message = MacClippyPermissionTrustPolicy.unsignedCopyExplanation()
+        XCTAssertTrue(message.contains("unsigned"))
+        XCTAssertTrue(message.contains("Apple Development"))
+        XCTAssertTrue(message.contains("/Applications/MacClippy.app"))
+    }
+
     func testPresentationPolicyShowsDockIconByDefaultAndCanHideIt() {
         XCTAssertEqual(
             MacClippyPresentationPolicy.activationPolicy(hideDockIcon: false),

@@ -5,11 +5,11 @@ import SwiftUI
 // surface. Light: cool white/gray panel + backdrop, crisp dark text,
 // restrained gray borders. Dark: adaptive cool-neutral counterpart that keeps
 // the same cool hue family. The accent follows the user-selected macOS system
-// accent (NSColor.controlAccentColor). The panel uses a vibrancy material and
-// clipboard cards use one stable neutral surface. Colors resolve at draw time
-// so an appearance or accent change recomputes immediately. Cards use no
-// gradients or source-tinted surfaces; source-app identity is carried by the
-// icon block and small accents.
+// accent (NSColor.controlAccentColor). The panel uses a vibrancy material.
+// Clipboard cards keep a cool-neutral base, then wash in the source app's
+// extracted accent so Xcode, WeChat, and Safari read as different surfaces.
+// Colors resolve at draw time so an appearance or accent change recomputes
+// immediately.
 @MainActor
 enum MacClippyDockTheme {
     // Light palette (cool white/gray, reference-aligned).
@@ -73,8 +73,8 @@ enum MacClippyDockTheme {
     static var textColor: Color { Color(nsColor: text) }
     static var mutedColor: Color { Color(nsColor: muted) }
     static var muted2Color: Color { Color(nsColor: muted2) }
-    // Lightest text tone for low-priority metadata like timestamps, so the
-    // header reads as source-name-first hierarchy and the timestamp recedes.
+    // Lightest text tone for low-priority metadata like the below-card
+    // timestamp, so the copied content stays first and the caption recedes.
     static var muted3Color: Color {
         return Color(nsColor: isDark ? muted2Dark : mutedLight)
     }
@@ -86,13 +86,15 @@ enum MacClippyDockTheme {
     // do not paint a cooler, near-white stripe over bg0/bg1.
     static var backdropColor: Color { Color(nsColor: isDark ? bg0Dark : bg0) }
 
-    static func sourceCardBackground(accent: NSColor) -> some View {
+    // Clipboard cards sit on the shared cool-neutral fill, then a low-alpha
+    // wash from the source app's icon accent. Image cards still fill the
+    // face; this tint is for text and file metadata surfaces.
+    static func sourceCardBackground(accent: NSColor, elevated: Bool) -> some View {
         ZStack {
-            cardColor
+            elevated ? cardHoverColor : cardColor
             Color(nsColor: accent)
                 .opacity(isDark ? 0.18 : 0.12)
         }
-        .clipShape(RoundedRectangle(cornerRadius: MacClippyDockCardMetrics.radius, style: .continuous))
     }
 
     // Snippet cards use the same stable content surface as clipboard cards.

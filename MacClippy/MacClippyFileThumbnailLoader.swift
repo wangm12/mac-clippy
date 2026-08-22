@@ -133,8 +133,8 @@ struct MacClippyFileThumbnail: View, Equatable {
                 Image(decorative: image, scale: 1, orientation: .up)
                     .resizable()
                     .interpolation(.high)
-                    .scaledToFit()
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .scaledToFill()
+                    .clipped()
             } else {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(Color.primary.opacity(0.06))

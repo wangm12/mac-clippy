@@ -10,6 +10,7 @@ struct MacClippyCardHoverModifier: ViewModifier {
     let enabled: Bool
     let reduceMotion: Bool
     @State private var isHovered = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     func body(content: Content) -> some View {
         let active = enabled && isHovered
@@ -18,13 +19,20 @@ struct MacClippyCardHoverModifier: ViewModifier {
             // shadowing the entire card. During a horizontal trackpad scroll,
             // the pointer crosses card boundaries while the content moves;
             // animated offsets and shadow filters on every card can then
-            // compete with the scroll compositor and feel sticky.
-            .overlay {
+            // compete with the scroll compositor and feel sticky. Pin the
+            // stroke to the rounded face so a below-card caption is not
+            // enclosed in the hover ring.
+            .overlay(alignment: .top) {
                 RoundedRectangle(cornerRadius: MacClippyDockCardMetrics.radius, style: .continuous)
                     .stroke(
                         MacClippyDockTheme.accentColor.opacity(active ? 0.28 : 0),
                         lineWidth: 1
                     )
+                    .frame(
+                        width: MacClippyDockCardMetrics.width,
+                        height: MacClippyDockCardMetrics.height(for: dynamicTypeSize)
+                    )
+                    .allowsHitTesting(false)
             }
             .animation(MacClippyMotion.animation(MacClippyMotion.focusAnimation, reduceMotion: reduceMotion), value: active)
             .onHover { hovering in

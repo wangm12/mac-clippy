@@ -332,11 +332,31 @@ final class MacClippyDockTests: XCTestCase {
             .appendingPathComponent("macclippy-doc-\(UUID().uuidString).pdf")
         try Data("%PDF-1.4".utf8).write(to: pdf)
         defer { try? FileManager.default.removeItem(at: pdf) }
-        XCTAssertTrue(
+        XCTAssertFalse(
             MacClippySystemQuickLookPolicy.prefersSystemQuickLook(
                 contentKind: .files,
                 fileURLs: [pdf]
+            ),
+            "Documents must stay in the in-app overlay. QLPreviewPanel sits below the dock window and Space looks like a no-op."
+        )
+    }
+
+    func testSystemQuickLookDoesNotCaptureSpreadsheetFiles() throws {
+        let xlsx = FileManager.default.temporaryDirectory
+            .appendingPathComponent("macclippy-sheet-\(UUID().uuidString).xlsx")
+        try Data("PK".utf8).write(to: xlsx)
+        defer { try? FileManager.default.removeItem(at: xlsx) }
+
+        XCTAssertEqual(MacClippyFilePresentation.mediaKind(for: xlsx), .other)
+        XCTAssertFalse(
+            MacClippySystemQuickLookPolicy.prefersSystemQuickLook(
+                contentKind: .files,
+                fileURLs: [xlsx]
             )
+        )
+        XCTAssertEqual(
+            MacClippyDockPreviewFileSurface.nativePreviewURL(in: [xlsx])?.path,
+            xlsx.path
         )
     }
 

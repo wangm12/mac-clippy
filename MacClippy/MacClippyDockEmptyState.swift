@@ -31,7 +31,10 @@ extension MacClippyDockCardMetrics {
     }
 
     static func carouselHeight(for dynamicTypeSize: DynamicTypeSize) -> CGFloat {
-        height(for: dynamicTypeSize) + carouselVerticalPadding * 2
+        height(for: dynamicTypeSize)
+            + captionSpacing
+            + captionHeight
+            + carouselVerticalPadding * 2
     }
 }
 

@@ -32,13 +32,13 @@ final class MacClippyPlatformTests: XCTestCase {
             200
         )
         // Upper clamp: a caller requesting more than the supported content
-        // states is clamped back down to the single preferred height (340).
+        // states is clamped back down to the single preferred height.
         XCTAssertEqual(
             MacClippyDockFramePolicy.frame(
                 for: CGRect(x: 0, y: 0, width: 800, height: 900),
                 height: 520
             ).height,
-            340
+            MacClippyDockFramePolicy.preferredHeight
         )
         XCTAssertEqual(
             MacClippyDockFramePolicy.frame(

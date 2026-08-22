@@ -93,7 +93,6 @@ targets:
       - path: MacClippy/MacClippyDockCard.swift
       - path: MacClippy/MacClippyClipboardCardLabel.swift
       - path: MacClippy/MacClippyDockCardContent.swift
-      - path: MacClippy/MacClippyDockCardCategory.swift
       - path: MacClippy/MacClippyDockCardAccessibility.swift
       - path: MacClippy/MacClippyDockCardMenus.swift
       - path: MacClippy/MacClippyDockCardInteraction.swift
