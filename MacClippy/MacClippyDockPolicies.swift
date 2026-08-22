@@ -88,6 +88,30 @@ enum MacClippyDockCardMetrics {
     static let sourceBadgeOverlap: CGFloat = 20
 }
 
+enum MacClippyDockCardBorderPolicy {
+    static func usesAccent(isActive: Bool, isHovered: Bool) -> Bool {
+        isActive || isHovered
+    }
+
+    @MainActor
+    static func color(isActive: Bool, isHovered: Bool) -> Color {
+        if isActive {
+            return MacClippyDockTheme.accentColor.opacity(0.9)
+        }
+        if isHovered {
+            return MacClippyDockTheme.accentColor.opacity(0.45)
+        }
+        return MacClippyDockTheme.lineColor
+    }
+
+    static func lineWidth(isActive: Bool, highContrast: Bool) -> CGFloat {
+        if highContrast {
+            return isActive ? 2.5 : 1.5
+        }
+        return isActive ? 2 : 1
+    }
+}
+
 struct MacClippyDockCategoryPresentation: Identifiable, Equatable, Sendable {
     let id: RecordID
     let name: String

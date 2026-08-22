@@ -35,13 +35,7 @@ extension MacClippyDockView {
         .contentShape(RoundedRectangle(cornerRadius: MacClippyDockCardMetrics.radius, style: .continuous))
         .background(MacClippyDockTheme.snippetCardBackground(elevated: isFocused))
         .overlay {
-            RoundedRectangle(cornerRadius: MacClippyDockCardMetrics.radius, style: .continuous)
-                .stroke(
-                    isFocused
-                        ? MacClippyDockTheme.accentColor.opacity(0.85)
-                        : MacClippyDockTheme.lineColor,
-                    lineWidth: highContrast ? (isFocused ? 2.5 : 1.5) : (isFocused ? 2 : 1)
-                )
+            MacClippyCardBorderOverlay(isActive: isFocused, highContrast: highContrast)
         }
         .shadow(color: .black.opacity(isFocused ? 0.10 : 0.06), radius: 14, y: 4)
     }

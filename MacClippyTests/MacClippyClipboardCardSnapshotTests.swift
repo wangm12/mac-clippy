@@ -169,6 +169,55 @@ final class MacClippyClipboardCardSnapshotTests: XCTestCase {
         XCTAssertEqual(MacClippyDockCardMetrics.padding, 24)
     }
 
+    func testClipboardCardHoverDoesNotDrawASecondOffsetRing() throws {
+        let hoverSource = try modifierSource()
+        XCTAssertFalse(
+            hoverSource.contains(".stroke("),
+            "Hover must not paint a second ring. Trailing badge padding centers that overlay and offsets it from the card face."
+        )
+        XCTAssertTrue(hoverSource.contains("macClippyCardHovered"))
+
+        let cardSource = try appSource(named: "MacClippyClipboardCardLabel.swift")
+        XCTAssertTrue(cardSource.contains("MacClippyCardBorderOverlay"))
+    }
+
+    func testSourceCardBackgroundFillsTheRoundedFace() throws {
+        let theme = try appSource(named: "MacClippyDockTheme.swift")
+        guard let start = theme.range(of: "static func sourceCardBackground"),
+              let end = theme.range(of: "static func snippetCardBackground") else {
+            return XCTFail("sourceCardBackground is missing")
+        }
+        let body = String(theme[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(
+            body.contains("shape.fill"),
+            "A raw Color ZStack paints a square plate behind the rounded card."
+        )
+        XCTAssertFalse(body.contains("ZStack"))
+    }
+
+    func testClipboardCardButtonHasNoRectangularChrome() throws {
+        let source = try appSource(named: "MacClippyDockCard.swift")
+        XCTAssertTrue(source.contains("MacClippyCardButtonStyle"))
+        XCTAssertFalse(
+            source.contains(".buttonStyle(.plain)"),
+            "Plain buttons still paint a rectangular backing on macOS."
+        )
+    }
+
+    func testClipboardCardBorderPolicyKeepsOneStroke() {
+        XCTAssertEqual(
+            MacClippyDockCardBorderPolicy.lineWidth(isActive: false, highContrast: false),
+            1
+        )
+        XCTAssertEqual(
+            MacClippyDockCardBorderPolicy.lineWidth(isActive: true, highContrast: false),
+            2
+        )
+        XCTAssertFalse(MacClippyDockCardBorderPolicy.usesAccent(isActive: false, isHovered: false))
+        XCTAssertTrue(MacClippyDockCardBorderPolicy.usesAccent(isActive: false, isHovered: true))
+        XCTAssertTrue(MacClippyDockCardBorderPolicy.usesAccent(isActive: true, isHovered: false))
+    }
+
     @MainActor
     func testClipboardCardAccessibilityKeepsSourceNameAndCategories() throws {
         let now = Date()
@@ -279,6 +328,15 @@ final class MacClippyClipboardCardSnapshotTests: XCTestCase {
             .deletingLastPathComponent()
             .appendingPathComponent("MacClippy")
         return try String(contentsOf: sourceRoot.appendingPathComponent(fileName), encoding: .utf8)
+    }
+
+    private func modifierSource() throws -> String {
+        let source = try appSource(named: "MacClippyDockView.swift")
+        guard let start = source.range(of: "struct MacClippyCardHoverModifier"),
+              let end = source.range(of: "struct MacClippyDockView") else {
+            return ""
+        }
+        return String(source[start.lowerBound..<end.lowerBound])
     }
 
     private func historyEntry(

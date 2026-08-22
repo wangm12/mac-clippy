@@ -89,13 +89,9 @@ struct MacClippyClipboardCardLabel: View, Equatable {
             )
             .clipShape(shape)
             .overlay {
-                shape.stroke(
-                    context.activeBorder
-                        ? MacClippyDockTheme.accentColor.opacity(0.9)
-                        : MacClippyDockTheme.lineColor,
-                    lineWidth: highContrast
-                        ? (context.activeBorder ? 2.5 : 1.5)
-                        : (context.activeBorder ? 2 : 1)
+                MacClippyCardBorderOverlay(
+                    isActive: context.activeBorder,
+                    highContrast: highContrast
                 )
             }
             .shadow(

@@ -6,34 +6,52 @@ import UniformTypeIdentifiers
 import MacClippyCore
 import MacClippyPlatform
 
+private struct MacClippyCardHoverActiveKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var macClippyCardHovered: Bool {
+        get { self[MacClippyCardHoverActiveKey.self] }
+        set { self[MacClippyCardHoverActiveKey.self] = newValue }
+    }
+}
+
+struct MacClippyCardBorderOverlay: View {
+    let isActive: Bool
+    let highContrast: Bool
+    @Environment(\.macClippyCardHovered) private var isHovered
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: MacClippyDockCardMetrics.radius, style: .continuous)
+            .stroke(
+                MacClippyDockCardBorderPolicy.color(isActive: isActive, isHovered: isHovered),
+                lineWidth: MacClippyDockCardBorderPolicy.lineWidth(
+                    isActive: isActive,
+                    highContrast: highContrast
+                )
+            )
+    }
+}
+
+struct MacClippyCardButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+    }
+}
+
 struct MacClippyCardHoverModifier: ViewModifier {
     let enabled: Bool
     let reduceMotion: Bool
     @State private var isHovered = false
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     func body(content: Content) -> some View {
         let active = enabled && isHovered
         return content
-            // Keep hover feedback on the card surface without moving or
-            // shadowing the entire card. During a horizontal trackpad scroll,
-            // the pointer crosses card boundaries while the content moves;
-            // animated offsets and shadow filters on every card can then
-            // compete with the scroll compositor and feel sticky. Pin the
-            // stroke to the rounded face so a below-card caption is not
-            // enclosed in the hover ring.
-            .overlay(alignment: .top) {
-                RoundedRectangle(cornerRadius: MacClippyDockCardMetrics.radius, style: .continuous)
-                    .stroke(
-                        MacClippyDockTheme.accentColor.opacity(active ? 0.28 : 0),
-                        lineWidth: 1
-                    )
-                    .frame(
-                        width: MacClippyDockCardMetrics.width,
-                        height: MacClippyDockCardMetrics.height(for: dynamicTypeSize)
-                    )
-                    .allowsHitTesting(false)
-            }
+            // Hover retints the card's own stroke via environment. A second
+            // overlay ring was centered on the badge-padded frame and sat
+            // offset from the rounded face.
+            .environment(\.macClippyCardHovered, active)
             .animation(MacClippyMotion.animation(MacClippyMotion.focusAnimation, reduceMotion: reduceMotion), value: active)
             .onHover { hovering in
                 isHovered = enabled && hovering

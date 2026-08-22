@@ -89,12 +89,18 @@ enum MacClippyDockTheme {
     // Clipboard cards sit on the shared cool-neutral fill, then a low-alpha
     // wash from the source app's icon accent. Image cards still fill the
     // face; this tint is for text and file metadata surfaces.
-    static func sourceCardBackground(accent: NSColor, elevated: Bool) -> some View {
-        ZStack {
-            elevated ? cardHoverColor : cardColor
-            Color(nsColor: accent)
-                .opacity(isDark ? 0.18 : 0.12)
-        }
+    static func sourceCardBackground(
+        accent: NSColor,
+        elevated: Bool,
+        in shape: some Shape = RoundedRectangle(
+            cornerRadius: MacClippyDockCardMetrics.radius,
+            style: .continuous
+        )
+    ) -> some View {
+        shape.fill(elevated ? cardHoverColor : cardColor)
+            .overlay {
+                shape.fill(Color(nsColor: accent).opacity(isDark ? 0.18 : 0.12))
+            }
     }
 
     // Snippet cards use the same stable content surface as clipboard cards.

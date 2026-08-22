@@ -77,7 +77,7 @@ extension MacClippyDockView {
         } label: {
             snippetCardContent(snippet, isFocused: isFocused)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MacClippyCardButtonStyle())
         .simultaneousGesture(TapGesture(count: 2).onEnded {
             handleCardClick(clickCount: 2, modifiers: currentModifierFlags(), focus: { model.focus(snippet) })
         })
@@ -170,7 +170,7 @@ extension MacClippyDockView {
             )
             .equatable()
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MacClippyCardButtonStyle())
         .simultaneousGesture(TapGesture(count: 2).onEnded {
             handleCardClick(clickCount: 2, modifiers: currentModifierFlags(), focus: { model.focusAndSelect(item) })
         })
