@@ -100,6 +100,18 @@ Git.
 identity when one is available; otherwise the DMG is unsigned. `make release`
 is the Developer ID archive → final DMG → notarize/staple/Gatekeeper flow.
 
+GitHub Actions publishes that DMG to a GitHub Release when you push a version
+tag. `dist/` stays gitignored; the runner builds a fresh DMG and uploads it.
+
+```sh
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The `Release` workflow then creates `https://github.com/wangm12/mac-clippy/releases/tag/v1.0.0`
+with `MacClippy.dmg`. Re-running the same tag replaces the asset. You can also
+start **Actions → Release → Run workflow** to build a DMG without publishing.
+
 To create a signed artifact, provide a Developer ID identity and team ID:
 
 ```sh
