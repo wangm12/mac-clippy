@@ -46,8 +46,16 @@ enum MacClippyDockTheme {
         NSColor.controlAccentColor.withAlphaComponent(0.16)
     }
 
+    private static var cachedAppearanceName: NSAppearance.Name?
+    private static var cachedIsDark = false
+
     static var isDark: Bool {
-        NSApp?.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let name = NSApp?.effectiveAppearance.name
+        if name != cachedAppearanceName {
+            cachedAppearanceName = name
+            cachedIsDark = NSApp?.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        }
+        return cachedIsDark
     }
 
     static var panel: NSColor { isDark ? panelDark : panelLight }

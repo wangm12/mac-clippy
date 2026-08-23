@@ -22,15 +22,8 @@ enum MacClippyDockCardAccessibilityPolicy {
         switch context.item.contentKind {
         case .text, .html, .rtf:
             break
-        case .image:
-            if let dimensions = context.item.typeMetadataSubtitle {
-                parts.append(dimensions)
-            }
-        case .files:
-            parts.append(MacClippyFilePresentation.title(fileCount: context.item.fileURLs.count))
-            if let url = context.item.fileURLs.first {
-                parts.append(MacClippyFilePresentation.displayName(for: url))
-            }
+        case .image, .files:
+            parts.append(MacClippyDockCardVisibleNamePolicy.text(for: context.item))
         }
         if let categorySummary = MacClippyDockCardCategoryPolicy.accessibilitySummary(for: context.categories) {
             parts.append(categorySummary)

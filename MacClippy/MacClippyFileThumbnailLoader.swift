@@ -91,8 +91,11 @@ private actor MacClippyFileThumbnailFlights {
 private final class MacClippyFileThumbnailCache: @unchecked Sendable {
     private let lock = NSLock()
     private let countLimit = 48
+    private let costLimit = 32 * 1_024 * 1_024
     private var order: [String] = []
     private var images: [String: CGImage] = [:]
+    private var costs: [String: Int] = [:]
+    private var totalCost = 0
 
     func object(for key: String) -> CGImage? {
         lock.lock()
@@ -106,13 +109,21 @@ private final class MacClippyFileThumbnailCache: @unchecked Sendable {
     func setObject(_ image: CGImage, for key: String) {
         lock.lock()
         defer { lock.unlock() }
-        if images[key] == nil {
+        let cost = max(1, image.width * image.height * 4)
+        if let existingCost = costs[key] {
+            totalCost -= existingCost
+        } else {
             order.append(key)
         }
         images[key] = image
-        while images.count > countLimit, let oldest = order.first {
+        costs[key] = cost
+        totalCost += cost
+        while (images.count > countLimit || totalCost > costLimit), let oldest = order.first {
             order.removeFirst()
             images.removeValue(forKey: oldest)
+            if let removedCost = costs.removeValue(forKey: oldest) {
+                totalCost -= removedCost
+            }
         }
     }
 }

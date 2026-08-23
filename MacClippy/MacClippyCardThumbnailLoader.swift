@@ -114,6 +114,11 @@ final class MacClippyCardThumbnailLoader: @unchecked Sendable {
         cache.object(forKey: RequestKey(id: id, maxPixelSize: max(1, maxPixelSize)).cacheKey)?.image
     }
 
+    func resetForSessionEnd() {
+        queue.cancelAllOperations()
+        cache.removeAllObjects()
+    }
+
     func image(for id: RecordID, maxPixelSize: Int = 480) async -> CGImage? {
         let box = MacClippyThumbnailImageResumeBox()
         let waiter = load(id: id, maxPixelSize: maxPixelSize) { image in

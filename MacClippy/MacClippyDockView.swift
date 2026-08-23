@@ -88,16 +88,8 @@ struct MacClippyDockView: View {
     @State var dropConfirmationGeneration: UInt = 0
     // P2a: inline custom-name editor state is owned by the dock model and is
     // presented inside this panel, so keyboard events stay with the editor.
-    // Pointer hover state for the +New category button. Hover retints the
-    // plus icon; the glass chrome stays in place so the control never jumps.
-    @State var hoveredNewCategory = false
-    // Hover state for filter/category pills so every interactive rail surface
-    // has an instant hover indicator, not just the +New pill.
-    @State var hoveredFilterPill: String?
-    // Gear/About button hover so it shares the same hover treatment as the
-    // other circular icon buttons (+New).
-    @State var hoveredGear = false
-    @State var hoveredSearch = false
+    // Header hover lives on leaf controls (pills, search, gear, +New) so a
+    // rail hover cannot invalidate the carousel.
     // One-shot flag for the action bar staggered button fade-in. Set on the
     // bar's first onAppear so buttons orchestrate left-to-right once.
     @State var actionBarAppeared = false

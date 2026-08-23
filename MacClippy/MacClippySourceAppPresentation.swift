@@ -268,6 +268,7 @@ enum MacClippySourceAppResolver {
         private let storage: NSCache<NSString, CacheEntry> = {
             let storage = NSCache<NSString, CacheEntry>()
             storage.countLimit = 128
+            storage.totalCostLimit = 8 * 1_024 * 1_024
             return storage
         }()
 
@@ -276,7 +277,9 @@ enum MacClippySourceAppResolver {
         }
 
         func setObject(_ entry: CacheEntry, forKey key: String) {
-            storage.setObject(entry, forKey: key as NSString)
+            let icon = entry.presentation.icon
+            let cost = icon.map { max(1, Int($0.size.width * $0.size.height * 4)) } ?? 1
+            storage.setObject(entry, forKey: key as NSString, cost: cost)
         }
     }
 }

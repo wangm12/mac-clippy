@@ -102,7 +102,6 @@ extension MacClippyRuntime {
         guard !uncachedMetas.isEmpty else { return entriesByID }
         let bodyMetas = metadataOnlyHistoryEntries(
             for: uncachedMetas,
-            validateContentKind: validateContentKind,
             entriesByID: &entriesByID
         )
         guard !bodyMetas.isEmpty else { return entriesByID }
@@ -142,13 +141,16 @@ extension MacClippyRuntime {
 
     private func metadataOnlyHistoryEntries(
         for metas: [ClipboardItemMeta],
-        validateContentKind: Bool,
         entriesByID: inout [RecordID: MacClippyHistoryEntry]
     ) -> [ClipboardItemMeta] {
-        guard !validateContentKind else { return metas }
         var bodyMetas: [ClipboardItemMeta] = []
         bodyMetas.reserveCapacity(metas.count)
         for meta in metas {
+            // Text/HTML/RTF cards only need the persisted preview. Kind
+            // validation still decrypts images, files, and records whose
+            // stored kind is missing. Reconciliation already checks envelope
+            // kinds, so pagination must not decode rich-text bodies just to
+            // show a 120-character card.
             guard let entry = metadataOnlyHistoryEntry(for: meta) else {
                 bodyMetas.append(meta)
                 continue

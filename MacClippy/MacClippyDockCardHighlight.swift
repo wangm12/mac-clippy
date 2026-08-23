@@ -46,7 +46,7 @@ extension MacClippyDockView {
             text,
             font: font,
             color: color,
-            terms: terms ?? MacClippySearchGrammar.parse(model.query).bareTerms
+            terms: terms ?? model.highlightTerms,
         )
     }
 }

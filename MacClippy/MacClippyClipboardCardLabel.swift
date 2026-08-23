@@ -268,25 +268,20 @@ extension MacClippyClipboardCardLabel {
             height: MacClippyDockCardMetrics.height
         )
         if let url = urls.first, MacClippyFilePresentation.mediaKind(for: url) == .image {
-            MacClippyFileThumbnail(url: url, pointSize: pointSize)
-                .equatable()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            cardNamedPreview(
+                MacClippyFileThumbnail(url: url, pointSize: pointSize).equatable(),
+                name: MacClippyDockCardVisibleNamePolicy.text(for: item)
+            )
         } else if let url = urls.first {
             VStack(spacing: 10) {
                 MacClippyFileThumbnail(url: url, pointSize: CGSize(width: 96, height: 96))
                     .equatable()
                     .frame(width: 72, height: 72)
-                highlighted(
-                    MacClippyFilePresentation.displayName(for: url),
-                    font: .callout.weight(.medium)
-                )
-                .lineLimit(2)
-                .multilineTextAlignment(.center)
-                .truncationMode(.middle)
+                cardVisibleName(MacClippyDockCardVisibleNamePolicy.text(for: item))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            Text(item.typeMetadataSubtitle ?? label(for: item.contentKind))
+            Text(MacClippyDockCardVisibleNamePolicy.text(for: item))
                 .font(MacClippyDockCardMetrics.contentFont)
                 .foregroundStyle(MacClippyDockTheme.contentMutedColor)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -295,9 +290,30 @@ extension MacClippyClipboardCardLabel {
 
     @ViewBuilder
     func cardImageBody(_ item: MacClippyHistoryEntry) -> some View {
-        MacClippyCardImageThumbnail(itemID: item.id, load: loadThumbnail)
-            .equatable()
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        cardNamedPreview(
+            MacClippyCardImageThumbnail(itemID: item.id, load: loadThumbnail).equatable(),
+            name: MacClippyDockCardVisibleNamePolicy.text(for: item)
+        )
+    }
+
+    @ViewBuilder
+    func cardNamedPreview<Preview: View>(_ preview: Preview, name: String) -> some View {
+        VStack(spacing: 8) {
+            preview
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            cardVisibleName(name)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    func cardVisibleName(_ name: String) -> some View {
+        highlighted(
+            name,
+            font: .callout.weight(.semibold)
+        )
+        .lineLimit(2)
+        .multilineTextAlignment(.center)
+        .truncationMode(.middle)
     }
 
     @ViewBuilder

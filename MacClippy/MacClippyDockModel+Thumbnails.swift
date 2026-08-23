@@ -59,6 +59,7 @@ private func macClippyLoadThumbnail(
 extension MacClippyDockModel {
     static func makeThumbnailLoader(runtime: MacClippyRuntime) -> MacClippyCardThumbnailLoader {
         let cache = NSCache<NSString, MacClippyCardThumbnailLoader.CacheEntry>()
+        cache.countLimit = 48
         cache.totalCostLimit = 64 * 1024 * 1024
         let queue = OperationQueue()
         queue.name = "com.macallyouneed.macclippy.thumbnail"

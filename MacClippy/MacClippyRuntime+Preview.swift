@@ -88,10 +88,13 @@ extension MacClippyRuntime {
         // when the bounded prefix is the whole document.
         let displayText = kind == .json
             ? TextTransform.prettyJSON.apply(to: classificationSource)
-            : text
+            : classificationSource
         return .text(
             MacClippyRuntimePreviewText(
-                displayText: MacClippyDockPreviewTextPolicy.displayText(for: displayText),
+                displayText: MacClippyDockPreviewTextPolicy.displayText(
+                    for: displayText,
+                    totalCharacterCount: text.count
+                ),
                 characterCount: text.count,
                 kind: kind
             )

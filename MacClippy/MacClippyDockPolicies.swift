@@ -93,6 +93,35 @@ enum MacClippyDockCardMetrics {
     static let sourceBadgeOverlap: CGFloat = 20
 }
 
+/// Image and file cards must show a name on the face. Finder copies use the
+/// filename; clipboard images fall back to a stable "Image" label so a photo
+/// is never an unlabeled thumbnail.
+enum MacClippyDockCardVisibleNamePolicy {
+    static func text(for item: MacClippyHistoryEntry) -> String {
+        if let customLabel = item.customLabel, !customLabel.isEmpty {
+            return customLabel
+        }
+        switch item.contentKind {
+        case .files:
+            guard let first = item.fileURLs.first else { return "Files" }
+            let name = MacClippyFilePresentation.displayName(for: first)
+            if item.fileURLs.count <= 1 {
+                return name.isEmpty ? "Files" : name
+            }
+            return name.isEmpty
+                ? MacClippyFilePresentation.title(fileCount: item.fileURLs.count)
+                : "\(name) + \(item.fileURLs.count - 1)"
+        case .image:
+            if let dimensions = item.typeMetadataSubtitle, !dimensions.isEmpty {
+                return "Image · \(dimensions)"
+            }
+            return "Image"
+        case .text, .html, .rtf:
+            return item.displayTitle
+        }
+    }
+}
+
 enum MacClippyDockCardBorderPolicy {
     static func usesAccent(isActive: Bool, isHovered: Bool) -> Bool {
         isActive || isHovered

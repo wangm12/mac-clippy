@@ -142,7 +142,7 @@ extension MacClippyDockView {
             activeBorder: activeBorder,
             isElevated: isFocused,
             categories: model.categories(for: item.id),
-            highlightTerms: MacClippySearchGrammar.parse(model.query).bareTerms,
+            highlightTerms: model.highlightTerms,
             isPreviewVisible: model.isPreviewVisible,
             sourcePresentationGeneration: sourcePresentationGeneration
         )

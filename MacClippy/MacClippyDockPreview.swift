@@ -41,10 +41,14 @@ struct MacClippyDockPreviewMetadata: Equatable {
 enum MacClippyDockPreviewTextPolicy {
     static let maxRenderedCharacters = 120_000
 
-    static func displayText(for text: String) -> String {
-        guard text.count > maxRenderedCharacters else { return text }
-        let remaining = text.count - maxRenderedCharacters
-        return String(text.prefix(maxRenderedCharacters))
+    static func displayText(for text: String, totalCharacterCount: Int? = nil) -> String {
+        let total = totalCharacterCount ?? text.count
+        guard total > maxRenderedCharacters else { return text }
+        let kept = text.count > maxRenderedCharacters
+            ? String(text.prefix(maxRenderedCharacters))
+            : text
+        let remaining = total - min(kept.count, maxRenderedCharacters)
+        return kept
             + "\n\n— Preview shortened for performance · \(remaining) more characters —"
     }
 }

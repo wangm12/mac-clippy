@@ -7,6 +7,7 @@ import SwiftUI
 extension MacClippyDockModel {
     func selectTab(_ tab: MacClippyDockTab) {
         guard tab != selectedTab else { return }
+        let wasSnippets = selectedTab == .snippets
         invalidateAllSelectionScope()
         selectedTab = tab
         focusedIndex = 0
@@ -20,7 +21,9 @@ extension MacClippyDockModel {
         // scoped to one visible list; a stale selection from the previous tab
         // would reference IDs that are not in the new visible list.
         selection = MacClippyDockSelectionState()
-        scheduleSnippetFilter()
+        if tab == .snippets || wasSnippets {
+            scheduleSnippetFilter()
+        }
         recomputeDedupRuns()
     }
 
@@ -147,7 +150,12 @@ extension MacClippyDockModel {
     /// host); followers map to 1 so they show no badge.
     func recomputeDedupRuns() {
         let items = visibleItems
-        guard !items.isEmpty else { dedupRunCounts = [:]; return }
+        guard !items.isEmpty else {
+            if !dedupRunCounts.isEmpty {
+                dedupRunCounts = [:]
+            }
+            return
+        }
         var counts: [RecordID: Int] = [:]
         var runStart = 0
         for itemIndex in 1 ... items.count {
@@ -166,6 +174,7 @@ extension MacClippyDockModel {
                 runStart = itemIndex
             }
         }
+        guard counts != dedupRunCounts else { return }
         dedupRunCounts = counts
     }
 
@@ -349,5 +358,6 @@ extension MacClippyDockModel {
         nameOperationGeneration &+= 1
         isSelecting = false
         clearActionFeedback()
+        thumbnailLoader.resetForSessionEnd()
     }
 }

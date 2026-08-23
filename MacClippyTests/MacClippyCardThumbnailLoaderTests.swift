@@ -150,6 +150,22 @@ final class MacClippyCardThumbnailLoaderTests: XCTestCase {
         XCTAssertNotNil(loader.cachedImage(id: id, maxPixelSize: 32))
     }
 
+    func testResetForSessionEndClearsCachedThumbnails() throws {
+        let id = RecordID.generate()
+        let finished = expectation(description: "thumbnail cached")
+        let loader = makeLoader { _, _, _ in Self.pngImage() }
+        _ = loader.load(id: id, maxPixelSize: 32) { image in
+            XCTAssertNotNil(image)
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 2)
+        XCTAssertNotNil(loader.cachedImage(id: id, maxPixelSize: 32))
+
+        loader.resetForSessionEnd()
+
+        XCTAssertNil(loader.cachedImage(id: id, maxPixelSize: 32))
+    }
+
     private func makeLoader(
         loadImage: @escaping MacClippyCardThumbnailLoader.LoadImage
     ) -> MacClippyCardThumbnailLoader {

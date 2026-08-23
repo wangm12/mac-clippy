@@ -175,6 +175,7 @@ final class MacClippyClipboardCardSnapshotTests: XCTestCase {
     func testClipboardCardImagePreviewFitsInsideTheFace() throws {
         let label = try appSource(named: "MacClippyClipboardCardLabel.swift")
         XCTAssertTrue(label.contains("MacClippyDockCardMetrics.imageInset"))
+        XCTAssertTrue(label.contains("cardNamedPreview"))
         XCTAssertFalse(label.contains("fillsCard ? 0"))
 
         let image = try appSource(named: "MacClippyCardImageThumbnail.swift")
@@ -304,6 +305,62 @@ final class MacClippyClipboardCardSnapshotTests: XCTestCase {
         XCTAssertEqual(context.snapshot.fileNames, ["passport.pdf"])
         XCTAssertEqual(context.snapshot.filePaths, ["/Users/me/H1B/passport.pdf"])
         XCTAssertEqual(context.snapshot.typeMetadataSubtitle, "1 file")
+        XCTAssertEqual(MacClippyDockCardVisibleNamePolicy.text(for: item), "passport.pdf")
+    }
+
+    @MainActor
+    func testImageAndFileCardsAlwaysExposeAVisibleName() throws {
+        let fileURL = URL(fileURLWithPath: "/Users/me/H1B/passport.jpg")
+        let fileItem = MacClippyHistoryEntry(
+            meta: ClipboardItemMeta(
+                id: .generate(),
+                created: Date(timeIntervalSince1970: 1),
+                modified: Date(timeIntervalSince1970: 1),
+                deviceID: try XCTUnwrap(DeviceID(rawValue: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")),
+                lamport: 1,
+                preview: "passport.jpg"
+            ),
+            contentKind: .files,
+            preview: "passport.jpg",
+            fileURLs: [fileURL]
+        )
+        let imageItem = MacClippyHistoryEntry(
+            meta: ClipboardItemMeta(
+                id: .generate(),
+                created: Date(timeIntervalSince1970: 1),
+                modified: Date(timeIntervalSince1970: 1),
+                deviceID: try XCTUnwrap(DeviceID(rawValue: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")),
+                lamport: 1,
+                preview: "(image 640x480)"
+            ),
+            contentKind: .image,
+            preview: "(image 640x480)",
+            imageDimensions: CGSize(width: 640, height: 480)
+        )
+        let namedImage = MacClippyHistoryEntry(
+            meta: ClipboardItemMeta(
+                id: .generate(),
+                created: Date(timeIntervalSince1970: 1),
+                modified: Date(timeIntervalSince1970: 1),
+                deviceID: try XCTUnwrap(DeviceID(rawValue: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")),
+                lamport: 1,
+                preview: "(image 640x480)",
+                customLabel: "Visa photo"
+            ),
+            contentKind: .image,
+            preview: "(image 640x480)",
+            imageDimensions: CGSize(width: 640, height: 480)
+        )
+
+        XCTAssertEqual(MacClippyDockCardVisibleNamePolicy.text(for: fileItem), "passport.jpg")
+        XCTAssertEqual(MacClippyDockCardVisibleNamePolicy.text(for: imageItem), "Image · 640×480")
+        XCTAssertEqual(MacClippyDockCardVisibleNamePolicy.text(for: namedImage), "Visa photo")
+
+        let label = try appSource(named: "MacClippyClipboardCardLabel.swift")
+        XCTAssertTrue(label.contains("MacClippyDockCardVisibleNamePolicy.text(for: item)"))
+        XCTAssertTrue(label.contains("cardNamedPreview"))
+        XCTAssertTrue(label.contains("cardImageBody"))
+        XCTAssertTrue(label.contains("cardFilesBody"))
     }
 
     @MainActor

@@ -112,6 +112,7 @@
 		B88EBDA7581A5F5A9485471E /* MacClippyRuntime+OCR.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55DF3271F743492843CB78DA /* MacClippyRuntime+OCR.swift */; };
 		B91581FF4047C0E3A47DCF7E /* MacClippyDockModel+Thumbnails.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A125F47F80678915299B20E /* MacClippyDockModel+Thumbnails.swift */; };
 		BB892661B064221377B260D3 /* MacClippySettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D44EFF599CC51DB9718E963D /* MacClippySettingsTests.swift */; };
+		BDCD0042A79EEC12336CBE1D /* MacClippyDockEfficiencyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A19B7211742FCBE086F72951 /* MacClippyDockEfficiencyTests.swift */; };
 		C167031ED07432CFA1E85398 /* MacClippyDockCardInteraction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AECB7280BD1A70922F8AF18 /* MacClippyDockCardInteraction.swift */; };
 		C5C88E59C99A090BF46BB6FC /* MacClippyDockTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 242C61A83B4AAD709F112DD1 /* MacClippyDockTests.swift */; };
 		C9484B2E70F36874703E2019 /* MacClippySettingsPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA6FE206A4D8E018862B2657 /* MacClippySettingsPreferences.swift */; };
@@ -248,6 +249,7 @@
 		9B416F7F314D25442A52F67B /* MacClippyRuntime+StorageHealth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MacClippyRuntime+StorageHealth.swift"; sourceTree = "<group>"; };
 		9D3249B8C46EE6762DF14AFE /* MacClippyRuntimeOCRConcurrencyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacClippyRuntimeOCRConcurrencyTests.swift; sourceTree = "<group>"; };
 		9F8B6BFA7CD0C2CD0429A0F4 /* MacClippyDetails+Sections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MacClippyDetails+Sections.swift"; sourceTree = "<group>"; };
+		A19B7211742FCBE086F72951 /* MacClippyDockEfficiencyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacClippyDockEfficiencyTests.swift; sourceTree = "<group>"; };
 		A2056ED75368648BB318103B /* MacClippyUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacClippyUITests.swift; sourceTree = "<group>"; };
 		A216B864FEDABDB70146DF21 /* MacClippyCardImageThumbnail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacClippyCardImageThumbnail.swift; sourceTree = "<group>"; };
 		A480CD45FDBA318EC1E81135 /* MacClippyRuntimeConcurrencyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacClippyRuntimeConcurrencyTests.swift; sourceTree = "<group>"; };
@@ -445,6 +447,7 @@
 				EE1AC9F2C9B79B45BD053261 /* MacClippyCopyAllTests.swift */,
 				3C353685C484040252BE88EB /* MacClippyCopyPrepareFailureTests.swift */,
 				F361044F7F974056E4CDBABE /* MacClippyDockCategoryTests.swift */,
+				A19B7211742FCBE086F72951 /* MacClippyDockEfficiencyTests.swift */,
 				19C5CA0002372D1FED910B70 /* MacClippyDockEmptyStateTests.swift */,
 				4F67032BA5C1705112E75849 /* MacClippyDockOutsideClickTests.swift */,
 				B3561E8F742015A7A25C52F4 /* MacClippyDockPinboardVisibleItemsTests.swift */,
@@ -662,6 +665,7 @@
 				479D8BF27618CEEA77E94A3E /* MacClippyCopyAllTests.swift in Sources */,
 				D754502AF47EF6C40A20FC39 /* MacClippyCopyPrepareFailureTests.swift in Sources */,
 				F6B4F76FAC31C773CE3AFEA4 /* MacClippyDockCategoryTests.swift in Sources */,
+				BDCD0042A79EEC12336CBE1D /* MacClippyDockEfficiencyTests.swift in Sources */,
 				E2C154AF005486E236E48FD1 /* MacClippyDockEmptyStateTests.swift in Sources */,
 				2DDCDF70E92D17B41B6E66C2 /* MacClippyDockOutsideClickTests.swift in Sources */,
 				50B2E11BB1DAB6E50BAAB41B /* MacClippyDockPinboardVisibleItemsTests.swift in Sources */,

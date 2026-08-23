@@ -274,6 +274,19 @@ final class MacClippyHistoryPaginationTests: XCTestCase {
         })
     }
 
+    func testHTMLHistoryPageUsesPersistedPreviewInsteadOfDecodingTheBody() throws {
+        let html = "<p>" + String(repeating: "Hello ", count: 400) + "</p>"
+        let meta = try runtime.appendTestRecord(.html(html))
+
+        let page = try runtime.historyPage(limit: 16, query: "")
+        let entry = try XCTUnwrap(page.items.first { $0.id == meta.id })
+
+        XCTAssertEqual(entry.contentKind, .html)
+        XCTAssertEqual(entry.preview, String(meta.preview.prefix(2_000)))
+        XCTAssertLessThan(entry.preview.count, 200)
+        XCTAssertFalse(entry.preview.contains("<p>"))
+    }
+
     private func wait(until condition: () -> Bool, timeout: TimeInterval = 2.0) {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline, !condition() {

@@ -4,6 +4,112 @@ import UniformTypeIdentifiers
 
 import MacClippyCore
 
+struct MacClippyDockChromeIconButton: View {
+    let systemImage: String
+    let glassID: String
+    let namespace: Namespace.ID
+    let reduceMotion: Bool
+    let accessibilityLabel: String
+    let accessibilityIdentifier: String
+    let help: String
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(isHovered ? MacClippyDockTheme.accentColor : MacClippyDockTheme.textColor)
+                .frame(width: 36, height: 36)
+                .macClippyGlassEffectID(glassID, in: namespace, enabled: !reduceMotion)
+        }
+        .macClippyChromeButtonStyle()
+        .contentShape(Circle())
+        .onHover { hovering in isHovered = hovering }
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityIdentifier(accessibilityIdentifier)
+        .help(help)
+    }
+}
+
+struct MacClippyDockFilterPill: View {
+    let title: String
+    let selected: Bool
+    var isDropTarget = false
+    var isDropConfirmed = false
+    var accentHex: String? = nil
+    let reduceMotion: Bool
+    let highContrast: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        let accentColor = accentHex.map { Color(macClippyHex: $0) }
+        let dropScale = reduceMotion ? 1 :
+            (isDropConfirmed ? 1.08 : (isDropTarget ? 1.05 : 1))
+        let ringWidth: CGFloat = highContrast ? 2 : (isDropConfirmed ? 2.5 : (isDropTarget ? 2 : MacClippyDockTheme.pillBorderWidth))
+        let ringColor = isDropConfirmed ? (accentColor ?? MacClippyDockTheme.accentColor) :
+            (isDropTarget ? MacClippyDockTheme.interactiveStrongBorder :
+                (isHovered ? MacClippyDockTheme.interactiveFocusBorder : MacClippyDockTheme.pillRestBorder))
+        return Button(action: action) {
+            HStack(spacing: 6) {
+                if let accentColor {
+                    Circle()
+                        .fill(accentColor)
+                        .frame(width: 7, height: 7)
+                }
+                Text(title)
+                    .font(.body.weight(selected ? .bold : .semibold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(
+                isHovered ? MacClippyDockTheme.accentColor : MacClippyDockTheme.textColor
+            )
+            .padding(.horizontal, 14)
+            .frame(height: 36)
+            .contentShape(Capsule())
+        }
+        .macClippyFilterChipStyle(
+            selected: selected || isDropConfirmed,
+            hovered: isHovered,
+            tint: accentColor ?? MacClippyDockTheme.accentColor
+        )
+        .overlay(
+            Capsule()
+                .inset(by: MacClippyDockTheme.pillBorderInset)
+                .stroke(ringColor, lineWidth: ringWidth)
+        )
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityValue(selected ? "Selected" : "")
+        .contentShape(Capsule())
+        .scaleEffect(dropScale)
+        .animation(
+            MacClippyMotion.animation(MacClippyMotion.hoverAnimation, reduceMotion: reduceMotion),
+            value: isDropTarget
+        )
+        .animation(
+            MacClippyMotion.animation(MacClippyMotion.hoverAnimation, reduceMotion: reduceMotion),
+            value: isDropConfirmed
+        )
+        .animation(nil, value: selected)
+        .animation(nil, value: isHovered)
+        .transaction { transaction in
+            if !isDropTarget && !isDropConfirmed {
+                transaction.animation = nil
+            }
+        }
+        .onHover { hovering in
+            guard MacClippyDockHoverPolicy.shouldApplyHover(
+                hovering,
+                pressedMouseButtons: NSEvent.pressedMouseButtons
+            ) else { return }
+            isHovered = hovering
+        }
+    }
+}
+
 extension MacClippyDockView {
     var filterPillRow: some View {
         HStack(spacing: 6) {
@@ -69,22 +175,18 @@ extension MacClippyDockView {
             newCategoryButton
             // A direct Settings action keeps the gear one click from the
             // native preferences window.
-            Button {
+            MacClippyDockChromeIconButton(
+                systemImage: "gearshape",
+                glassID: "gear",
+                namespace: headerGlassNamespace,
+                reduceMotion: reduceMotion,
+                accessibilityLabel: "Settings",
+                accessibilityIdentifier: "macClippy.settingsButton",
+                help: "Settings"
+            ) {
                 MacClippySettingsWindowCoordinator.shared.bringToFront()
                 showAboutPanel()
-            } label: {
-                Image(systemName: "gearshape")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(hoveredGear ? MacClippyDockTheme.accentColor : MacClippyDockTheme.textColor)
-                    .frame(width: 36, height: 36)
-                    .macClippyGlassEffectID("gear", in: headerGlassNamespace, enabled: !reduceMotion)
             }
-            .macClippyChromeButtonStyle()
-            .contentShape(Circle())
-            .onHover { hovering in hoveredGear = hovering }
-            .accessibilityLabel("Settings")
-            .accessibilityIdentifier("macClippy.settingsButton")
-            .help("Settings")
         }
     }
 
@@ -96,21 +198,17 @@ extension MacClippyDockView {
     // +New as a standalone icon button, separated from the filter pills so
     // the tab row stays semantically pure (filters only). Instant hover.
     var newCategoryButton: some View {
-        Button {
+        MacClippyDockChromeIconButton(
+            systemImage: "plus",
+            glassID: "newCategory",
+            namespace: headerGlassNamespace,
+            reduceMotion: reduceMotion,
+            accessibilityLabel: "Create category",
+            accessibilityIdentifier: "macClippy.createCategoryButton",
+            help: "Create category"
+        ) {
             model.presentCreateCategory()
-        } label: {
-            Image(systemName: "plus")
-                .font(.body.weight(.semibold))
-                .foregroundStyle(hoveredNewCategory ? MacClippyDockTheme.accentColor : MacClippyDockTheme.textColor)
-                .frame(width: 36, height: 36)
-                .macClippyGlassEffectID("newCategory", in: headerGlassNamespace, enabled: !reduceMotion)
         }
-        .macClippyChromeButtonStyle()
-        .contentShape(Circle())
-        .onHover { hovering in hoveredNewCategory = hovering }
-        .accessibilityLabel("Create category")
-        .accessibilityIdentifier("macClippy.createCategoryButton")
-        .help("Create category")
     }
 
     func filterPill(
@@ -121,68 +219,16 @@ extension MacClippyDockView {
         accentHex: String? = nil,
         action: @escaping () -> Void
     ) -> some View {
-        let accentColor = accentHex.map { Color(macClippyHex: $0) }
-        let isHovered = hoveredFilterPill == title
-        let dropScale = reduceMotion ? 1 :
-            (isDropConfirmed ? 1.08 : (isDropTarget ? 1.05 : 1))
-        let ringWidth: CGFloat = highContrast ? 2 : (isDropConfirmed ? 2.5 : (isDropTarget ? 2 : MacClippyDockTheme.pillBorderWidth))
-        let ringColor = isDropConfirmed ? (accentColor ?? MacClippyDockTheme.accentColor) :
-            (isDropTarget ? MacClippyDockTheme.interactiveStrongBorder :
-                (isHovered ? MacClippyDockTheme.interactiveFocusBorder : MacClippyDockTheme.pillRestBorder))
-        return Button(action: action) {
-            HStack(spacing: 6) {
-                if let accentColor {
-                    Circle()
-                        .fill(accentColor)
-                        .frame(width: 7, height: 7)
-                }
-                Text(title)
-                    .font(.body.weight(selected ? .bold : .semibold))
-                    .lineLimit(1)
-            }
-            .foregroundStyle(
-                isHovered ? MacClippyDockTheme.accentColor : MacClippyDockTheme.textColor
-            )
-            .padding(.horizontal, 14)
-            .frame(height: 36)
-            .contentShape(Capsule())
-        }
-        .macClippyFilterChipStyle(
-            selected: selected || isDropConfirmed,
-            hovered: isHovered,
-            tint: accentColor ?? MacClippyDockTheme.accentColor
+        MacClippyDockFilterPill(
+            title: title,
+            selected: selected,
+            isDropTarget: isDropTarget,
+            isDropConfirmed: isDropConfirmed,
+            accentHex: accentHex,
+            reduceMotion: reduceMotion,
+            highContrast: highContrast,
+            action: action
         )
-        .overlay(
-            Capsule()
-                .inset(by: MacClippyDockTheme.pillBorderInset)
-                .stroke(ringColor, lineWidth: ringWidth)
-        )
-        .accessibilityAddTraits(selected ? .isSelected : [])
-        .accessibilityValue(selected ? "Selected" : "")
-        .contentShape(Capsule())
-        .scaleEffect(dropScale)
-        .animation(
-            MacClippyMotion.animation(MacClippyMotion.hoverAnimation, reduceMotion: reduceMotion),
-            value: isDropTarget
-        )
-        .animation(
-            MacClippyMotion.animation(MacClippyMotion.hoverAnimation, reduceMotion: reduceMotion),
-            value: isDropConfirmed
-        )
-        .animation(nil, value: selected)
-        .animation(nil, value: isHovered)
-        .transaction { transaction in
-            if !isDropTarget && !isDropConfirmed {
-                transaction.animation = nil
-            }
-        }
-        .onHover { hovering in
-            guard MacClippyDockHoverPolicy.shouldApplyHover(
-                hovering,
-                pressedMouseButtons: NSEvent.pressedMouseButtons
-            ) else { return }
-            hoveredFilterPill = hovering ? title : (hoveredFilterPill == title ? nil : hoveredFilterPill)
-        }
     }
 
     func handleDrop(_ providers: [NSItemProvider], on pinboard: MacClippyPinboardEntry) -> Bool {

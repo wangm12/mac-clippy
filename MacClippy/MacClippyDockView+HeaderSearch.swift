@@ -1,5 +1,74 @@
 import SwiftUI
 
+struct MacClippyDockSearchFieldWell<Content: View>: View {
+    let isSearchFocused: Bool
+    let highContrast: Bool
+    let reduceMotion: Bool
+    let content: Content
+
+    @State private var hoveredSearch = false
+
+    init(
+        isSearchFocused: Bool,
+        highContrast: Bool,
+        reduceMotion: Bool,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.isSearchFocused = isSearchFocused
+        self.highContrast = highContrast
+        self.reduceMotion = reduceMotion
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .padding(.leading, 14)
+            .padding(.trailing, 10)
+            .frame(maxWidth: .infinity, minHeight: 36)
+            .macClippySearchFieldStyle(elevated: hoveredSearch || isSearchFocused)
+            .overlay {
+                Capsule()
+                    .inset(by: isSearchFocused ? 0 : MacClippyDockTheme.pillBorderInset)
+                    .stroke(
+                        searchStrokeColor,
+                        lineWidth: searchStrokeWidth
+                    )
+            }
+            .shadow(
+                color: isSearchFocused && !highContrast
+                    ? MacClippyDockTheme.searchFocusGlow
+                    : .clear,
+                radius: isSearchFocused ? 8 : 0
+            )
+            .onHover { hovering in hoveredSearch = hovering }
+            .animation(
+                MacClippyMotion.animation(MacClippyMotion.hoverAnimation, reduceMotion: reduceMotion),
+                value: hoveredSearch
+            )
+            .animation(
+                MacClippyMotion.animation(MacClippyMotion.hoverAnimation, reduceMotion: reduceMotion),
+                value: isSearchFocused
+            )
+    }
+
+    private var searchStrokeColor: Color {
+        if highContrast {
+            return isSearchFocused ? MacClippyDockTheme.textColor : MacClippyDockTheme.lineColor
+        }
+        if isSearchFocused {
+            return MacClippyDockTheme.searchFocusRing
+        }
+        return MacClippyDockTheme.searchFieldEdge
+    }
+
+    private var searchStrokeWidth: CGFloat {
+        if highContrast {
+            return isSearchFocused ? 2 : 1
+        }
+        return isSearchFocused ? MacClippyDockTheme.searchFocusRingWidth : 1
+    }
+}
+
 extension MacClippyDockView {
     var header: some View {
         MacClippyGlassContainer(spacing: 6) {
@@ -177,44 +246,27 @@ extension MacClippyDockView {
                     .transition(MacClippyMotion.fadeTransition(reduceMotion: reduceMotion))
                 }
             }
-            .padding(.leading, 14)
-            .padding(.trailing, 10)
-            .frame(maxWidth: .infinity, minHeight: 36)
-            .macClippySearchFieldStyle(elevated: hoveredSearch || isSearchFocused)
-            .overlay {
-                Capsule()
-                    .inset(by: isSearchFocused ? 0 : MacClippyDockTheme.pillBorderInset)
-                    .stroke(
-                        searchStrokeColor,
-                        lineWidth: searchStrokeWidth
-                    )
-            }
-            .shadow(
-                color: isSearchFocused && !highContrast
-                    ? MacClippyDockTheme.searchFocusGlow
-                    : .clear,
-                radius: isSearchFocused ? 8 : 0
+            .macClippySearchFieldWell(
+                isSearchFocused: isSearchFocused,
+                highContrast: highContrast,
+                reduceMotion: reduceMotion
             )
-            .onHover { hovering in hoveredSearch = hovering }
-            .animation(MacClippyMotion.animation(MacClippyMotion.hoverAnimation, reduceMotion: reduceMotion), value: hoveredSearch)
-            .animation(MacClippyMotion.animation(MacClippyMotion.hoverAnimation, reduceMotion: reduceMotion), value: isSearchFocused)
         }
     }
+}
 
-    private var searchStrokeColor: Color {
-        if highContrast {
-            return isSearchFocused ? MacClippyDockTheme.textColor : MacClippyDockTheme.lineColor
+private extension View {
+    func macClippySearchFieldWell(
+        isSearchFocused: Bool,
+        highContrast: Bool,
+        reduceMotion: Bool
+    ) -> some View {
+        MacClippyDockSearchFieldWell(
+            isSearchFocused: isSearchFocused,
+            highContrast: highContrast,
+            reduceMotion: reduceMotion
+        ) {
+            self
         }
-        if isSearchFocused {
-            return MacClippyDockTheme.searchFocusRing
-        }
-        return MacClippyDockTheme.searchFieldEdge
-    }
-
-    private var searchStrokeWidth: CGFloat {
-        if highContrast {
-            return isSearchFocused ? 2 : 1
-        }
-        return isSearchFocused ? MacClippyDockTheme.searchFocusRingWidth : 1
     }
 }

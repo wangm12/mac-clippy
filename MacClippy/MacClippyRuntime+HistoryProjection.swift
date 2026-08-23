@@ -79,10 +79,11 @@ extension MacClippyRuntime {
         switch body {
         case let .text(value):
             preview = String(value.prefix(2_000))
-        case let .html(value):
-            preview = String((MacClippyClipboardText.plainText(from: body) ?? value).prefix(2_000))
-        case .rtf:
-            preview = String((MacClippyClipboardText.plainText(from: body) ?? meta.preview).prefix(2_000))
+        case .html, .rtf:
+            // Capture already stored a stripped preview. Re-parsing the full
+            // HTML/RTF body here would allocate an NSAttributedString for
+            // every card on every history page.
+            preview = String(meta.preview.prefix(2_000))
         case .image, .encryptedImage:
             if let ocrText = meta.ocrText?.trimmingCharacters(in: .whitespacesAndNewlines),
                !ocrText.isEmpty {

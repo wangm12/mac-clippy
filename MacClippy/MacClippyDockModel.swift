@@ -49,13 +49,18 @@ final class MacClippyNotificationToken: @unchecked Sendable {
 final class MacClippyDockModel: ObservableObject {
     @Published var query = "" {
         didSet {
-            if oldValue != query {
+            guard oldValue != query else { return }
+            highlightTerms = MacClippySearchGrammar.parse(query).bareTerms
+            if !selection.isEmpty || allSelectedRecordIDs != nil {
                 invalidateAllSelectionScope()
             }
             scheduleSnippetFilter()
             scheduleReload()
         }
     }
+    // Parsed once per query change so card highlight does not re-parse the
+    // grammar on every carousel refresh.
+    var highlightTerms: [String] = []
 
     @Published var historyItems: [MacClippyHistoryEntry] = []
     @Published var snippets: [MacClippySnippetEntry] = []

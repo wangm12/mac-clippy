@@ -62,7 +62,9 @@ extension MacClippyDockModel {
         snippetFilterRequestID &+= 1
         let requestID = snippetFilterRequestID
         guard selectedTab == .snippets else {
-            filteredSnippets = []
+            if !filteredSnippets.isEmpty {
+                filteredSnippets = []
+            }
             return
         }
 
