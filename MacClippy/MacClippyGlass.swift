@@ -118,22 +118,13 @@ extension View {
         }
     }
 
-    @ViewBuilder
-    func macClippySearchGlass() -> some View {
-        if #available(macOS 26, *) {
-            self.glassEffect(
-                .regular.interactive(),
-                in: .rect(
-                    corners: .concentric(minimum: .fixed(MacClippyConcentricRadius.minimum)),
-                    isUniform: true
-                )
-            )
-        } else {
-            self.background(
-                .ultraThinMaterial,
-                in: RoundedRectangle(cornerRadius: 20, style: .continuous)
-            )
-        }
+    func macClippySearchFieldStyle(elevated: Bool) -> some View {
+        background(
+            elevated
+                ? MacClippyDockTheme.searchFieldHoverColor
+                : MacClippyDockTheme.searchFieldColor,
+            in: Capsule()
+        )
     }
 
     @ViewBuilder

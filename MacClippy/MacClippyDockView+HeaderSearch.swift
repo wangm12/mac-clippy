@@ -135,12 +135,12 @@ extension MacClippyDockView {
             HStack(spacing: 8) {
                 // Plain magnifying-glass icon, no circular badge (reference).
                 Image(systemName: "magnifyingglass")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(MacClippyDockTheme.mutedColor)
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(MacClippyDockTheme.muted2Color)
                 TextField(
                     "",
                     text: $model.query,
-                    prompt: Text("Search clipboard...").foregroundStyle(MacClippyDockTheme.mutedColor)
+                    prompt: Text("Search clipboard...").foregroundStyle(MacClippyDockTheme.muted2Color)
                 )
                     .textFieldStyle(.plain)
                     .font(.body.weight(.semibold))
@@ -168,7 +168,7 @@ extension MacClippyDockView {
                     } label: {
                         Image(systemName: "xmark")
                             .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(MacClippyDockTheme.mutedColor)
+                            .foregroundStyle(MacClippyDockTheme.muted2Color)
                             .frame(width: 22, height: 22)
                     }
                     .buttonStyle(.plain)
@@ -180,16 +180,21 @@ extension MacClippyDockView {
             .padding(.leading, 14)
             .padding(.trailing, 10)
             .frame(maxWidth: .infinity, minHeight: 36)
-            .macClippySearchGlass()
-            .macClippyGlassEffectID("search", in: headerGlassNamespace, enabled: !reduceMotion)
+            .macClippySearchFieldStyle(elevated: hoveredSearch || isSearchFocused)
             .overlay {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .inset(by: MacClippyDockTheme.pillBorderInset)
+                Capsule()
+                    .inset(by: isSearchFocused ? 0 : MacClippyDockTheme.pillBorderInset)
                     .stroke(
                         searchStrokeColor,
                         lineWidth: searchStrokeWidth
                     )
             }
+            .shadow(
+                color: isSearchFocused && !highContrast
+                    ? MacClippyDockTheme.searchFocusGlow
+                    : .clear,
+                radius: isSearchFocused ? 8 : 0
+            )
             .onHover { hovering in hoveredSearch = hovering }
             .animation(MacClippyMotion.animation(MacClippyMotion.hoverAnimation, reduceMotion: reduceMotion), value: hoveredSearch)
             .animation(MacClippyMotion.animation(MacClippyMotion.hoverAnimation, reduceMotion: reduceMotion), value: isSearchFocused)
@@ -201,18 +206,15 @@ extension MacClippyDockView {
             return isSearchFocused ? MacClippyDockTheme.textColor : MacClippyDockTheme.lineColor
         }
         if isSearchFocused {
-            return MacClippyDockTheme.interactiveFocusBorder
+            return MacClippyDockTheme.searchFocusRing
         }
-        if hoveredSearch {
-            return MacClippyDockTheme.interactiveHoverBorder
-        }
-        return MacClippyDockTheme.interactiveRestBorder
+        return MacClippyDockTheme.searchFieldEdge
     }
 
     private var searchStrokeWidth: CGFloat {
         if highContrast {
-            return isSearchFocused ? 1.5 : 1
+            return isSearchFocused ? 2 : 1
         }
-        return isSearchFocused ? 1.25 : 1
+        return isSearchFocused ? MacClippyDockTheme.searchFocusRingWidth : 1
     }
 }

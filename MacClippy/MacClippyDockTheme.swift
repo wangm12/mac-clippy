@@ -87,6 +87,25 @@ enum MacClippyDockTheme {
     static var backdropColor: Color { Color(nsColor: isDark ? bg0Dark : bg0) }
     static var wellColor: Color { Color(nsColor: isDark ? bg1Dark : bg1) }
 
+    // Settings-style recessed search well: a quiet charcoal capsule sitting
+    // on the glass dock, not a second glass pill with a loud rest ring.
+    static let searchFieldLight = NSColor(calibratedRed: 0.910, green: 0.914, blue: 0.922, alpha: 1)
+    static let searchFieldHoverLight = NSColor(calibratedRed: 0.882, green: 0.886, blue: 0.894, alpha: 1)
+    static let searchFieldDark = NSColor(calibratedRed: 0.196, green: 0.204, blue: 0.220, alpha: 1)
+    static let searchFieldHoverDark = NSColor(calibratedRed: 0.235, green: 0.243, blue: 0.259, alpha: 1)
+    static var searchField: NSColor { isDark ? searchFieldDark : searchFieldLight }
+    static var searchFieldHover: NSColor { isDark ? searchFieldHoverDark : searchFieldHoverLight }
+    static var searchFieldColor: Color { Color(nsColor: searchField) }
+    static var searchFieldHoverColor: Color { Color(nsColor: searchFieldHover) }
+    static var searchFieldEdge: Color {
+        Color(nsColor: isDark
+            ? NSColor(calibratedWhite: 1, alpha: 0.08)
+            : NSColor(calibratedWhite: 0, alpha: 0.08))
+    }
+    static var searchFocusRing: Color { accentColor }
+    static var searchFocusGlow: Color { accentColor.opacity(0.45) }
+    static let searchFocusRingWidth: CGFloat = 2
+
     // Preview is its own clear NSPanel. Translucent card/panel fills let the
     // desktop bleed through and wash the payload. The preview surface stays
     // fully opaque; glass belongs on chrome buttons only.
