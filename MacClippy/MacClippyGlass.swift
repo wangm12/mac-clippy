@@ -77,11 +77,13 @@ enum MacClippyChromeShape {
 }
 
 enum MacClippySettingsMetrics {
-    static let sidebarIdealWidth: CGFloat = 216
+    static let sidebarMinWidth: CGFloat = 240
+    static let sidebarIdealWidth: CGFloat = 268
+    static let sidebarMaxWidth: CGFloat = 320
     static let historyPickerWidth: CGFloat = 310
-    static let minWidth: CGFloat = 720
+    static let minWidth: CGFloat = 760
     static let minHeight: CGFloat = 520
-    static let idealWidth: CGFloat = 880
+    static let idealWidth: CGFloat = 920
     static let idealHeight: CGFloat = 760
 
     static var minSize: NSSize {

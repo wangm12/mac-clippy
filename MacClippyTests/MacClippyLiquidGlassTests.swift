@@ -54,8 +54,10 @@ final class MacClippyLiquidGlassTests: XCTestCase {
             MacClippySettingsPage.allCases.map(\.rawValue),
             ["general", "privacy", "permissions", "advanced"]
         )
-        XCTAssertEqual(MacClippySettingsMetrics.minWidth, 720)
-        XCTAssertEqual(MacClippySettingsMetrics.minSize, NSSize(width: 720, height: 520))
+        XCTAssertEqual(MacClippySettingsMetrics.minWidth, 760)
+        XCTAssertEqual(MacClippySettingsMetrics.minSize, NSSize(width: 760, height: 520))
+        XCTAssertEqual(MacClippySettingsMetrics.sidebarMinWidth, 240)
+        XCTAssertEqual(MacClippySettingsMetrics.sidebarIdealWidth, 268)
         XCTAssertGreaterThanOrEqual(
             MacClippySettingsMetrics.minWidth,
             MacClippySettingsMetrics.sidebarIdealWidth
@@ -64,7 +66,8 @@ final class MacClippyLiquidGlassTests: XCTestCase {
         )
 
         let settings = try appSource(named: "MacClippySettings.swift")
-        XCTAssertTrue(settings.contains("NavigationSplitView"))
+        XCTAssertTrue(settings.contains("NavigationSplitView(columnVisibility: .constant(.all))"))
+        XCTAssertTrue(settings.contains("toolbar(removing: .sidebarToggle)"))
         XCTAssertTrue(settings.contains("formStyle(.grouped)"))
         XCTAssertFalse(settings.contains("windowBackgroundColor"))
         XCTAssertFalse(settings.contains("settingsHeader"))
@@ -146,6 +149,7 @@ final class MacClippyLiquidGlassTests: XCTestCase {
         XCTAssertTrue(filters.contains("MacClippyDockTheme.textColor"))
         XCTAssertTrue(filters.contains(".body.weight"))
         XCTAssertTrue(filters.contains("macClippyFilterChipStyle"))
+        XCTAssertFalse(filters.contains("macClippyChromeButtonStyle"))
         XCTAssertFalse(filters.contains("prominent: selected"))
         XCTAssertTrue(filters.contains("animation(nil, value: selected)"))
 

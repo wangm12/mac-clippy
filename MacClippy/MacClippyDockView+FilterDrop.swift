@@ -9,6 +9,7 @@ struct MacClippyDockChromeIconButton: View {
     let glassID: String
     let namespace: Namespace.ID
     let reduceMotion: Bool
+    let highContrast: Bool
     let accessibilityLabel: String
     let accessibilityIdentifier: String
     let help: String
@@ -17,16 +18,37 @@ struct MacClippyDockChromeIconButton: View {
     @State private var isHovered = false
 
     var body: some View {
-        Button(action: action) {
+        let ringWidth: CGFloat = highContrast ? 2 : MacClippyDockTheme.pillBorderWidth
+        let ringColor = isHovered
+            ? MacClippyDockTheme.interactiveFocusBorder
+            : MacClippyDockTheme.pillRestBorder
+        return Button(action: action) {
             Image(systemName: systemImage)
                 .font(.body.weight(.semibold))
                 .foregroundStyle(isHovered ? MacClippyDockTheme.accentColor : MacClippyDockTheme.textColor)
                 .frame(width: 36, height: 36)
+                .contentShape(Capsule())
                 .macClippyGlassEffectID(glassID, in: namespace, enabled: !reduceMotion)
         }
-        .macClippyChromeButtonStyle()
-        .contentShape(Circle())
-        .onHover { hovering in isHovered = hovering }
+        .macClippyFilterChipStyle(
+            selected: false,
+            hovered: isHovered,
+            tint: MacClippyDockTheme.accentColor
+        )
+        .overlay(
+            Capsule()
+                .inset(by: MacClippyDockTheme.pillBorderInset)
+                .stroke(ringColor, lineWidth: ringWidth)
+        )
+        .contentShape(Capsule())
+        .animation(nil, value: isHovered)
+        .onHover { hovering in
+            guard MacClippyDockHoverPolicy.shouldApplyHover(
+                hovering,
+                pressedMouseButtons: NSEvent.pressedMouseButtons
+            ) else { return }
+            isHovered = hovering
+        }
         .accessibilityLabel(accessibilityLabel)
         .accessibilityIdentifier(accessibilityIdentifier)
         .help(help)
@@ -180,6 +202,7 @@ extension MacClippyDockView {
                 glassID: "gear",
                 namespace: headerGlassNamespace,
                 reduceMotion: reduceMotion,
+                highContrast: highContrast,
                 accessibilityLabel: "Settings",
                 accessibilityIdentifier: "macClippy.settingsButton",
                 help: "Settings"
@@ -203,6 +226,7 @@ extension MacClippyDockView {
             glassID: "newCategory",
             namespace: headerGlassNamespace,
             reduceMotion: reduceMotion,
+            highContrast: highContrast,
             accessibilityLabel: "Create category",
             accessibilityIdentifier: "macClippy.createCategoryButton",
             help: "Create category"

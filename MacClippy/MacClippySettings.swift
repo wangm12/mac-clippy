@@ -74,19 +74,23 @@ struct MacClippySettingsView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: .constant(.all)) {
             List(selection: $selectedPage) {
                 ForEach(MacClippySettingsPage.allCases) { page in
                     Label(page.title, systemImage: page.systemImage)
+                        .font(.body)
+                        .padding(.vertical, 5)
                         .tag(page)
                         .accessibilityIdentifier("macClippy.settings.sidebar.\(page.rawValue)")
                 }
             }
             .listStyle(.sidebar)
+            .environment(\.defaultMinListRowHeight, 36)
+            .navigationTitle("Settings")
             .navigationSplitViewColumnWidth(
-                min: 180,
+                min: MacClippySettingsMetrics.sidebarMinWidth,
                 ideal: MacClippySettingsMetrics.sidebarIdealWidth,
-                max: 260
+                max: MacClippySettingsMetrics.sidebarMaxWidth
             )
         } detail: {
             Form {
@@ -95,6 +99,8 @@ struct MacClippySettingsView: View {
             .formStyle(.grouped)
             .navigationTitle(selectedPage?.title ?? "Settings")
         }
+        .navigationSplitViewStyle(.balanced)
+        .toolbar(removing: .sidebarToggle)
         .frame(
             minWidth: MacClippySettingsMetrics.minWidth,
             idealWidth: MacClippySettingsMetrics.idealWidth,
