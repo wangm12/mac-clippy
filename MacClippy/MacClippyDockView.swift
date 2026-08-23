@@ -126,18 +126,18 @@ struct MacClippyDockView: View {
             // and destructive Delete/Clear, all within the header.
             header
                 .frame(height: 48)
-                // Keep the selection morph scoped to the header. An animation
-                // on the dock root also animates the carousel transaction when
-                // selection changes, which can make its scroll position appear
-                // to jump even though pointer selection never requests a
-                // scroll.
-                .transaction { transaction in
-                    transaction.animation = reduceMotion
+                // Animate only the search ↔ selection morph. A header-wide
+                // transaction also replayed tag-chip color when selectedTab
+                // changed, which stacked on Liquid Glass press and flashed
+                // the pill twice.
+                .animation(
+                    reduceMotion
                         ? nil
                         : (model.hasMultipleSelection
                             ? MacClippyMotion.actionBarEnterSpring
-                            : MacClippyMotion.actionBarExit)
-                }
+                            : MacClippyMotion.actionBarExit),
+                    value: model.hasMultipleSelection
+                )
             // The carousel container fills the width but does not force a
             // vertical stretch: the populated horizontal carousels constrain
             // themselves to MacClippyDockCardMetrics.carouselHeight(for:), while the

@@ -167,21 +167,21 @@ extension View {
         }
     }
 
-    // Filter chips stay Regular glass. `.glassProminent` is a filled
-    // accent plate (the solid blue All pill) and is reserved for actions.
+    // Filter chips stay Regular glass. Selection and hover are overlay
+    // washes so the glass recipe never changes. `.interactive()` press
+    // plus a tinted recipe each flashed the chip on click.
     @ViewBuilder
-    func macClippyFilterChipStyle(selected: Bool, tint: Color) -> some View {
+    func macClippyFilterChipStyle(selected: Bool, hovered: Bool = false, tint: Color) -> some View {
+        let wash = tint.opacity(selected ? 0.22 : (hovered ? 0.12 : 0))
         if #available(macOS 26, *) {
             self
                 .buttonStyle(.plain)
-                .glassEffect(
-                    selected
-                        ? .regular.tint(tint.opacity(0.34)).interactive()
-                        : .regular.interactive(),
-                    in: .capsule
-                )
+                .background(wash, in: Capsule())
+                .glassEffect(.regular, in: .capsule)
         } else {
-            self.buttonStyle(.plain)
+            self
+                .buttonStyle(.plain)
+                .background(wash, in: Capsule())
         }
     }
 

@@ -144,11 +144,30 @@ final class MacClippyLiquidGlassTests: XCTestCase {
         XCTAssertTrue(filters.contains(".body.weight"))
         XCTAssertTrue(filters.contains("macClippyFilterChipStyle"))
         XCTAssertFalse(filters.contains("prominent: selected"))
+        XCTAssertTrue(filters.contains("animation(nil, value: selected)"))
+
+        let glass = try appSource(named: "MacClippyGlass.swift")
+        guard let chipStart = glass.range(of: "func macClippyFilterChipStyle"),
+              let chipEnd = glass.range(of: "func macClippyGlassEffectID") else {
+            return XCTFail("macClippyFilterChipStyle is missing")
+        }
+        let chip = String(glass[chipStart.lowerBound..<chipEnd.lowerBound])
+        XCTAssertTrue(chip.contains(".regular"))
+        XCTAssertTrue(chip.contains("hovered"))
+        XCTAssertTrue(chip.contains("0.22"))
+        XCTAssertTrue(chip.contains("0.12"))
+        XCTAssertFalse(chip.contains(".regular.tint("))
+        XCTAssertFalse(chip.contains(".interactive()"))
+
+        XCTAssertTrue(dockView.contains("value: model.hasMultipleSelection"))
+        XCTAssertFalse(dockView.contains("transaction.animation = reduceMotion"))
         XCTAssertTrue(filters.contains("pillRestBorder"))
         XCTAssertTrue(filters.contains("macClippyGlassEffectID(\"newCategory\""))
         XCTAssertFalse(filters.contains("isHovered ? MacClippyMotion.hoverScale"))
         XCTAssertFalse(filters.contains("isHovered ? 1 : 0"))
-        XCTAssertFalse(filters.contains("value: isHovered"))
+        XCTAssertTrue(filters.contains("hovered: isHovered"))
+        XCTAssertTrue(filters.contains("interactiveFocusBorder"))
+        XCTAssertTrue(filters.contains("animation(nil, value: isHovered)"))
         XCTAssertTrue(filters.contains("MacClippyDockHoverPolicy.shouldApplyHover"))
         XCTAssertTrue(filters.contains("transaction.animation = nil"))
 

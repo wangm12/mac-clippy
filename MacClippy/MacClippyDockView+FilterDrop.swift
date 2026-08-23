@@ -128,7 +128,7 @@ extension MacClippyDockView {
         let ringWidth: CGFloat = highContrast ? 2 : (isDropConfirmed ? 2.5 : (isDropTarget ? 2 : MacClippyDockTheme.pillBorderWidth))
         let ringColor = isDropConfirmed ? (accentColor ?? MacClippyDockTheme.accentColor) :
             (isDropTarget ? MacClippyDockTheme.interactiveStrongBorder :
-                (isHovered ? MacClippyDockTheme.pillHoverBorder : MacClippyDockTheme.pillRestBorder))
+                (isHovered ? MacClippyDockTheme.interactiveFocusBorder : MacClippyDockTheme.pillRestBorder))
         return Button(action: action) {
             HStack(spacing: 6) {
                 if let accentColor {
@@ -140,13 +140,16 @@ extension MacClippyDockView {
                     .font(.body.weight(selected ? .bold : .semibold))
                     .lineLimit(1)
             }
-            .foregroundStyle(MacClippyDockTheme.textColor)
+            .foregroundStyle(
+                isHovered ? MacClippyDockTheme.accentColor : MacClippyDockTheme.textColor
+            )
             .padding(.horizontal, 14)
             .frame(height: 36)
             .contentShape(Capsule())
         }
         .macClippyFilterChipStyle(
             selected: selected || isDropConfirmed,
+            hovered: isHovered,
             tint: accentColor ?? MacClippyDockTheme.accentColor
         )
         .overlay(
@@ -166,6 +169,8 @@ extension MacClippyDockView {
             MacClippyMotion.animation(MacClippyMotion.hoverAnimation, reduceMotion: reduceMotion),
             value: isDropConfirmed
         )
+        .animation(nil, value: selected)
+        .animation(nil, value: isHovered)
         .transaction { transaction in
             if !isDropTarget && !isDropConfirmed {
                 transaction.animation = nil
