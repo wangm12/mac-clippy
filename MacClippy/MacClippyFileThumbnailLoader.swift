@@ -133,8 +133,13 @@ struct MacClippyFileThumbnail: View, Equatable {
                 Image(decorative: image, scale: 1, orientation: .up)
                     .resizable()
                     .interpolation(.high)
-                    .scaledToFill()
-                    .clipped()
+                    .scaledToFit()
+                    .clipShape(
+                        RoundedRectangle(
+                            cornerRadius: MacClippyDockCardMetrics.imagePreviewRadius,
+                            style: .continuous
+                        )
+                    )
             } else {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(Color.primary.opacity(0.06))

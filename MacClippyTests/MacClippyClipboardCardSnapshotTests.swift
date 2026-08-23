@@ -167,6 +167,23 @@ final class MacClippyClipboardCardSnapshotTests: XCTestCase {
         XCTAssertEqual(MacClippyDockCardMetrics.sourceBadgeOverlap, 20)
         XCTAssertEqual(MacClippyDockCardMetrics.gap, 32)
         XCTAssertEqual(MacClippyDockCardMetrics.padding, 24)
+        XCTAssertEqual(MacClippyDockCardMetrics.imageInset, 16)
+        XCTAssertEqual(MacClippyDockCardMetrics.imagePreviewRadius, 12)
+        XCTAssertLessThan(MacClippyDockCardMetrics.imageInset, MacClippyDockCardMetrics.padding)
+    }
+
+    func testClipboardCardImagePreviewFitsInsideTheFace() throws {
+        let label = try appSource(named: "MacClippyClipboardCardLabel.swift")
+        XCTAssertTrue(label.contains("MacClippyDockCardMetrics.imageInset"))
+        XCTAssertFalse(label.contains("fillsCard ? 0"))
+
+        let image = try appSource(named: "MacClippyCardImageThumbnail.swift")
+        XCTAssertTrue(image.contains("scaledToFit()"))
+        XCTAssertFalse(image.contains("scaledToFill()"))
+
+        let files = try appSource(named: "MacClippyFileThumbnailLoader.swift")
+        XCTAssertTrue(files.contains("scaledToFit()"))
+        XCTAssertFalse(files.contains("scaledToFill()"))
     }
 
     func testClipboardCardHoverDoesNotDrawASecondOffsetRing() throws {

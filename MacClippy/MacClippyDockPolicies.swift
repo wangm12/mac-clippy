@@ -70,6 +70,11 @@ enum MacClippyDockCardMetrics {
     static let radius: CGFloat = 22
     static let gap: CGFloat = 32
     static let padding: CGFloat = 24
+    // Image cards keep a framed preview, not an edge-to-edge crop. The
+    // inset lets the tinted face read around the photo so a tall screenshot
+    // is recognizable at a glance.
+    static let imageInset: CGFloat = 16
+    static let imagePreviewRadius: CGFloat = 12
     // Use semantic text styles so macOS accessibility font settings scale the
     // card body instead of being trapped at a fixed 13pt size.
     static let contentFont = Font.body.weight(.medium)

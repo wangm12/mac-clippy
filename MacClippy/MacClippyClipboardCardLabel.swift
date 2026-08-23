@@ -75,7 +75,7 @@ struct MacClippyClipboardCardLabel: View, Equatable {
     private var cardFace: some View {
         let shape = RoundedRectangle(cornerRadius: MacClippyDockCardMetrics.radius, style: .continuous)
         return cardContent
-            .padding(fillsCard ? 0 : MacClippyDockCardMetrics.padding)
+            .padding(fillsCard ? MacClippyDockCardMetrics.imageInset : MacClippyDockCardMetrics.padding)
             .frame(
                 width: MacClippyDockCardMetrics.width,
                 height: MacClippyDockCardMetrics.height(for: dynamicTypeSize),
