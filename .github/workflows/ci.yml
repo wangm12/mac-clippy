@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   test:
-    runs-on: macos-14
+    runs-on: macos-26
     # App tests plus package TSan and the opt-in fixtures can legitimately
     # exceed an hour on a busy hosted runner. Keep the individual step limits
     # as the tight failure boundaries and leave room for build/test startup.

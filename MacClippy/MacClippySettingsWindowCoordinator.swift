@@ -57,7 +57,12 @@ final class MacClippySettingsWindowCoordinator: NSObject, NSWindowDelegate {
                 .environment(\.macClippyShouldRegisterSettingsWindow, false)
         )
         let fallbackWindow = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 700, height: 760),
+            contentRect: NSRect(
+                x: 0,
+                y: 0,
+                width: MacClippySettingsMetrics.idealWidth,
+                height: MacClippySettingsMetrics.idealHeight
+            ),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
@@ -66,7 +71,8 @@ final class MacClippySettingsWindowCoordinator: NSObject, NSWindowDelegate {
         fallbackWindow.contentView = hostingView
         fallbackWindow.isReleasedWhenClosed = false
         fallbackWindow.delegate = self
-        fallbackWindow.minSize = NSSize(width: 560, height: 520)
+        // Fallback NSWindow has no Tahoe toolbar glass. Do not fake it.
+        fallbackWindow.minSize = MacClippySettingsMetrics.minSize
         fallbackWindow.level = .normal
         fallbackWindow.collectionBehavior = [.moveToActiveSpace, .fullScreenNone]
         self.fallbackHostingView = hostingView
@@ -105,7 +111,7 @@ final class SettingsConfigurationView: NSView {
         window.isReleasedWhenClosed = false
         window.title = "MacClippy Settings"
         window.styleMask.insert([.titled, .closable, .resizable])
-        window.minSize = NSSize(width: 560, height: 520)
+        window.minSize = MacClippySettingsMetrics.minSize
         window.collectionBehavior.remove([.fullScreenAuxiliary, .canJoinAllSpaces, .stationary, .ignoresCycle])
         window.collectionBehavior.insert([.moveToActiveSpace, .fullScreenNone])
         MacClippySettingsWindowCoordinator.shared.register(window)

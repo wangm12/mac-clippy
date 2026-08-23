@@ -72,8 +72,8 @@ enum MacClippyDockCardMetrics {
     static let padding: CGFloat = 24
     // Use semantic text styles so macOS accessibility font settings scale the
     // card body instead of being trapped at a fixed 13pt size.
-    static let contentFont = Font.callout
-    static let contentMonospacedFont = Font.system(.callout, design: .monospaced)
+    static let contentFont = Font.body.weight(.medium)
+    static let contentMonospacedFont = Font.system(.body, design: .monospaced).weight(.medium)
     // Vertical padding inside the horizontal carousel ScrollViews (applied to
     // the card row). Kept generous enough that the card border never clips
     // against the scroll view's bounds or the panel's top clip shape.
@@ -81,7 +81,7 @@ enum MacClippyDockCardMetrics {
     // Below-card relative timestamp. Kept outside the rounded face so the
     // card itself stays content-only, matching the reference caption.
     static let captionSpacing: CGFloat = 16
-    static let captionHeight: CGFloat = 18
+    static let captionHeight: CGFloat = 22
     // Native app icon sits on the card corner, half outside the rounded
     // face. It must not be drawn inside the clipped card content.
     static let sourceBadgeSize: CGFloat = 48
@@ -96,12 +96,12 @@ enum MacClippyDockCardBorderPolicy {
     @MainActor
     static func color(isActive: Bool, isHovered: Bool) -> Color {
         if isActive {
-            return MacClippyDockTheme.accentColor.opacity(0.9)
+            return MacClippyDockTheme.interactiveFocusBorder
         }
         if isHovered {
-            return MacClippyDockTheme.accentColor.opacity(0.45)
+            return MacClippyDockTheme.interactiveHoverBorder
         }
-        return MacClippyDockTheme.lineColor
+        return MacClippyDockTheme.interactiveRestBorder
     }
 
     static func lineWidth(isActive: Bool, highContrast: Bool) -> CGFloat {
@@ -109,6 +109,39 @@ enum MacClippyDockCardBorderPolicy {
             return isActive ? 2.5 : 1.5
         }
         return isActive ? 2 : 1
+    }
+}
+
+enum MacClippyDockHoverPolicy {
+    // AppKit sends hover-exit on mouseDown and hover-enter on mouseUp.
+    // Applying that flicker while a tag click also changes `selected`
+    // restarts the header's inherited animation and flashes the tint twice.
+    static func shouldApplyHover(_ hovering: Bool, pressedMouseButtons: Int) -> Bool {
+        hovering || pressedMouseButtons == 0
+    }
+}
+
+enum MacClippyDockCardHoverChrome {
+    static func shadowOpacity(elevated: Bool, hovered: Bool) -> Double {
+        switch (elevated, hovered) {
+        case (true, true): 0.18
+        case (true, false): 0.16
+        case (false, true): 0.13
+        case (false, false): 0.08
+        }
+    }
+
+    static func shadowRadius(elevated: Bool, hovered: Bool) -> CGFloat {
+        switch (elevated, hovered) {
+        case (true, true): 15
+        case (true, false): 14
+        case (false, true): 13
+        case (false, false): 10
+        }
+    }
+
+    static func shadowY(elevated: Bool, hovered: Bool) -> CGFloat {
+        elevated ? 5 : (hovered ? 4 : 3)
     }
 }
 

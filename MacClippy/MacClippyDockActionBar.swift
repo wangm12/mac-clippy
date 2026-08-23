@@ -207,7 +207,12 @@ struct SelectionBarButton: View {
     let role: ButtonRole?
     let emphasis: Emphasis
     let action: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @State private var isHovered = false
+
+    private var reduceMotion: Bool {
+        MacClippyMotion.shouldReduceMotion(swiftUI: accessibilityReduceMotion)
+    }
 
     init(_ title: String, systemImage: String, role: ButtonRole? = nil, emphasis: Emphasis = .default, action: @escaping () -> Void) {
         self.title = title
@@ -218,11 +223,48 @@ struct SelectionBarButton: View {
     }
 
     var body: some View {
+        if #available(macOS 26, *) {
+            tahoeBody
+        } else {
+            fallbackBody
+        }
+    }
+
+    @available(macOS 26, *)
+    @ViewBuilder
+    private var tahoeBody: some View {
         let isDestructive = emphasis == .destructive
         let isPrimary = emphasis == .primary
         Button(role: role, action: action) {
             Label(title, systemImage: systemImage)
-                .font(.caption.weight(.semibold))
+                .font(.body.weight(.semibold))
+                .foregroundStyle(
+                    isPrimary ? MacClippyDockTheme.accentForegroundColor :
+                    (isDestructive ? Color.red.opacity(0.9) : MacClippyDockTheme.textColor)
+                )
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .frame(minHeight: 34)
+        }
+        .modifier(MacClippySelectionGlassStyle(isPrimary: isPrimary))
+        .overlay {
+            if !isPrimary {
+                Capsule()
+                    .inset(by: MacClippyDockTheme.pillBorderInset)
+                    .stroke(selectionRingColor(isDestructive: isDestructive), lineWidth: MacClippyDockTheme.pillBorderWidth)
+            }
+        }
+        .onHover { hovering in isHovered = hovering }
+        .animation(MacClippyMotion.animation(MacClippyMotion.hoverAnimation, reduceMotion: reduceMotion), value: isHovered)
+    }
+
+    @ViewBuilder
+    private var fallbackBody: some View {
+        let isDestructive = emphasis == .destructive
+        let isPrimary = emphasis == .primary
+        Button(role: role, action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.body.weight(.semibold))
                 .foregroundStyle(
                     isPrimary ? MacClippyDockTheme.accentForegroundColor :
                     (isDestructive ? Color.red.opacity(0.9) : MacClippyDockTheme.textColor)
@@ -238,17 +280,42 @@ struct SelectionBarButton: View {
                 )
                 .overlay(
                     Capsule()
+                        .inset(by: MacClippyDockTheme.pillBorderInset)
                         .stroke(
-                            isPrimary ? Color.clear :
-                            (isDestructive ? Color.red.opacity(isHovered ? 0.7 : 0.35) :
-                             (isHovered ? MacClippyDockTheme.accentColor.opacity(0.5) : MacClippyDockTheme.lineColor)),
-                            lineWidth: isHovered ? 1.5 : 1
+                            isPrimary ? Color.clear : selectionRingColor(isDestructive: isDestructive),
+                            lineWidth: MacClippyDockTheme.pillBorderWidth
                         )
                 )
                 .shadow(color: isPrimary ? MacClippyDockTheme.accentColor.opacity(0.25) : .clear, radius: 8, y: 2)
         }
         .buttonStyle(.plain)
         .onHover { hovering in isHovered = hovering }
+        .animation(MacClippyMotion.animation(MacClippyMotion.hoverAnimation, reduceMotion: reduceMotion), value: isHovered)
+    }
+
+    private func selectionRingColor(isDestructive: Bool) -> Color {
+        if isDestructive {
+            return Color.red.opacity(isHovered ? 0.7 : 0.28)
+        }
+        return isHovered
+            ? MacClippyDockTheme.interactiveHoverBorder
+            : MacClippyDockTheme.interactiveRestBorder
+    }
+}
+
+private struct MacClippySelectionGlassStyle: ViewModifier {
+    let isPrimary: Bool
+
+    func body(content: Content) -> some View {
+        if #available(macOS 26, *) {
+            if isPrimary {
+                content.buttonStyle(.glassProminent)
+            } else {
+                content.buttonStyle(.glass)
+            }
+        } else {
+            content.buttonStyle(.plain)
+        }
     }
 }
 

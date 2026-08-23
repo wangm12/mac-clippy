@@ -65,7 +65,7 @@ struct MacClippySettingsView: View {
     @State var historyDeletionMessageIsError = false
     @State var isPrivacyNoticePresented = false
     @State var isCaptureRulesExpanded = false
-    @State var isAdvancedExpanded = false
+    @State var selectedPage: MacClippySettingsPage? = .general
     @Environment(\.accessibilityReduceMotion) var accessibilityReduceMotion
     @Environment(\.macClippyShouldRegisterSettingsWindow) private var shouldRegisterSettingsWindow
 
@@ -74,27 +74,33 @@ struct MacClippySettingsView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                settingsHeader.modifier(MacClippySettingsReveal(index: 0, reduceMotion: reduceMotion))
-                historySection.modifier(MacClippySettingsReveal(index: 1, reduceMotion: reduceMotion))
-                shortcutSection.modifier(MacClippySettingsReveal(index: 2, reduceMotion: reduceMotion))
-                snippetsSection.modifier(MacClippySettingsReveal(index: 3, reduceMotion: reduceMotion))
-                permissionsSection.modifier(MacClippySettingsReveal(index: 4, reduceMotion: reduceMotion))
-                startupSection.modifier(MacClippySettingsReveal(index: 5, reduceMotion: reduceMotion))
-                presentationSection.modifier(MacClippySettingsReveal(index: 6, reduceMotion: reduceMotion))
-                privacySection.modifier(MacClippySettingsReveal(index: 7, reduceMotion: reduceMotion))
-                advancedSection.modifier(MacClippySettingsReveal(index: 8, reduceMotion: reduceMotion))
+        NavigationSplitView {
+            List(selection: $selectedPage) {
+                ForEach(MacClippySettingsPage.allCases) { page in
+                    Label(page.title, systemImage: page.systemImage)
+                        .tag(page)
+                        .accessibilityIdentifier("macClippy.settings.sidebar.\(page.rawValue)")
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 28)
-            .padding(.vertical, 24)
+            .listStyle(.sidebar)
+            .navigationSplitViewColumnWidth(
+                min: 180,
+                ideal: MacClippySettingsMetrics.sidebarIdealWidth,
+                max: 260
+            )
+        } detail: {
+            Form {
+                settingsDetail
+            }
+            .formStyle(.grouped)
+            .navigationTitle(selectedPage?.title ?? "Settings")
         }
-        .background(Color(nsColor: .windowBackgroundColor))
-        // Keep a comfortable initial size without pinning the content to a
-        // fixed viewport. A resizable window and larger system text need the
-        // scroll view to be able to adapt instead of clipping controls.
-        .frame(minWidth: 560, idealWidth: 700, minHeight: 520, idealHeight: 760)
+        .frame(
+            minWidth: MacClippySettingsMetrics.minWidth,
+            idealWidth: MacClippySettingsMetrics.idealWidth,
+            minHeight: MacClippySettingsMetrics.minHeight,
+            idealHeight: MacClippySettingsMetrics.idealHeight
+        )
         .background {
             if shouldRegisterSettingsWindow {
                 SettingsWindowConfigurator()
@@ -139,6 +145,24 @@ struct MacClippySettingsView: View {
         }
         .sheet(isPresented: $isPrivacyNoticePresented) {
             MacClippyPrivacyNoticeView()
+        }
+    }
+
+    @ViewBuilder
+    var settingsDetail: some View {
+        switch selectedPage ?? .general {
+        case .general:
+            historySection.modifier(MacClippySettingsReveal(index: 0, reduceMotion: reduceMotion))
+            shortcutSection.modifier(MacClippySettingsReveal(index: 1, reduceMotion: reduceMotion))
+            snippetsSection.modifier(MacClippySettingsReveal(index: 2, reduceMotion: reduceMotion))
+            startupSection.modifier(MacClippySettingsReveal(index: 3, reduceMotion: reduceMotion))
+            presentationSection.modifier(MacClippySettingsReveal(index: 4, reduceMotion: reduceMotion))
+        case .privacy:
+            privacySection.modifier(MacClippySettingsReveal(index: 0, reduceMotion: reduceMotion))
+        case .permissions:
+            permissionsSection.modifier(MacClippySettingsReveal(index: 0, reduceMotion: reduceMotion))
+        case .advanced:
+            advancedSection.modifier(MacClippySettingsReveal(index: 0, reduceMotion: reduceMotion))
         }
     }
 

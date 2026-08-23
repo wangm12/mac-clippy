@@ -59,11 +59,11 @@ struct MacClippyDockPreviewColor: View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text(label)
                 .font(.caption.weight(.semibold).monospaced())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(MacClippyDockTheme.contentMutedColor)
                 .frame(width: 56, alignment: .leading)
             Text(text)
                 .font(.caption.monospaced())
-                .foregroundStyle(.primary)
+                .foregroundStyle(MacClippyDockTheme.contentTextColor)
                 .textSelection(.enabled)
         }
     }

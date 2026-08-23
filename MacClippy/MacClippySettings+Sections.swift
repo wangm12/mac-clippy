@@ -8,23 +8,6 @@ import MacClippyPlatform
 
 
 extension MacClippySettingsView {
-    var settingsHeader: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
-                Image(systemName: "gearshape.fill")
-                    .font(.title2)
-                    .foregroundStyle(.secondary)
-                Text("Settings")
-                    .font(.title2.weight(.semibold))
-            }
-            Text("Control clipboard history, shortcuts, privacy, and permissions.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-        }
-        .accessibilityAddTraits(.isHeader)
-        .padding(.bottom, 4)
-    }
-
     var historySection: some View {
         MacClippySettingsGroup(
             title: "History",
@@ -41,7 +24,7 @@ extension MacClippySettingsView {
                 }
                 .labelsHidden()
                 .pickerStyle(.segmented)
-                .frame(width: 310)
+                .frame(width: MacClippySettingsMetrics.historyPickerWidth)
             }
             if selectedHistoryCapacity == .unlimited {
                 Divider()
@@ -279,53 +262,6 @@ extension MacClippySettingsView {
         }
     }
 
-    var advancedSection: some View {
-        MacClippySettingsGroup(
-            title: "Advanced",
-            subtitle: storageHealthSummary
-        ) {
-            DisclosureGroup(isExpanded: $isAdvancedExpanded) {
-                VStack(alignment: .leading, spacing: 12) {
-                    diagnosticsContent
-                    Divider()
-                    MacClippySettingsRow(
-                        title: "Delete unpinned history",
-                        detail: "Pinned items stay. Use this only for a manual cleanup."
-                    ) {
-                        Button("Delete…", role: .destructive) {
-                            isDeleteHistoryConfirmationPresented = true
-                        }
-                        .disabled(isDeletingHistory)
-                    }
-                    if isDeletingHistory {
-                        ProgressView("Deleting history…")
-                            .controlSize(.small)
-                            .padding(.horizontal, 16)
-                    }
-                    if let historyDeletionMessage {
-                        Text(historyDeletionMessage)
-                            .font(.footnote)
-                            .foregroundStyle(historyDeletionMessageIsError ? .red : .secondary)
-                            .padding(.horizontal, 16)
-                    }
-                }
-                .padding(.top, 10)
-            } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "wrench.and.screwdriver")
-                        .foregroundStyle(.secondary)
-                    Text("Maintenance and data controls")
-                    Spacer()
-                    Text(storageHealthSummary)
-                        .font(.caption)
-                        .foregroundStyle(storageHealthHasIssue ? .orange : .secondary)
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-        }
-    }
-
     func permissionRow(
         title: String,
         detail: String,
@@ -348,49 +284,6 @@ extension MacClippySettingsView {
         }
     }
 
-    var diagnosticsContent: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if storageHealth.isEmpty {
-                Text("Storage status is unavailable until MacClippy finishes starting.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            } else {
-                Text(storageHealthStatusText)
-                    .font(.callout)
-                    .foregroundStyle(storageHealthHasIssue ? .orange : .secondary)
-            }
-            if storageHealthHasIssue {
-                Text("Repair the search index first. Database recovery requires a validated backup.")
-                    .font(.footnote)
-                    .foregroundStyle(.orange)
-            }
-            HStack(spacing: 8) {
-                Button("Refresh") { refreshStorageHealth() }
-                Button("Repair Search Index") { repairSearchIndex() }
-                    .disabled(isRepairingSearchIndex || isExportingDiagnostics)
-                Button("Export Diagnostics…") { exportDiagnostics() }
-                    .disabled(isRepairingSearchIndex || isExportingDiagnostics)
-            }
-            if isRepairingSearchIndex {
-                ProgressView("Repairing search index…")
-                    .controlSize(.small)
-            }
-            if isExportingDiagnostics {
-                ProgressView("Exporting diagnostics…")
-                    .controlSize(.small)
-            }
-            if let diagnosticsMessage {
-                Text(diagnosticsMessage)
-                    .font(.footnote)
-                    .foregroundStyle(diagnosticsMessageIsError ? .red : .secondary)
-            }
-            Text("Diagnostics contain health counters and redacted events only; clipboard content is not included.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 16)
-    }
-
     var selectedHistoryCapacity: MacClippyHistoryCapacity {
         MacClippyHistoryCapacity(maxAgeDays: maxAgeDays)
     }
@@ -402,25 +295,9 @@ extension MacClippySettingsView {
         )
     }
 
-    var storageHealthHasIssue: Bool {
-        storageHealth.values.contains { $0.status != .healthy }
-    }
-
-    var storageHealthStatusText: String {
-        storageHealth.keys.sorted().compactMap { name in
-            guard let report = storageHealth[name] else { return nil }
-            return "\(name.capitalized): \(report.status.rawValue.capitalized)"
-        }
-        .joined(separator: "  ·  ")
-    }
-
-    var storageHealthSummary: String {
-        if storageHealth.isEmpty { return "Checking storage…" }
-        return storageHealthHasIssue ? "Needs attention" : "Storage healthy"
-    }
 }
 
-private struct MacClippySettingsGroup<Content: View>: View {
+struct MacClippySettingsGroup<Content: View>: View {
     let title: String
     let subtitle: String?
     private let content: () -> Content
@@ -432,28 +309,19 @@ private struct MacClippySettingsGroup<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        Section {
+            content()
+        } header: {
             Text(title)
-                .font(.headline)
-                .padding(.horizontal, 4)
-                .accessibilityAddTraits(.isHeader)
+        } footer: {
             if let subtitle {
                 Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 4)
             }
-            VStack(spacing: 0, content: content)
-                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-                }
         }
     }
 }
 
-private struct MacClippySettingsRow<Control: View>: View {
+struct MacClippySettingsRow<Control: View>: View {
     let title: String
     let detail: String?
     private let control: () -> Control
@@ -478,7 +346,5 @@ private struct MacClippySettingsRow<Control: View>: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             control()
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 13)
     }
 }

@@ -29,7 +29,9 @@ enum MacClippyMotion {
     static let actionFeedbackDuration: TimeInterval = 0.12
     static let actionFeedbackLifetime: TimeInterval = 1.1
     static let dropConfirmationLifetime: TimeInterval = 0.6
-    static let hoverScale: CGFloat = 1.025
+    static let hoverScale: CGFloat = 1.02
+    static let hoverDuration: TimeInterval = 0.12
+    static let hoverAnimation = Animation.timingCurve(0.22, 1, 0.36, 1, duration: hoverDuration)
     static let settingsRevealDuration: TimeInterval = 0.22
     static let settingsRevealStep: TimeInterval = 0.035
     static let settingsRevealOffset: CGFloat = 8

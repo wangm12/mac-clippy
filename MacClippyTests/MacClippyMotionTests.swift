@@ -26,9 +26,25 @@ final class MacClippyMotionTests: XCTestCase {
         XCTAssertLessThan(MacClippyMotion.panelShadowOpacityStart, MacClippyMotion.panelShadowOpacity)
     }
 
+    func testHoverDoesNotClearWhileTheMouseButtonIsDown() {
+        XCTAssertTrue(MacClippyDockHoverPolicy.shouldApplyHover(true, pressedMouseButtons: 0))
+        XCTAssertTrue(MacClippyDockHoverPolicy.shouldApplyHover(true, pressedMouseButtons: 1))
+        XCTAssertTrue(MacClippyDockHoverPolicy.shouldApplyHover(false, pressedMouseButtons: 0))
+        XCTAssertFalse(MacClippyDockHoverPolicy.shouldApplyHover(false, pressedMouseButtons: 1))
+    }
+
     func testInteractiveEffectsStaySubtle() {
+        XCTAssertEqual(MacClippyMotion.hoverScale, 1.02)
+        XCTAssertEqual(MacClippyMotion.hoverDuration, 0.12)
         XCTAssertLessThanOrEqual(MacClippyMotion.hoverScale, 1.03)
         XCTAssertLessThan(MacClippyMotion.settingsRevealStep, MacClippyMotion.settingsRevealDuration)
+        XCTAssertEqual(MacClippyDockCardHoverChrome.shadowOpacity(elevated: false, hovered: false), 0.08)
+        XCTAssertEqual(MacClippyDockCardHoverChrome.shadowOpacity(elevated: false, hovered: true), 0.13)
+        XCTAssertEqual(MacClippyDockCardHoverChrome.shadowOpacity(elevated: true, hovered: false), 0.16)
+        XCTAssertEqual(MacClippyDockCardHoverChrome.shadowOpacity(elevated: true, hovered: true), 0.18)
+        XCTAssertEqual(MacClippyDockCardHoverChrome.shadowRadius(elevated: false, hovered: false), 10)
+        XCTAssertEqual(MacClippyDockCardHoverChrome.shadowY(elevated: false, hovered: true), 4)
+        XCTAssertEqual(MacClippyDockCardHoverChrome.shadowY(elevated: true, hovered: true), 5)
     }
 
     func testPanelTravelPlacesEntirePanelBelowItsFinalBottomEdge() {

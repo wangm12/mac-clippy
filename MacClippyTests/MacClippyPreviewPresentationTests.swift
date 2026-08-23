@@ -126,6 +126,29 @@ final class MacClippyPreviewPresentationTests: XCTestCase {
         XCTAssertFalse(source.contains("NSColor(calibratedRed: 0.85, green: 0.88, blue: 0.93, alpha: 1)"))
     }
 
+    @MainActor
+    func testPreviewSurfaceStaysOpaqueAndOffFullWidthGlass() throws {
+        XCTAssertEqual(MacClippyDockTheme.previewSurfaceLight.alphaComponent, 1)
+        XCTAssertEqual(MacClippyDockTheme.previewSurfaceDark.alphaComponent, 1)
+        XCTAssertLessThan(MacClippyDockTheme.cardLight.alphaComponent, 1)
+
+        let preview = try appSource(named: "MacClippyDockPreview.swift")
+        XCTAssertTrue(preview.contains("previewSurfaceColor"))
+        XCTAssertTrue(preview.contains("contentTextColor"))
+        XCTAssertTrue(preview.contains("interactiveRestBorder"))
+        XCTAssertFalse(preview.contains("macClippyFloatingGlass"))
+        XCTAssertFalse(preview.contains("Color.primary"))
+        XCTAssertFalse(preview.contains("foregroundStyle(.secondary)"))
+        XCTAssertFalse(preview.contains("cardColor"))
+
+        let chrome = try appSource(named: "MacClippyDockPreview+Chrome.swift")
+        XCTAssertTrue(chrome.contains("macClippyChromeButtonStyle"))
+        XCTAssertTrue(chrome.contains("MacClippyDockHoverPolicy.shouldApplyHover"))
+        XCTAssertTrue(chrome.contains("contentTextColor"))
+        XCTAssertFalse(chrome.contains("foregroundStyle(.primary)"))
+        XCTAssertFalse(chrome.contains("foregroundStyle(.secondary)"))
+    }
+
     func testClipboardCardContentUsesCorePresentationKind() throws {
         let source = try appSource(named: "MacClippyClipboardCardLabel.swift")
 

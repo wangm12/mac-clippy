@@ -103,9 +103,11 @@ targets:
       - path: MacClippy/MacClippyPrivacyNotice.swift
       - path: MacClippy/MacClippyDock.swift
       - path: MacClippy/MacClippyDockTheme.swift
+      - path: MacClippy/MacClippyGlass.swift
       - path: MacClippy/MacClippyMotion.swift
       - path: MacClippy/MacClippyDockPanel.swift
       - path: MacClippy/MacClippyDockPreview.swift
+      - path: MacClippy/MacClippyDockPreview+Chrome.swift
       - path: MacClippy/MacClippyDockPreviewColor.swift
       - path: MacClippy/MacClippyDockPreviewSupport.swift
       - path: MacClippy/MacClippyDockPreviewTextViews.swift
@@ -118,6 +120,7 @@ targets:
       - path: MacClippy/MacClippySystemQuickLook.swift
       - path: MacClippy/MacClippyVideoPlayerPreview.swift
       - path: MacClippy/MacClippyDetails.swift
+      - path: MacClippy/MacClippyDetails+Sections.swift
       - path: MacClippy/MacClippyDockController.swift
       - path: MacClippy/MacClippyDockController+Lifecycle.swift
       - path: MacClippy/MacClippyDockController+Input.swift

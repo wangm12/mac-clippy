@@ -112,15 +112,16 @@ struct MacClippyDockPreviewView: View {
                 .padding(.top, 16)
                 .padding(.bottom, 12)
 
-            Divider().opacity(0.5)
+            previewHairline
 
             contentView
                 .id(contentIdentity)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .padding(.horizontal, 18)
                 .padding(.vertical, 14)
+                .background(MacClippyDockTheme.previewSurfaceColor)
 
-            Divider().opacity(0.5)
+            previewHairline
 
             previewFooter
                 .padding(.horizontal, 18)
@@ -130,10 +131,12 @@ struct MacClippyDockPreviewView: View {
         // lets the panel follow the available display area like Quick Look
         // instead of leaving a small fixed canvas inside a larger window.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(MacClippyDockTheme.previewSurfaceColor)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+                .inset(by: MacClippyDockTheme.cardBorderInset)
+                .stroke(MacClippyDockTheme.interactiveRestBorder, lineWidth: MacClippyDockTheme.pillBorderWidth)
         }
         .onChange(of: contentIdentity) { _, _ in
             imageOCRText = nil
@@ -151,7 +154,7 @@ struct MacClippyDockPreviewView: View {
     private var previewHeader: some View {
         HStack(spacing: 10) {
             if let icon = metadata.sourceIcon {
-                Image(nsImage: icon)
+                Image(nsImage: MacClippySourceAppIcon.prepared(icon, pointSize: 26))
                     .resizable()
                     .interpolation(.high)
                     .scaledToFit()
@@ -161,8 +164,10 @@ struct MacClippyDockPreviewView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                     .overlay {
                         RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .inset(by: MacClippyDockTheme.cardBorderInset)
                             .stroke(Color(nsColor: metadata.sourceAccent).opacity(0.32), lineWidth: 1)
                     }
+                    .environment(\.colorScheme, .light)
             } else {
                 Image(systemName: "app.dashed")
                     .font(.callout.weight(.semibold))
@@ -171,28 +176,37 @@ struct MacClippyDockPreviewView: View {
                     .background(Color(nsColor: metadata.sourceAccent).opacity(0.24), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                     .overlay {
                         RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .inset(by: MacClippyDockTheme.cardBorderInset)
                             .stroke(Color(nsColor: metadata.sourceAccent).opacity(0.32), lineWidth: 1)
                     }
             }
             Text(metadata.sourceName)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.primary)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(MacClippyDockTheme.contentTextColor)
                 .lineLimit(1)
             if let time = metadata.relativeTime {
                 Text("• \(MacClippyDockTimestampPolicy.displayLabel(for: time))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(MacClippyDockTheme.contentMutedColor)
             }
             Spacer(minLength: 8)
-            chevronButton(.previous)
-            chevronButton(.next)
+            MacClippyPreviewChromeIconButton(
+                systemImage: "chevron.left",
+                accessibilityLabel: "Previous",
+                action: { onNavigate?(.previous) }
+            )
+            MacClippyPreviewChromeIconButton(
+                systemImage: "chevron.right",
+                accessibilityLabel: "Next",
+                action: { onNavigate?(.next) }
+            )
             if let onCopy {
-                Button(action: onCopy) {
-                    Label("Copy", systemImage: "doc.on.doc")
-                        .font(.caption.weight(.semibold))
-                        .labelStyle(.titleAndIcon)
-                }
-                .buttonStyle(.plain)
+                MacClippyPreviewChromeLabelButton(
+                    title: "Copy",
+                    systemImage: "doc.on.doc",
+                    accessibilityLabel: "Copy",
+                    action: onCopy
+                )
                 .keyboardShortcut("c", modifiers: .command)
             }
             if let onCopyText,
@@ -203,30 +217,19 @@ struct MacClippyDockPreviewView: View {
                 let copyingSelection = MacClippyDockPreviewTextCopyPolicy.isSelection(
                     selectedText: selectedImageText
                 )
-                Button {
-                    onCopyText(imageText)
-                } label: {
-                    Label(
-                        copyingSelection ? "Copy Selection" : "Copy Text",
-                        systemImage: copyingSelection ? "text.cursor" : "text.cursor"
-                    )
-                        .font(.caption.weight(.semibold))
-                        .labelStyle(.titleAndIcon)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(copyingSelection ? "Copy selected text" : "Copy recognized text")
+                MacClippyPreviewChromeLabelButton(
+                    title: copyingSelection ? "Copy Selection" : "Copy Text",
+                    systemImage: "text.cursor",
+                    accessibilityLabel: copyingSelection ? "Copy selected text" : "Copy recognized text",
+                    action: { onCopyText(imageText) }
+                )
             }
-            Button {
-                onDismiss?()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 22, height: 22)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Close preview")
-            .help("Esc to close")
+            MacClippyPreviewChromeIconButton(
+                systemImage: "xmark",
+                accessibilityLabel: "Close preview",
+                help: "Esc to close",
+                action: { onDismiss?() }
+            )
         }
     }
 
@@ -237,13 +240,13 @@ struct MacClippyDockPreviewView: View {
                 EmptyView()
             } else if let footerText = content.footerText(characterCount: metadata.characterCount) {
                 Text(footerText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(MacClippyDockTheme.contentMutedColor)
             }
             Spacer(minLength: 0)
             Text("Press Space or Esc to exit")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(MacClippyDockTheme.contentMutedColor)
         }
     }
 
@@ -267,15 +270,15 @@ struct MacClippyDockPreviewView: View {
                 MacClippyDockPreviewTextView(
                     text: displayText,
                     monospaced: true,
-                    foregroundColor: .textColor,
-                    backgroundColor: .textBackgroundColor
+                    foregroundColor: MacClippyDockTheme.text,
+                    backgroundColor: MacClippyDockTheme.previewWell
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             case .plain, .color:
                 MacClippyDockPreviewTextView(
                     text: displayText,
                     monospaced: false,
-                    foregroundColor: .labelColor
+                    foregroundColor: MacClippyDockTheme.text
                 )
             }
         case let .richText(_, attributed, plain):
@@ -306,91 +309,12 @@ struct MacClippyDockPreviewView: View {
         case .error:
             unavailableView
         }
-}
-
-    @ViewBuilder
-    private func filePreview(_ urls: [URL]) -> some View {
-        if let url = MacClippyDockPreviewFileSurface.nativePreviewURL(in: urls) {
-            switch MacClippyFilePresentation.mediaKind(for: url) {
-            case .image:
-                MacClippyFileImagePreview(url: url)
-            case .movie:
-                MacClippyVideoPreview(url: url, reduceMotion: reduceMotion)
-            case .other:
-                MacClippyQuickLookPreview(url: url, autostarts: !reduceMotion)
-            }
-        } else {
-            unavailableView
-        }
     }
 
-    private var unavailableView: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle")
-                .foregroundStyle(.secondary)
-            Text("Preview unavailable")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Preview unavailable")
-    }
-
-    // Small native chevron button. The tap fires onNavigate; navigation itself
-    // adds no spatial animation beyond the existing preview refresh, so it is
-    // safe under Reduce Motion.
-    private func chevronButton(_ direction: MacClippyPreviewNavigationDirection) -> some View {
-        Button {
-            onNavigate?(direction)
-        } label: {
-            Image(systemName: direction == .previous ? "chevron.left" : "chevron.right")
-                .font(.headline)
-                .foregroundStyle(.secondary)
-                .frame(width: 22, height: 22)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(direction == .previous ? "Previous" : "Next")
-    }
-}
-
-private struct MacClippyDockPreviewURL: View {
-    let value: String
-
-    private var url: URL? {
-        MacClippyClipboardPresentation.url(fromPlainText: value)
-    }
-
-    private var pathAndQuery: String? {
-        guard let url else { return nil }
-        let path = url.path.isEmpty ? "/" : url.path
-        let suffix = url.query.map { "\(path)?\($0)" } ?? path
-        return suffix == "/" ? nil : suffix
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(url?.host(percentEncoded: false) ?? value)
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
-                    .textSelection(.enabled)
-                if let pathAndQuery {
-                    Text(pathAndQuery)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(3)
-                        .truncationMode(.middle)
-                        .textSelection(.enabled)
-                }
-            }
-            MacClippyDockPreviewTextView(
-                text: value,
-                monospaced: false,
-                foregroundColor: .labelColor
-            )
-        }
+    private var previewHairline: some View {
+        Rectangle()
+            .fill(MacClippyDockTheme.lineColor)
+            .frame(height: 1)
+            .allowsHitTesting(false)
     }
 }

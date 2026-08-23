@@ -8,6 +8,11 @@ enum MacClippyDetailsEditing: Equatable {
     case name
 }
 
+enum MacClippyDetailsFocusedField: Hashable {
+    case content
+    case name
+}
+
 struct MacClippyDetailsView: View {
     let details: MacClippyItemDetails
     let editing: MacClippyDetailsEditing
@@ -27,14 +32,9 @@ struct MacClippyDetailsView: View {
     let onDelete: () -> Void
     let onClose: () -> Void
 
-    @State private var contentDraft: String
-    @State private var nameDraft: String
-    @FocusState private var focusedField: DetailsFocusedField?
-
-    private enum DetailsFocusedField: Hashable {
-        case content
-        case name
-    }
+    @State var contentDraft: String
+    @State var nameDraft: String
+    @FocusState var focusedField: MacClippyDetailsFocusedField?
 
     init(
         details: MacClippyItemDetails,
@@ -79,6 +79,7 @@ struct MacClippyDetailsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+                .macClippyFloatingGlass(in: Rectangle())
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
@@ -88,11 +89,13 @@ struct MacClippyDetailsView: View {
                 }
                 .padding(22)
             }
+            .background(MacClippyDockTheme.cardColor)
             Divider()
             footer
+                .macClippyFloatingGlass(in: Rectangle())
         }
         .frame(minWidth: 320, minHeight: 360)
-        .background(.regularMaterial)
+        .background(MacClippyDockTheme.cardColor)
         .onAppear { onEditingChanged(editing != .none) }
         .onChange(of: editing) { _, value in
             onEditingChanged(value != .none)
@@ -167,172 +170,6 @@ struct MacClippyDetailsView: View {
                 }
             }
         }
-    }
-
-    private var metadataSection: some View {
-        section("Metadata") {
-            metadataRow("Source", details.sourceAppBundleID ?? "Unknown")
-            metadataRow("Created", details.created.formatted(date: .abbreviated, time: .shortened))
-            metadataRow("Modified", details.modified.formatted(date: .abbreviated, time: .shortened))
-            metadataRow("Accessed", details.lastAccessed?.formatted(date: .abbreviated, time: .shortened) ?? "Never")
-            metadataRow("Access count", "\(details.frequency)")
-            HStack {
-                Text("Name").foregroundStyle(.secondary)
-                Spacer()
-                if editing == .name {
-                    TextField("Name", text: $nameDraft)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 220)
-                        .focused($focusedField, equals: .name)
-                        .onSubmit { onSaveName(nameDraft) }
-                    Button("Save") { onSaveName(nameDraft) }
-                        .keyboardShortcut(.defaultAction)
-                    Button("Cancel", action: onCancelEdit)
-                } else {
-                    Text(details.customLabel ?? "Not set")
-                        .lineLimit(1)
-                    Button("Rename", action: onRename)
-                        .keyboardShortcut("r", modifiers: .command)
-                }
-            }
-            if let ocrText = details.ocrText, !ocrText.isEmpty {
-                metadataRow("OCR", ocrText)
-            }
-            if !details.pinboardNames.isEmpty {
-                metadataRow("Pinboards", details.pinboardNames.joined(separator: ", "))
-            }
-            if let dimensions = details.imageDimensions {
-                metadataRow("Image", "\(Int(dimensions.width)) × \(Int(dimensions.height)) px")
-            }
-            if !details.fileURLs.isEmpty {
-                metadataRow("Files", "\(details.fileURLs.count)")
-                ForEach(details.fileURLs, id: \.self) { url in
-                    Text(url.path).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-                }
-            }
-        }
-    }
-
-    private func focusField(for editing: MacClippyDetailsEditing) {
-        let target: DetailsFocusedField?
-        switch editing {
-        case .content: target = .content
-        case .name: target = .name
-        case .none: target = nil
-        }
-        DispatchQueue.main.async {
-            focusedField = target
-        }
-    }
-
-    private func resetDrafts(for editing: MacClippyDetailsEditing) {
-        switch editing {
-        case .content:
-            contentDraft = details.textContent ?? ""
-        case .name:
-            nameDraft = details.customLabel ?? ""
-        case .none:
-            contentDraft = details.textContent ?? ""
-            nameDraft = details.customLabel ?? ""
-        }
-    }
-
-    private var representationsSection: some View {
-        section("Retained representations") {
-            if details.representations.isEmpty {
-                Text("No additional representations retained.")
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(details.representations) { representation in
-                    HStack(spacing: 8) {
-                        Image(systemName: representation.isAvailable ? "checkmark.circle.fill" : "exclamationmark.circle")
-                            .foregroundStyle(representation.isAvailable ? .green : .orange)
-                        Text(representation.uti)
-                            .font(.caption.monospaced())
-                            .lineLimit(1)
-                        Spacer()
-                        Text(representation.payloadState.rawValue)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                        Text(ByteCountFormatter.string(fromByteCount: Int64(representation.byteCount), countStyle: .file))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-        }
-    }
-
-    private var footer: some View {
-        HStack(spacing: 8) {
-            Button("Copy", action: onCopy)
-            if let onPlainCopy { Button("Plain Text", action: onPlainCopy) }
-            if editing == .none {
-                Button("Paste", action: onPaste)
-                    .keyboardShortcut(.defaultAction)
-            } else {
-                Button("Paste", action: onPaste)
-            }
-            if let onTransformCopy, let onTransformPaste {
-                Menu("Transform") {
-                    ForEach(TextTransform.allCases, id: \.self) { transform in
-                        Menu(transform.displayName) {
-                            Button("Copy transformed") { onTransformCopy(transform) }
-                            Button("Paste transformed") { onTransformPaste(transform) }
-                        }
-                    }
-                }
-            }
-            Button("Pin", action: onPin)
-            Spacer()
-            Button("Delete", role: .destructive, action: onDelete)
-        }
-        .padding(14)
-    }
-
-    private var contentDisplay: String {
-        let fullText: String
-        if let textContentPreview = details.textContentPreview {
-            fullText = textContentPreview.isEmpty ? "(empty)" : textContentPreview
-        } else if !details.fileURLs.isEmpty {
-            fullText = details.fileURLs.map(\.path).joined(separator: "\n")
-        } else if let dimensions = details.imageDimensions {
-            fullText = "Image \(Int(dimensions.width)) × \(Int(dimensions.height)) px"
-        } else {
-            fullText = details.preview.isEmpty ? "(empty)" : details.preview
-        }
-        return MacClippyDockPreviewTextPolicy.displayText(for: fullText)
-    }
-
-    private var canEditContent: Bool {
-        details.isEditable
-            && (details.textContent?.count ?? 0) <= MacClippyDockPreviewTextPolicy.maxRenderedCharacters
-    }
-
-    private var iconName: String {
-        switch details.contentKind {
-        case .text, .html, .rtf: "doc.text"
-        case .image: "photo"
-        case .files: "folder"
-        }
-    }
-
-    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.subheadline.weight(.semibold))
-                .accessibilityAddTraits(.isHeader)
-            content()
-        }
-    }
-
-    private func metadataRow(_ title: String, _ value: String) -> some View {
-        HStack(alignment: .top) {
-            Text(title).foregroundStyle(.secondary)
-            Spacer()
-            Text(value).multilineTextAlignment(.trailing).textSelection(.enabled)
-        }
-        .font(.callout)
     }
 }
 

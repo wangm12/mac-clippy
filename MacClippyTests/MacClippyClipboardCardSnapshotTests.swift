@@ -173,12 +173,15 @@ final class MacClippyClipboardCardSnapshotTests: XCTestCase {
         let hoverSource = try modifierSource()
         XCTAssertFalse(
             hoverSource.contains(".stroke("),
-            "Hover must not paint a second ring. Trailing badge padding centers that overlay and offsets it from the card face."
+            "Hover must not paint a second ring. Badge padding centers that overlay off the card face."
         )
         XCTAssertTrue(hoverSource.contains("macClippyCardHovered"))
+        XCTAssertTrue(hoverSource.contains("hoverAnimation"))
+        XCTAssertFalse(hoverSource.contains("focusAnimation"))
 
         let cardSource = try appSource(named: "MacClippyClipboardCardLabel.swift")
         XCTAssertTrue(cardSource.contains("MacClippyCardBorderOverlay"))
+        XCTAssertTrue(cardSource.contains("MacClippyDockCardHoverChrome"))
     }
 
     func testSourceCardBackgroundFillsTheRoundedFace() throws {
@@ -204,6 +207,7 @@ final class MacClippyClipboardCardSnapshotTests: XCTestCase {
         )
     }
 
+    @MainActor
     func testClipboardCardBorderPolicyKeepsOneStroke() {
         XCTAssertEqual(
             MacClippyDockCardBorderPolicy.lineWidth(isActive: false, highContrast: false),
@@ -216,6 +220,9 @@ final class MacClippyClipboardCardSnapshotTests: XCTestCase {
         XCTAssertFalse(MacClippyDockCardBorderPolicy.usesAccent(isActive: false, isHovered: false))
         XCTAssertTrue(MacClippyDockCardBorderPolicy.usesAccent(isActive: false, isHovered: true))
         XCTAssertTrue(MacClippyDockCardBorderPolicy.usesAccent(isActive: true, isHovered: false))
+        XCTAssertEqual(MacClippyDockTheme.cardBorderInset, 0.5)
+        XCTAssertEqual(MacClippyDockTheme.pillBorderInset, 0.5)
+        XCTAssertEqual(MacClippyDockTheme.pillBorderWidth, 1)
     }
 
     @MainActor

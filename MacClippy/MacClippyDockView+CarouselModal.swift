@@ -231,7 +231,7 @@ extension MacClippyDockView {
             // its vertical scroll padding so it never stretches to fill the
             // panel vertically and leaves a large blank gap below the cards.
             .frame(height: MacClippyDockCardMetrics.carouselHeight(for: dynamicTypeSize))
-            .overlay { carouselEdgeFade }
+            .mask { carouselEdgeFade }
             .overlay { MacClippyDockScrollSignpostProbe().allowsHitTesting(false) }
         }
     }
@@ -239,20 +239,14 @@ extension MacClippyDockView {
     private var carouselEdgeFade: some View {
         HStack(spacing: 0) {
             LinearGradient(
-                colors: [
-                    MacClippyDockTheme.backdropColor,
-                    MacClippyDockTheme.backdropColor.opacity(0)
-                ],
+                colors: [.clear, .black],
                 startPoint: .leading,
                 endPoint: .trailing
             )
             .frame(width: 16)
-            Spacer(minLength: 0)
+            Rectangle().fill(.black)
             LinearGradient(
-                colors: [
-                    MacClippyDockTheme.backdropColor.opacity(0),
-                    MacClippyDockTheme.backdropColor
-                ],
+                colors: [.black, .clear],
                 startPoint: .leading,
                 endPoint: .trailing
             )
@@ -328,7 +322,7 @@ extension MacClippyDockView {
         // Keep the snippet carousel the same compact height as the clipboard
         // carousel, including when the add card is the only card.
         .frame(height: MacClippyDockCardMetrics.carouselHeight(for: dynamicTypeSize))
-        .overlay { carouselEdgeFade }
+        .mask { carouselEdgeFade }
         .overlay { MacClippyDockScrollSignpostProbe().allowsHitTesting(false) }
     }
 

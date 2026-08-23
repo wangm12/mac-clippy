@@ -24,6 +24,7 @@ struct MacClippyCardBorderOverlay: View {
 
     var body: some View {
         RoundedRectangle(cornerRadius: MacClippyDockCardMetrics.radius, style: .continuous)
+            .inset(by: MacClippyDockTheme.cardBorderInset)
             .stroke(
                 MacClippyDockCardBorderPolicy.color(isActive: isActive, isHovered: isHovered),
                 lineWidth: MacClippyDockCardBorderPolicy.lineWidth(
@@ -52,7 +53,7 @@ struct MacClippyCardHoverModifier: ViewModifier {
             // overlay ring was centered on the badge-padded frame and sat
             // offset from the rounded face.
             .environment(\.macClippyCardHovered, active)
-            .animation(MacClippyMotion.animation(MacClippyMotion.focusAnimation, reduceMotion: reduceMotion), value: active)
+            .animation(MacClippyMotion.animation(MacClippyMotion.hoverAnimation, reduceMotion: reduceMotion), value: active)
             .onHover { hovering in
                 isHovered = enabled && hovering
             }
@@ -87,11 +88,8 @@ struct MacClippyDockView: View {
     @State var dropConfirmationGeneration: UInt = 0
     // P2a: inline custom-name editor state is owned by the dock model and is
     // presented inside this panel, so keyboard events stay with the editor.
-    // Pointer hover state for the +New category pill. Hover is border-only:
-    // the dashed capsule border swaps to the accent color and thickens
-    // slightly. There is no hover background fill, no hover foreground-color
-    // change, and no vertical lift, so the pill never moves. Reduce Motion
-    // keeps the instant border state.
+    // Pointer hover state for the +New category button. Hover retints the
+    // plus icon; the glass chrome stays in place so the control never jumps.
     @State var hoveredNewCategory = false
     // Hover state for filter/category pills so every interactive rail surface
     // has an instant hover indicator, not just the +New pill.
@@ -99,12 +97,14 @@ struct MacClippyDockView: View {
     // Gear/About button hover so it shares the same hover treatment as the
     // other circular icon buttons (+New).
     @State var hoveredGear = false
+    @State var hoveredSearch = false
     // One-shot flag for the action bar staggered button fade-in. Set on the
     // bar's first onAppear so buttons orchestrate left-to-right once.
     @State var actionBarAppeared = false
     @State var shouldRestoreSearchFocus = false
     @State var modalFocusGeneration: UInt = 0
     @State var sourcePresentationGeneration: UInt = 0
+    @Namespace var headerGlassNamespace
 
     var reduceMotion: Bool {
         MacClippyMotion.shouldReduceMotion(swiftUI: accessibilityReduceMotion)
@@ -151,19 +151,11 @@ struct MacClippyDockView: View {
         .padding(.top, 12)
         .padding(.bottom, 10)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        // Vibrancy material shell over the cool-neutral backdrop. The AppKit
-        // backdrop paints the cool white/gray gradient; this thin material adds
-        // the reference liquid-glass feel without hiding content.
-        .background(
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .opacity(0.55)
-                .background(MacClippyDockTheme.panelStrongColor.opacity(0.18))
-                .clipShape(TopRoundedRectangle(radius: 22))
-                .overlay(TopRoundedRectangle(radius: 22).stroke(MacClippyDockTheme.lineColor, lineWidth: 1))
+        .background {
+            MacClippyDockCardWell()
                 .allowsHitTesting(false)
-        )
-        .clipShape(TopRoundedRectangle(radius: 22))
+        }
+        .clipShape(TopRoundedRectangle(radius: MacClippyDockBackdropHolePolicy.panelCornerRadius))
         .accessibilityHidden(model.modal != nil)
         .overlay {
             modalOverlay
@@ -201,7 +193,7 @@ struct MacClippyDockView: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)
-                .background(.regularMaterial, in: Capsule())
+                .background(MacClippyDockTheme.panelStrongColor, in: Capsule())
                 .overlay(Capsule().stroke(MacClippyDockTheme.lineColor, lineWidth: 1))
                 .padding(.top, 56)
                 .padding(.leading, 18)
@@ -361,5 +353,12 @@ struct MacClippyRenameItemEditor: View {
         // Blank removes the name: pass nil so the model/runtime normalizes the
         // stored value and rebuilds the index without the name term.
         onComplete(.save(name: trimmed.isEmpty ? nil : trimmed))
+    }
+}
+
+struct MacClippyDockCardWell: View {
+    var body: some View {
+        TopRoundedRectangle(radius: MacClippyDockBackdropHolePolicy.panelCornerRadius)
+            .stroke(Color.primary.opacity(0.12), lineWidth: 1)
     }
 }

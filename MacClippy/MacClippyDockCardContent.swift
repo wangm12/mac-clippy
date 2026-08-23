@@ -37,7 +37,7 @@ extension MacClippyDockView {
         .overlay {
             MacClippyCardBorderOverlay(isActive: isFocused, highContrast: highContrast)
         }
-        .shadow(color: .black.opacity(isFocused ? 0.10 : 0.06), radius: 14, y: 4)
+        .modifier(MacClippySnippetHoverChrome(isFocused: isFocused))
     }
 
     @ViewBuilder
@@ -94,5 +94,33 @@ extension MacClippyDockView {
         case .image: "Image"
         case .files: "Files"
         }
+    }
+}
+
+private struct MacClippySnippetHoverChrome: ViewModifier {
+    let isFocused: Bool
+    @Environment(\.macClippyCardHovered) private var isHovered
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+
+    func body(content: Content) -> some View {
+        let reduceMotion = MacClippyMotion.shouldReduceMotion(swiftUI: accessibilityReduceMotion)
+        content
+            .shadow(
+                color: .black.opacity(
+                    MacClippyDockCardHoverChrome.shadowOpacity(
+                        elevated: isFocused,
+                        hovered: isHovered
+                    )
+                ),
+                radius: MacClippyDockCardHoverChrome.shadowRadius(
+                    elevated: isFocused,
+                    hovered: isHovered
+                ),
+                y: MacClippyDockCardHoverChrome.shadowY(
+                    elevated: isFocused,
+                    hovered: isHovered
+                )
+            )
+            .scaleEffect(reduceMotion ? 1 : (isHovered ? MacClippyMotion.hoverScale : 1))
     }
 }

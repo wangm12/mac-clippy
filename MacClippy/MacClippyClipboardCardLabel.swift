@@ -22,6 +22,7 @@ struct MacClippyClipboardCardLabel: View, Equatable {
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+    @Environment(\.macClippyCardHovered) private var isHovered
 
     init(
         context: MacClippyClipboardCardContext,
@@ -97,10 +98,26 @@ struct MacClippyClipboardCardLabel: View, Equatable {
             .shadow(
                 color: context.isPreviewVisible
                     ? .clear
-                    : .black.opacity(context.isElevated ? 0.16 : 0.08),
-                radius: context.isPreviewVisible ? 0 : 12,
-                y: context.isPreviewVisible ? 0 : 4
+                    : .black.opacity(
+                        MacClippyDockCardHoverChrome.shadowOpacity(
+                            elevated: context.isElevated,
+                            hovered: isHovered
+                        )
+                    ),
+                radius: context.isPreviewVisible
+                    ? 0
+                    : MacClippyDockCardHoverChrome.shadowRadius(
+                        elevated: context.isElevated,
+                        hovered: isHovered
+                    ),
+                y: context.isPreviewVisible
+                    ? 0
+                    : MacClippyDockCardHoverChrome.shadowY(
+                        elevated: context.isElevated,
+                        hovered: isHovered
+                    )
             )
+            .scaleEffect(reduceMotion ? 1 : (isHovered ? MacClippyMotion.hoverScale : 1))
             .overlay(alignment: .topTrailing) {
                 cardSelectionBadge
             }
@@ -108,8 +125,8 @@ struct MacClippyClipboardCardLabel: View, Equatable {
 
     private var cardCaption: some View {
         Text(MacClippyCardCaptionLabel.text(for: context) ?? " ")
-            .font(.caption.weight(.medium))
-            .foregroundStyle(MacClippyDockTheme.muted2Color)
+            .font(.callout.weight(.semibold))
+            .foregroundStyle(MacClippyDockTheme.mutedColor)
             .lineLimit(1)
             .frame(maxWidth: .infinity, minHeight: MacClippyDockCardMetrics.captionHeight)
             .opacity(MacClippyCardCaptionLabel.text(for: context) == nil ? 0 : 1)
@@ -118,6 +135,7 @@ struct MacClippyClipboardCardLabel: View, Equatable {
 
     private var sourceAppBadge: some View {
         sourceBadgeIcon
+            .environment(\.colorScheme, .light)
             .help(context.source.displayName)
             .accessibilityHidden(true)
             .offset(
@@ -143,7 +161,7 @@ struct MacClippyClipboardCardLabel: View, Equatable {
             width: MacClippyDockCardMetrics.sourceBadgeSize,
             height: MacClippyDockCardMetrics.sourceBadgeSize
         )
-        .shadow(color: .black.opacity(0.32), radius: 3, y: 1)
+        .shadow(color: .black.opacity(0.18), radius: 8, y: 3)
     }
 
     @ViewBuilder

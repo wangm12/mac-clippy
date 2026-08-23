@@ -12,11 +12,19 @@ final class MacClippyDockPanelContentView: NSView {
         super.init(frame: .zero)
 
         wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+        layer?.isOpaque = false
         foregroundView.wantsLayer = true
+        foregroundView.layer?.backgroundColor = NSColor.clear.cgColor
+        foregroundView.layer?.isOpaque = false
         backdropView.autoresizingMask = [.width, .height]
         foregroundView.autoresizingMask = [.width, .height]
         addSubview(backdropView)
-        addSubview(foregroundView)
+        // Apple only applies Regular glass, specular highlights, and
+        // vibrancy to `NSGlassEffectView.contentView`. A sibling hosting
+        // view sits on top of an empty glass plate and reads as a matte
+        // slab with unreadable chrome.
+        backdropView.embedForeground(foregroundView)
     }
 
     @available(*, unavailable)
@@ -34,7 +42,6 @@ final class MacClippyDockPanelContentView: NSView {
     override func layout() {
         super.layout()
         backdropView.frame = bounds
-        foregroundView.frame = bounds
     }
 }
 
@@ -42,6 +49,24 @@ final class MacClippyDockHostingView: NSHostingView<MacClippyDockView> {
     // NSHostingView is the actual hit-tested view for most SwiftUI controls,
     // so the content container's first-mouse policy alone is not sufficient.
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override var isOpaque: Bool { false }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        makeTransparent()
+    }
+
+    override func layout() {
+        super.layout()
+        makeTransparent()
+    }
+
+    private func makeTransparent() {
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+        layer?.isOpaque = false
+    }
 }
 
 final class MacClippyPreviewHostingView: NSHostingView<MacClippyDockPreviewView> {
@@ -52,17 +77,27 @@ final class MacClippyPreviewHostingView: NSHostingView<MacClippyDockPreviewView>
 }
 
 final class MacClippyDockBackdropView: NSView {
-    private let gradientLayer = CAGradientLayer()
+    private let materialView: NSView
+    private let solidFillLayer = CALayer()
+    private var reduceTransparencyOverride: Bool?
+    private weak var embeddedForeground: NSView?
 
     override init(frame frameRect: NSRect) {
+        materialView = Self.makeMaterialView(frame: frameRect)
         super.init(frame: frameRect)
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
-        // Non-opaque so the warm gradient + panel material can show through the
-        // rounded top corners and the vibrancy underneath.
         layer?.backgroundColor = NSColor.clear.cgColor
-        updateGradient()
-        needsDisplay = true
+        layer?.isOpaque = false
+        layer?.cornerRadius = MacClippyDockBackdropHolePolicy.panelCornerRadius
+        layer?.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
+        materialView.autoresizingMask = [.width, .height]
+        addSubview(materialView)
+        solidFillLayer.cornerRadius = MacClippyDockBackdropHolePolicy.panelCornerRadius
+        solidFillLayer.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
+        layer?.insertSublayer(solidFillLayer, at: 0)
+        observeReduceTransparency()
+        applyTransparencyPolicy(reduceTransparency: currentReduceTransparency)
     }
 
     @available(*, unavailable)
@@ -70,38 +105,131 @@ final class MacClippyDockBackdropView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
     override var isOpaque: Bool { false }
+
+    var isShowingGlass: Bool { !materialView.isHidden }
+    var isShowingSolidFill: Bool { !solidFillLayer.isHidden }
+    var embedsForegroundInGlass: Bool {
+        guard let foreground = embeddedForeground else { return false }
+        return glassContentView === foreground && !materialView.isHidden
+    }
+
+    func embedForeground(_ view: NSView) {
+        embeddedForeground = view
+        view.wantsLayer = true
+        view.autoresizingMask = [.width, .height]
+        installForeground()
+    }
+
+    func applyTransparencyPolicy(reduceTransparency: Bool) {
+        reduceTransparencyOverride = reduceTransparency
+        let useSolid = reduceTransparency
+        materialView.isHidden = useSolid
+        solidFillLayer.isHidden = !useSolid
+        updateSolidFill()
+        installForeground()
+    }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        updateGradient()
-    }
-
-    override func updateLayer() {
-        updateGradient()
+        updateSolidFill()
     }
 
     override func layout() {
         super.layout()
-        gradientLayer.frame = bounds
+        materialView.frame = bounds
+        solidFillLayer.frame = bounds
+        layoutForeground()
     }
 
-    private func updateGradient() {
-        // Warm beige -> cream (light) or lifted warm (dark) panel fill. The
-        // foreground SwiftUI layer adds the vibrancy/material on top.
-        let isDark = NSApp?.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        gradientLayer.colors = isDark
-            ? [MacClippyDockTheme.bg0Dark.cgColor, MacClippyDockTheme.bg1Dark.cgColor]
-            : [MacClippyDockTheme.bg0.cgColor, MacClippyDockTheme.bg1.cgColor]
-        gradientLayer.startPoint = CGPoint(x: 0, y: 0)
-        gradientLayer.endPoint = CGPoint(x: 0, y: 1)
-        if gradientLayer.superlayer == nil {
-            layer?.insertSublayer(gradientLayer, at: 0)
+    private var currentReduceTransparency: Bool {
+        reduceTransparencyOverride ?? NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+    }
+
+    private func observeReduceTransparency() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAccessibilityDisplayOptionsChanged),
+            name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: NSWorkspace.shared
+        )
+    }
+
+    @objc private func handleAccessibilityDisplayOptionsChanged() {
+        applyTransparencyPolicy(reduceTransparency: currentReduceTransparency)
+    }
+
+    private var glassContentView: NSView? {
+        if #available(macOS 26, *), let glass = materialView as? NSGlassEffectView {
+            return glass.contentView
         }
-        layer?.backgroundColor = NSColor.clear.cgColor
-        layer?.cornerRadius = 22
-        layer?.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
-        layer?.isOpaque = false
+        return nil
+    }
+
+    private func installForeground() {
+        guard let foreground = embeddedForeground else { return }
+        if materialView.isHidden {
+            clearGlassContent()
+            if foreground.superview !== self {
+                addSubview(foreground)
+            }
+            layoutForeground()
+            return
+        }
+        if #available(macOS 26, *), let glass = materialView as? NSGlassEffectView {
+            if glass.contentView !== foreground {
+                glass.contentView = foreground
+            }
+            layoutForeground()
+            return
+        }
+        if foreground.superview !== self {
+            addSubview(foreground)
+        }
+        layoutForeground()
+    }
+
+    private func clearGlassContent() {
+        if #available(macOS 26, *), let glass = materialView as? NSGlassEffectView {
+            glass.contentView = nil
+        }
+    }
+
+    private func layoutForeground() {
+        embeddedForeground?.frame = bounds
+        if #available(macOS 26, *), let glass = materialView as? NSGlassEffectView {
+            glass.contentView?.frame = glass.bounds
+        }
+    }
+
+    private func updateSolidFill() {
+        let isDark = NSApp?.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        solidFillLayer.backgroundColor = isDark
+            ? MacClippyDockTheme.bg1Dark.cgColor
+            : MacClippyDockTheme.bg1.cgColor
+        solidFillLayer.frame = bounds
+    }
+
+    private static func makeMaterialView(frame: NSRect) -> NSView {
+        if #available(macOS 26, *) {
+            let glass = NSGlassEffectView(frame: frame)
+            glass.style = .regular
+            glass.cornerRadius = MacClippyDockBackdropHolePolicy.panelCornerRadius
+            glass.clipsToBounds = true
+            return glass
+        }
+        let visual = NSVisualEffectView(frame: frame)
+        visual.material = .hudWindow
+        visual.blendingMode = .behindWindow
+        visual.state = .active
+        visual.wantsLayer = true
+        visual.layer?.cornerRadius = MacClippyDockBackdropHolePolicy.panelCornerRadius
+        visual.layer?.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
+        return visual
     }
 }
 
@@ -127,6 +255,9 @@ final class MacClippyDockPanel: NSPanel {
 
         isOpaque = false
         backgroundColor = .clear
+        // Follow the system appearance so Regular glass can sample the
+        // desktop. Forcing darkAqua made the plate a black sheet.
+        appearance = nil
         // The dock controller animates the content-layer elevation with the panel.
         hasShadow = false
         isFloatingPanel = true

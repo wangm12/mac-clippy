@@ -119,4 +119,91 @@ extension MacClippySettingsView {
             }
         }
     }
+
+    var advancedSection: some View {
+        MacClippySettingsGroup(
+            title: "Advanced",
+            subtitle: storageHealthSummary
+        ) {
+            diagnosticsContent
+            Divider()
+            MacClippySettingsRow(
+                title: "Delete unpinned history",
+                detail: "Pinned items stay. Use this only for a manual cleanup."
+            ) {
+                Button("Delete…", role: .destructive) {
+                    isDeleteHistoryConfirmationPresented = true
+                }
+                .disabled(isDeletingHistory)
+            }
+            if isDeletingHistory {
+                ProgressView("Deleting history…")
+                    .controlSize(.small)
+            }
+            if let historyDeletionMessage {
+                Text(historyDeletionMessage)
+                    .font(.footnote)
+                    .foregroundStyle(historyDeletionMessageIsError ? .red : .secondary)
+            }
+        }
+    }
+
+    var diagnosticsContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if storageHealth.isEmpty {
+                Text("Storage status is unavailable until MacClippy finishes starting.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text(storageHealthStatusText)
+                    .font(.callout)
+                    .foregroundStyle(storageHealthHasIssue ? .orange : .secondary)
+            }
+            if storageHealthHasIssue {
+                Text("Repair the search index first. Database recovery requires a validated backup.")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+            }
+            HStack(spacing: 8) {
+                Button("Refresh") { refreshStorageHealth() }
+                Button("Repair Search Index") { repairSearchIndex() }
+                    .disabled(isRepairingSearchIndex || isExportingDiagnostics)
+                Button("Export Diagnostics…") { exportDiagnostics() }
+                    .disabled(isRepairingSearchIndex || isExportingDiagnostics)
+            }
+            if isRepairingSearchIndex {
+                ProgressView("Repairing search index…")
+                    .controlSize(.small)
+            }
+            if isExportingDiagnostics {
+                ProgressView("Exporting diagnostics…")
+                    .controlSize(.small)
+            }
+            if let diagnosticsMessage {
+                Text(diagnosticsMessage)
+                    .font(.footnote)
+                    .foregroundStyle(diagnosticsMessageIsError ? .red : .secondary)
+            }
+            Text("Diagnostics contain health counters and redacted events only; clipboard content is not included.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    var storageHealthHasIssue: Bool {
+        storageHealth.values.contains { $0.status != .healthy }
+    }
+
+    var storageHealthStatusText: String {
+        storageHealth.keys.sorted().compactMap { name in
+            guard let report = storageHealth[name] else { return nil }
+            return "\(name.capitalized): \(report.status.rawValue.capitalized)"
+        }
+        .joined(separator: "  ·  ")
+    }
+
+    var storageHealthSummary: String {
+        if storageHealth.isEmpty { return "Checking storage…" }
+        return storageHealthHasIssue ? "Needs attention" : "Storage healthy"
+    }
 }

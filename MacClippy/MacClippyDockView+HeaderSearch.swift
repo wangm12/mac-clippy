@@ -2,15 +2,18 @@ import SwiftUI
 
 extension MacClippyDockView {
     var header: some View {
-        ZStack {
-            if model.hasMultipleSelection {
-                selectionHeader
-                    .transition(MacClippyMotion.headerTransition(reduceMotion: reduceMotion))
-            } else {
-                topRow
-                    .transition(MacClippyMotion.headerTransition(reduceMotion: reduceMotion))
+        MacClippyGlassContainer(spacing: 6) {
+            Group {
+                if model.hasMultipleSelection {
+                    selectionHeader
+                        .transition(MacClippyMotion.headerTransition(reduceMotion: reduceMotion))
+                } else {
+                    topRow
+                        .transition(MacClippyMotion.headerTransition(reduceMotion: reduceMotion))
+                }
             }
         }
+        .macClippyNavContainerShape()
     }
 
     // Selection-mode header: count + Cancel on the left, primary/secondary
@@ -27,7 +30,7 @@ extension MacClippyDockView {
                             .transition(MacClippyMotion.numberFlipTransition(reduceMotion: reduceMotion))
                         Text("selected")
                     }
-                    .font(.caption.weight(.semibold))
+                    .font(.body.weight(.semibold))
                     .foregroundStyle(MacClippyDockTheme.textColor)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
@@ -39,17 +42,15 @@ extension MacClippyDockView {
                     } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "xmark")
-                                .font(.caption.weight(.bold))
+                                .font(.subheadline.weight(.bold))
                             Text("Cancel")
-                                .font(.caption.weight(.semibold))
+                                .font(.body.weight(.semibold))
                         }
-                        .foregroundStyle(MacClippyDockTheme.mutedColor)
-                        .padding(.horizontal, 10)
-                        .frame(height: 30)
+                        .foregroundStyle(MacClippyDockTheme.textColor)
+                        .padding(.horizontal, 12)
+                        .frame(height: 36)
                     }
-                    .buttonStyle(.plain)
-                    .background(Capsule().fill(MacClippyDockTheme.cardColor.opacity(0.5)))
-                    .pillBorder(MacClippyDockTheme.pillRestBorder)
+                    .macClippyChromeButtonStyle()
                     .help("Exit selection (Esc)")
                 }
 
@@ -64,6 +65,7 @@ extension MacClippyDockView {
                                 onClose()
                             })
                         }
+                        .macClippyGlassEffectID("paste-all", in: headerGlassNamespace, enabled: !reduceMotion)
                         .staggeredAppearance(index: 0, appeared: actionBarAppeared, reduceMotion: reduceMotion)
                         SelectionBarButton("Queue paste", systemImage: "list.number") {
                             model.pasteQueued(completion: { [weak model] in
@@ -133,11 +135,15 @@ extension MacClippyDockView {
             HStack(spacing: 8) {
                 // Plain magnifying-glass icon, no circular badge (reference).
                 Image(systemName: "magnifyingglass")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(MacClippyDockTheme.muted2Color)
-                TextField("Search clipboard...", text: $model.query)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(MacClippyDockTheme.mutedColor)
+                TextField(
+                    "",
+                    text: $model.query,
+                    prompt: Text("Search clipboard...").foregroundStyle(MacClippyDockTheme.mutedColor)
+                )
                     .textFieldStyle(.plain)
-                    .font(.body.weight(.medium))
+                    .font(.body.weight(.semibold))
                     .foregroundStyle(MacClippyDockTheme.textColor)
                     .focused($isSearchFocused)
                     .onChange(of: isSearchFocused) { _, focused in
@@ -162,7 +168,7 @@ extension MacClippyDockView {
                     } label: {
                         Image(systemName: "xmark")
                             .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(MacClippyDockTheme.muted2Color)
+                            .foregroundStyle(MacClippyDockTheme.mutedColor)
                             .frame(width: 22, height: 22)
                     }
                     .buttonStyle(.plain)
@@ -171,23 +177,42 @@ extension MacClippyDockView {
                     .transition(MacClippyMotion.fadeTransition(reduceMotion: reduceMotion))
                 }
             }
-            .padding(.leading, 12)
-            .padding(.trailing, 8)
-            .frame(maxWidth: .infinity, minHeight: 42)
-            .background(MacClippyDockTheme.panelStrongColor, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .padding(.leading, 14)
+            .padding(.trailing, 10)
+            .frame(maxWidth: .infinity, minHeight: 36)
+            .macClippySearchGlass()
+            .macClippyGlassEffectID("search", in: headerGlassNamespace, enabled: !reduceMotion)
             .overlay {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .inset(by: MacClippyDockTheme.pillBorderInset)
                     .stroke(
-                        isSearchFocused ? MacClippyDockTheme.accentColor.opacity(0.32) : MacClippyDockTheme.lineColor,
-                        lineWidth: 1
+                        searchStrokeColor,
+                        lineWidth: searchStrokeWidth
                     )
             }
-            .overlay {
-                if isSearchFocused {
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .stroke(MacClippyDockTheme.accentSoftColor, lineWidth: 3)
-                }
-            }
+            .onHover { hovering in hoveredSearch = hovering }
+            .animation(MacClippyMotion.animation(MacClippyMotion.hoverAnimation, reduceMotion: reduceMotion), value: hoveredSearch)
+            .animation(MacClippyMotion.animation(MacClippyMotion.hoverAnimation, reduceMotion: reduceMotion), value: isSearchFocused)
         }
+    }
+
+    private var searchStrokeColor: Color {
+        if highContrast {
+            return isSearchFocused ? MacClippyDockTheme.textColor : MacClippyDockTheme.lineColor
+        }
+        if isSearchFocused {
+            return MacClippyDockTheme.interactiveFocusBorder
+        }
+        if hoveredSearch {
+            return MacClippyDockTheme.interactiveHoverBorder
+        }
+        return MacClippyDockTheme.interactiveRestBorder
+    }
+
+    private var searchStrokeWidth: CGFloat {
+        if highContrast {
+            return isSearchFocused ? 1.5 : 1
+        }
+        return isSearchFocused ? 1.25 : 1
     }
 }

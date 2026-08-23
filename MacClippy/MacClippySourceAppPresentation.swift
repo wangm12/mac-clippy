@@ -222,6 +222,10 @@ enum MacClippySourceAppResolver {
 
         let icon = NSWorkspace.shared.icon(forFile: applicationURL.path)
         let accentRGB = MacClippySourceAccent.representativeRGB(from: pixels(in: icon))
+        let displayIcon = MacClippySourceAppIcon.prepared(
+            icon,
+            pointSize: MacClippyDockCardMetrics.sourceBadgeSize
+        )
         let displayName = (Bundle(url: applicationURL)?.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
             ?? (Bundle(url: applicationURL)?.object(forInfoDictionaryKey: "CFBundleName") as? String)
             ?? applicationURL.deletingPathExtension().lastPathComponent
@@ -229,7 +233,7 @@ enum MacClippySourceAppResolver {
 
         return MacClippySourceAppPresentation(
             displayName: displayName,
-            icon: icon,
+            icon: displayIcon,
             accent: NSColor(deviceRed: accentRGB.red, green: accentRGB.green, blue: accentRGB.blue, alpha: 1)
         )
     }
@@ -273,6 +277,24 @@ enum MacClippySourceAppResolver {
 
         func setObject(_ entry: CacheEntry, forKey key: String) {
             storage.setObject(entry, forKey: key as NSString)
+        }
+    }
+}
+
+enum MacClippySourceAppIcon {
+    // Tahoe app icons have Default / Dark / Clear / Tinted variants.
+    // The dock panel is darkAqua, so a raw NSWorkspace icon flattens to
+    // the dark glass tile. Draw the Default (aqua) representation at the
+    // badge point size so Safari/Chrome stay recognizable corner badges.
+    static func prepared(_ icon: NSImage, pointSize: CGFloat) -> NSImage {
+        let canvas = NSSize(width: pointSize, height: pointSize)
+        let source = (icon.copy() as? NSImage) ?? icon
+        source.size = canvas
+        return NSImage(size: canvas, flipped: false) { rect in
+            NSAppearance(named: .aqua)?.performAsCurrentDrawingAppearance {
+                source.draw(in: rect)
+            }
+            return true
         }
     }
 }

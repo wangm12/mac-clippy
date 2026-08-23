@@ -212,7 +212,7 @@ struct MacClippyDockPreviewImage: View {
                             .foregroundStyle(.primary)
                             .padding(.horizontal, 9)
                             .padding(.vertical, 6)
-                            .background(.regularMaterial, in: Capsule())
+                            .background(MacClippyDockTheme.panelStrongColor, in: Capsule())
                             .overlay {
                                 Capsule()
                                     .stroke(
@@ -242,7 +242,7 @@ struct MacClippyDockPreviewImage: View {
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 9)
                             .padding(.vertical, 6)
-                            .background(.regularMaterial, in: Capsule())
+                            .background(MacClippyDockTheme.panelStrongColor, in: Capsule())
                             .padding(10)
                             .accessibilityLabel("Recognizing text")
                     }

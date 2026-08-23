@@ -85,6 +85,16 @@ enum MacClippyDockTheme {
     // Matches the AppKit dock backdrop gradient's top stop so edge fades
     // do not paint a cooler, near-white stripe over bg0/bg1.
     static var backdropColor: Color { Color(nsColor: isDark ? bg0Dark : bg0) }
+    static var wellColor: Color { Color(nsColor: isDark ? bg1Dark : bg1) }
+
+    // Preview is its own clear NSPanel. Translucent card/panel fills let the
+    // desktop bleed through and wash the payload. The preview surface stays
+    // fully opaque; glass belongs on chrome buttons only.
+    static let previewSurfaceLight = NSColor(calibratedRed: 0.985, green: 0.987, blue: 0.992, alpha: 1)
+    static let previewSurfaceDark = NSColor(calibratedRed: 0.184, green: 0.192, blue: 0.208, alpha: 1)
+    static var previewSurface: NSColor { isDark ? previewSurfaceDark : previewSurfaceLight }
+    static var previewSurfaceColor: Color { Color(nsColor: previewSurface) }
+    static var previewWell: NSColor { isDark ? bg1Dark : bg1 }
 
     // Clipboard cards sit on the shared cool-neutral fill, then a low-alpha
     // wash from the source app's icon accent. Image cards still fill the
@@ -122,13 +132,21 @@ enum MacClippyDockTheme {
     // never clipped.
     static let pillBorderWidth: CGFloat = 1
     static let pillBorderInset: CGFloat = 0.5
+    static let cardBorderInset: CGFloat = 0.5
+    static var interactiveRestBorder: Color { lineColor }
+    static var interactiveHoverBorder: Color { accentColor.opacity(0.38) }
+    static var interactiveFocusBorder: Color { accentColor.opacity(0.82) }
+    static var interactiveStrongBorder: Color { accentColor.opacity(0.95) }
     // Resting border for pills/tags.
-    static var pillRestBorder: Color { lineColor }
+    static var pillRestBorder: Color { interactiveRestBorder }
     // Hover/focus border for pills/tags — one shared accent transparency.
-    static var pillHoverBorder: Color { accentColor.opacity(0.4) }
+    static var pillHoverBorder: Color { interactiveHoverBorder }
     // Strong border for active/selected/drop-target states.
-    static var pillActiveBorder: Color { accentColor.opacity(0.6) }
+    static var pillActiveBorder: Color { interactiveFocusBorder }
 
+    // Labels inside NSGlassEffectView.contentView become vibrant when they
+    // use Color.primary/secondary. Vibrant ink on opaque cards reads as
+    // washed-out gray, so card and chrome copy use calibrated theme colors.
     static var contentTextColor: Color { textColor }
     static var contentMutedColor: Color { mutedColor }
 }
