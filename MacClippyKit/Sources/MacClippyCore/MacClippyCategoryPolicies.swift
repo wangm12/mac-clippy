@@ -29,6 +29,11 @@ public enum MacClippyCategoryColorPolicy {
         }
     }
 
+    public static func displayName(for color: String) -> String {
+        let raw = name(for: color)
+        return raw == "custom color" ? "Custom" : raw.capitalized
+    }
+
     public static func color(for pinboard: Pinboard) -> String {
         color(for: pinboard.id, name: pinboard.name, preferred: pinboard.color)
     }

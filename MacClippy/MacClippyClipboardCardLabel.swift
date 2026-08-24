@@ -121,6 +121,9 @@ struct MacClippyClipboardCardLabel: View, Equatable {
             .overlay(alignment: .topTrailing) {
                 cardSelectionBadge
             }
+            .overlay(alignment: .bottomLeading) {
+                cardCategoryIndicator
+            }
     }
 
     private var cardCaption: some View {
@@ -131,6 +134,40 @@ struct MacClippyClipboardCardLabel: View, Equatable {
             .frame(maxWidth: .infinity, minHeight: MacClippyDockCardMetrics.captionHeight)
             .opacity(MacClippyCardCaptionLabel.text(for: context) == nil ? 0 : 1)
             .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private var cardCategoryIndicator: some View {
+        let categories = MacClippyDockCardCategoryPolicy.visibleCategories(from: context.categories)
+        let overflow = MacClippyDockCardCategoryPolicy.overflowCount(for: context.categories)
+        if context.showsCategoryIndicator, !categories.isEmpty {
+            HStack(spacing: 6) {
+                ForEach(categories) { category in
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(Color(macClippyHex: category.colorHex))
+                            .frame(width: 7, height: 7)
+                        Text(category.name)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(MacClippyDockTheme.contentTextColor)
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(MacClippyDockTheme.cardColor, in: Capsule())
+                }
+                if overflow > 0 {
+                    Text("+\(overflow)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(MacClippyDockTheme.contentMutedColor)
+                }
+            }
+            .padding(.leading, fillsCard ? MacClippyDockCardMetrics.imageInset : MacClippyDockCardMetrics.padding)
+            .padding(.bottom, fillsCard ? MacClippyDockCardMetrics.imageInset : MacClippyDockCardMetrics.padding)
+            .padding(.trailing, 56)
+            .frame(maxWidth: MacClippyDockCardMetrics.width - 56, alignment: .leading)
+            .accessibilityHidden(true)
+        }
     }
 
     private var sourceAppBadge: some View {
@@ -199,7 +236,7 @@ extension MacClippyClipboardCardLabel {
             } else if item.contentKind == .image {
                 cardImageBody(item)
             } else if case let .color(swatch) = presentationKind {
-                colorCardBody(swatch)
+                colorCardBody(swatch, item: item)
             } else if presentationKind == .url,
                       let url = MacClippyClipboardPresentation.url(fromPlainText: classificationPreview) {
                 urlCardBody(url, item: item)
@@ -221,43 +258,47 @@ extension MacClippyClipboardCardLabel {
     @ViewBuilder
     func urlCardBody(_ url: URL, item: MacClippyHistoryEntry) -> some View {
         let originalURL = item.preview.trimmingCharacters(in: .whitespacesAndNewlines)
-        VStack(alignment: .leading, spacing: 6) {
-            highlighted(
-                originalURL.isEmpty ? url.absoluteString : originalURL,
-                font: MacClippyDockCardMetrics.contentMonospacedFont
-            )
-                .lineLimit(6)
-                .multilineTextAlignment(.leading)
-                .truncationMode(.middle)
-            Spacer(minLength: 0)
+        cardBodyWithNameTag(item: item) {
+            VStack(alignment: .leading, spacing: 6) {
+                highlighted(
+                    originalURL.isEmpty ? url.absoluteString : originalURL,
+                    font: MacClippyDockCardMetrics.contentMonospacedFont
+                )
+                    .lineLimit(6)
+                    .multilineTextAlignment(.leading)
+                    .truncationMode(.middle)
+                Spacer(minLength: 0)
+            }
         }
     }
 
     @ViewBuilder
-    func colorCardBody(_ swatch: MacClippyColorSwatch) -> some View {
-        HStack(alignment: .center, spacing: 10) {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(
-                    Color(
-                        red: Double(swatch.rgb.red) / 255,
-                        green: Double(swatch.rgb.green) / 255,
-                        blue: Double(swatch.rgb.blue) / 255
+    func colorCardBody(_ swatch: MacClippyColorSwatch, item: MacClippyHistoryEntry) -> some View {
+        cardBodyWithNameTag(item: item) {
+            HStack(alignment: .center, spacing: 10) {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(
+                        Color(
+                            red: Double(swatch.rgb.red) / 255,
+                            green: Double(swatch.rgb.green) / 255,
+                            blue: Double(swatch.rgb.blue) / 255
+                        )
                     )
+                    .frame(width: 28, height: 28)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .stroke(MacClippyDockTheme.lineColor, lineWidth: 1)
+                    }
+                highlighted(
+                    swatch.hex,
+                    font: MacClippyDockCardMetrics.contentMonospacedFont
                 )
-                .frame(width: 28, height: 28)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .stroke(MacClippyDockTheme.lineColor, lineWidth: 1)
-                }
-            highlighted(
-                swatch.hex,
-                font: MacClippyDockCardMetrics.contentMonospacedFont
-            )
-            .lineLimit(1)
-            .textSelection(.enabled)
-            Spacer(minLength: 0)
+                .lineLimit(1)
+                .textSelection(.enabled)
+                Spacer(minLength: 0)
+            }
+            .accessibilityLabel("Color \(swatch.hex)")
         }
-        .accessibilityLabel("Color \(swatch.hex)")
     }
 
     @ViewBuilder
@@ -317,8 +358,43 @@ extension MacClippyClipboardCardLabel {
     }
 
     @ViewBuilder
+    func cardBodyWithNameTag<Content: View>(
+        item: MacClippyHistoryEntry,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let name = MacClippyDockCardNameTagPolicy.text(for: item) {
+                cardNameTag(name)
+            }
+            content()
+        }
+    }
+
+    func cardNameTag(_ name: String) -> some View {
+        highlighted(
+            name,
+            font: MacClippyDockCardNameTagPolicy.font
+        )
+        .lineLimit(MacClippyDockCardNameTagPolicy.maximumLines)
+        .multilineTextAlignment(.leading)
+        .truncationMode(.tail)
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.horizontal, MacClippyDockCardNameTagPolicy.horizontalPadding)
+        .padding(.vertical, MacClippyDockCardNameTagPolicy.verticalPadding)
+        .background(
+            MacClippyDockTheme.accentSoftColor,
+            in: RoundedRectangle(
+                cornerRadius: MacClippyDockCardNameTagPolicy.cornerRadius,
+                style: .continuous
+            )
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
     func plainTextCardBody(_ item: MacClippyHistoryEntry) -> some View {
         let text = item.preview.isEmpty ? "(empty)" : String(item.preview.prefix(2_000))
+        cardBodyWithNameTag(item: item) {
             highlighted(
                 text,
                 font: MacClippyDockCardMetrics.contentFont
@@ -328,18 +404,21 @@ extension MacClippyClipboardCardLabel {
             .truncationMode(.tail)
             .multilineTextAlignment(.leading)
             .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
     }
 
     @ViewBuilder
     func codeCardBody(_ item: MacClippyHistoryEntry, lineLimit: Int?) -> some View {
-        highlighted(
-            String(item.preview.prefix(2_000)),
-            font: MacClippyDockCardMetrics.contentMonospacedFont
-        )
-        .lineSpacing(3)
-        .lineLimit(lineLimit ?? 11)
-        .multilineTextAlignment(.leading)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
+        cardBodyWithNameTag(item: item) {
+            highlighted(
+                String(item.preview.prefix(2_000)),
+                font: MacClippyDockCardMetrics.contentMonospacedFont
+            )
+            .lineSpacing(3)
+            .lineLimit(lineLimit ?? 11)
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
     }
 
     func highlighted(

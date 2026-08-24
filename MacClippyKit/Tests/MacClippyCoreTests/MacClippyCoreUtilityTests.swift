@@ -129,7 +129,12 @@ extension MacClippyCoreTests {
             MacClippyCategoryColorPolicy.palette.map(MacClippyCategoryColorPolicy.name),
             ["blue", "purple", "pink", "red", "orange", "yellow", "green", "graphite"]
         )
+        XCTAssertEqual(
+            MacClippyCategoryColorPolicy.palette.map(MacClippyCategoryColorPolicy.displayName),
+            ["Blue", "Purple", "Pink", "Red", "Orange", "Yellow", "Green", "Graphite"]
+        )
         XCTAssertEqual(MacClippyCategoryColorPolicy.name(for: "#FFFFFF"), "custom color")
+        XCTAssertEqual(MacClippyCategoryColorPolicy.displayName(for: "#FFFFFF"), "Custom")
     }
 
     func testCollectionListDoesNotTreatWrongKeyAsEmptyData() throws {

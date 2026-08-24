@@ -114,7 +114,26 @@ final class SettingsConfigurationView: NSView {
         window.minSize = MacClippySettingsMetrics.minSize
         window.collectionBehavior.remove([.fullScreenAuxiliary, .canJoinAllSpaces, .stationary, .ignoresCycle])
         window.collectionBehavior.insert([.moveToActiveSpace, .fullScreenNone])
+        hideSidebarToggle(in: window)
+        DispatchQueue.main.async { [weak self] in
+            guard let window = self?.window else { return }
+            self?.hideSidebarToggle(in: window)
+        }
         MacClippySettingsWindowCoordinator.shared.register(window)
+    }
+
+    func hideSidebarToggle(in window: NSWindow) {
+        guard let toolbar = window.toolbar else { return }
+        let hiddenIDs: Set<NSToolbarItem.Identifier> = [
+            .toggleSidebar,
+            .sidebarTrackingSeparator,
+        ]
+        let indices = toolbar.items.enumerated().compactMap { index, item in
+            hiddenIDs.contains(item.itemIdentifier) ? index : nil
+        }
+        for index in indices.reversed() {
+            toolbar.removeItem(at: index)
+        }
     }
 }
 

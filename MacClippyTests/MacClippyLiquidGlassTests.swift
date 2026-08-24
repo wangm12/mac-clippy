@@ -58,6 +58,9 @@ final class MacClippyLiquidGlassTests: XCTestCase {
         XCTAssertEqual(MacClippySettingsMetrics.minSize, NSSize(width: 760, height: 520))
         XCTAssertEqual(MacClippySettingsMetrics.sidebarMinWidth, 240)
         XCTAssertEqual(MacClippySettingsMetrics.sidebarIdealWidth, 268)
+        XCTAssertEqual(MacClippySettingsMetrics.groupSpacing, 16)
+        XCTAssertEqual(MacClippySettingsMetrics.noteSpacing, 8)
+        XCTAssertEqual(MacClippySettingsMetrics.rowVerticalPadding, 10)
         XCTAssertGreaterThanOrEqual(
             MacClippySettingsMetrics.minWidth,
             MacClippySettingsMetrics.sidebarIdealWidth
@@ -69,6 +72,11 @@ final class MacClippyLiquidGlassTests: XCTestCase {
         XCTAssertTrue(settings.contains("NavigationSplitView(columnVisibility: .constant(.all))"))
         XCTAssertTrue(settings.contains("toolbar(removing: .sidebarToggle)"))
         XCTAssertTrue(settings.contains("formStyle(.grouped)"))
+
+        let window = try appSource(named: "MacClippySettingsWindowCoordinator.swift")
+        XCTAssertTrue(window.contains("hideSidebarToggle"))
+        XCTAssertTrue(window.contains(".toggleSidebar"))
+        XCTAssertTrue(window.contains(".sidebarTrackingSeparator"))
         XCTAssertFalse(settings.contains("windowBackgroundColor"))
         XCTAssertFalse(settings.contains("settingsHeader"))
 
@@ -79,11 +87,18 @@ final class MacClippyLiquidGlassTests: XCTestCase {
         XCTAssertFalse(sections.contains("isAdvancedExpanded"))
         XCTAssertTrue(sections.contains(".frame(height: 76)"))
         XCTAssertTrue(sections.contains("MacClippySettingsMetrics.historyPickerWidth"))
+        XCTAssertTrue(sections.contains("listRowSeparator(.hidden)"))
+        XCTAssertTrue(sections.contains("MacClippySettingsDisclosure"))
+        XCTAssertTrue(sections.contains("MacClippySettingsHairline"))
+        XCTAssertTrue(sections.contains("MacClippySettingsList"))
+        XCTAssertFalse(sections.contains("DisclosureGroup"))
+        XCTAssertFalse(sections.contains("Divider()"))
 
         let advanced = try appSource(named: "MacClippySettings+Maintenance.swift")
         XCTAssertTrue(advanced.contains("advancedSection"))
         XCTAssertFalse(advanced.contains("DisclosureGroup"))
         XCTAssertFalse(advanced.contains("isAdvancedExpanded"))
+        XCTAssertFalse(advanced.contains("Divider()"))
     }
 
     func testSourceAppIconRendersDefaultAppearanceAtBadgeSize() throws {

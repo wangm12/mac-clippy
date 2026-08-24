@@ -81,6 +81,10 @@ enum MacClippySettingsMetrics {
     static let sidebarIdealWidth: CGFloat = 268
     static let sidebarMaxWidth: CGFloat = 320
     static let historyPickerWidth: CGFloat = 310
+    static let groupSpacing: CGFloat = 16
+    static let noteSpacing: CGFloat = 8
+    static let rowVerticalPadding: CGFloat = 10
+    static let fieldCornerRadius: CGFloat = 7
     static let minWidth: CGFloat = 760
     static let minHeight: CGFloat = 520
     static let idealWidth: CGFloat = 920

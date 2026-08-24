@@ -96,6 +96,25 @@ enum MacClippyDockCardMetrics {
 /// Image and file cards must show a name on the face. Finder copies use the
 /// filename; clipboard images fall back to a stable "Image" label so a photo
 /// is never an unlabeled thumbnail.
+/// Text-like cards keep the clipboard body on the face. A custom name is a
+/// tag above that body so rename is visible without hiding the original text.
+enum MacClippyDockCardNameTagPolicy {
+    static let maximumLines = 2
+    static let font = Font.callout.weight(.semibold)
+    static let horizontalPadding: CGFloat = 10
+    static let verticalPadding: CGFloat = 6
+    static let cornerRadius: CGFloat = 8
+
+    static func text(for item: MacClippyHistoryEntry) -> String? {
+        switch item.contentKind {
+        case .text, .html, .rtf:
+            return item.customLabel
+        case .image, .files:
+            return nil
+        }
+    }
+}
+
 enum MacClippyDockCardVisibleNamePolicy {
     static func text(for item: MacClippyHistoryEntry) -> String {
         if let customLabel = item.customLabel, !customLabel.isEmpty {
@@ -187,6 +206,13 @@ struct MacClippyDockCategoryPresentation: Identifiable, Equatable, Sendable {
 
 enum MacClippyDockCardCategoryPolicy {
     static let visibleCategoryLimit = 2
+
+    static func shouldShowIndicator(
+        categories: [MacClippyDockCategoryPresentation],
+        selectedTab: MacClippyDockTab
+    ) -> Bool {
+        selectedTab == .history && !categories.isEmpty
+    }
 
     static func visibleCategories(
         from categories: [MacClippyDockCategoryPresentation]

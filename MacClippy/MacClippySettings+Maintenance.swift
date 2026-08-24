@@ -121,29 +121,38 @@ extension MacClippySettingsView {
     }
 
     var advancedSection: some View {
-        MacClippySettingsGroup(
-            title: "Advanced",
-            subtitle: storageHealthSummary
-        ) {
-            diagnosticsContent
-            Divider()
-            MacClippySettingsRow(
-                title: "Delete unpinned history",
-                detail: "Pinned items stay. Use this only for a manual cleanup."
+        Group {
+            MacClippySettingsGroup(
+                title: "Storage",
+                subtitle: storageHealthSummary
             ) {
-                Button("Delete…", role: .destructive) {
-                    isDeleteHistoryConfirmationPresented = true
+                diagnosticsContent
+            }
+            MacClippySettingsGroup(
+                title: "History",
+                subtitle: "Pinned items stay. Use this only for a manual cleanup."
+            ) {
+                VStack(alignment: .leading, spacing: MacClippySettingsMetrics.noteSpacing) {
+                    MacClippySettingsRow(
+                        title: "Delete unpinned history",
+                        detail: "Remove unpinned clipboard items, search entries, and associated blobs."
+                    ) {
+                        Button("Delete…", role: .destructive) {
+                            isDeleteHistoryConfirmationPresented = true
+                        }
+                        .disabled(isDeletingHistory)
+                    }
+                    if isDeletingHistory {
+                        ProgressView("Deleting history…")
+                            .controlSize(.small)
+                    }
+                    if let historyDeletionMessage {
+                        MacClippySettingsNote(
+                            text: historyDeletionMessage,
+                            tone: historyDeletionMessageIsError ? .danger : .info
+                        )
+                    }
                 }
-                .disabled(isDeletingHistory)
-            }
-            if isDeletingHistory {
-                ProgressView("Deleting history…")
-                    .controlSize(.small)
-            }
-            if let historyDeletionMessage {
-                Text(historyDeletionMessage)
-                    .font(.footnote)
-                    .foregroundStyle(historyDeletionMessageIsError ? .red : .secondary)
             }
         }
     }

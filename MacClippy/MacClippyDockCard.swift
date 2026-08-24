@@ -25,6 +25,7 @@ struct MacClippyClipboardCardSnapshot: Equatable, Sendable {
     let highlightTerms: [String]
     let isPreviewVisible: Bool
     let sourcePresentationGeneration: UInt
+    let showsCategoryIndicator: Bool
 }
 
 struct MacClippyClipboardCardContext: Equatable {
@@ -39,6 +40,7 @@ struct MacClippyClipboardCardContext: Equatable {
     let highlightTerms: [String]
     let isPreviewVisible: Bool
     let sourcePresentationGeneration: UInt
+    var showsCategoryIndicator: Bool = false
 
     var snapshot: MacClippyClipboardCardSnapshot {
         MacClippyClipboardCardSnapshot(
@@ -60,7 +62,8 @@ struct MacClippyClipboardCardContext: Equatable {
             categories: categories,
             highlightTerms: highlightTerms,
             isPreviewVisible: isPreviewVisible,
-            sourcePresentationGeneration: sourcePresentationGeneration
+            sourcePresentationGeneration: sourcePresentationGeneration,
+            showsCategoryIndicator: showsCategoryIndicator
         )
     }
 
@@ -133,6 +136,7 @@ extension MacClippyDockView {
             isPreviewVisible: model.isPreviewVisible
         )
 
+        let categories = model.categories(for: item.id)
         return MacClippyClipboardCardContext(
             item: item,
             index: index,
@@ -141,10 +145,14 @@ extension MacClippyDockView {
             isSelected: isSelected,
             activeBorder: activeBorder,
             isElevated: isFocused,
-            categories: model.categories(for: item.id),
+            categories: categories,
             highlightTerms: model.highlightTerms,
             isPreviewVisible: model.isPreviewVisible,
-            sourcePresentationGeneration: sourcePresentationGeneration
+            sourcePresentationGeneration: sourcePresentationGeneration,
+            showsCategoryIndicator: MacClippyDockCardCategoryPolicy.shouldShowIndicator(
+                categories: categories,
+                selectedTab: model.selectedTab
+            )
         )
     }
 

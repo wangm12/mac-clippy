@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 import MacClippyCore
@@ -31,11 +32,9 @@ extension MacClippyDockView {
                     model.setPinboardColor(pinboard, to: color)
                 } label: {
                     Label {
-                        Text(color)
+                        Text(MacClippyCategoryColorPolicy.displayName(for: color))
                     } icon: {
-                        Circle()
-                            .fill(Color(macClippyHex: color))
-                            .frame(width: 12, height: 12)
+                        Image(nsImage: MacClippyCategoryColorSwatch.image(for: color))
                     }
                 }
                 .accessibilityLabel("Change color to \(MacClippyCategoryColorPolicy.name(for: color))")
@@ -111,5 +110,22 @@ extension MacClippyDockView {
                 }
             }
         }
+    }
+}
+
+enum MacClippyCategoryColorSwatch {
+    static func image(for hex: String, diameter: CGFloat = 14) -> NSImage {
+        let image = NSImage(size: NSSize(width: diameter, height: diameter), flipped: false) { rect in
+            let inset = rect.insetBy(dx: 0.5, dy: 0.5)
+            NSColor(Color(macClippyHex: hex)).setFill()
+            NSBezierPath(ovalIn: inset).fill()
+            NSColor.black.withAlphaComponent(0.18).setStroke()
+            let stroke = NSBezierPath(ovalIn: inset)
+            stroke.lineWidth = 1
+            stroke.stroke()
+            return true
+        }
+        image.isTemplate = false
+        return image
     }
 }

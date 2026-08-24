@@ -40,12 +40,32 @@ The result is written to:
 dist/MacClippy.dmg
 ```
 
-If a local Apple Development identity is in the Keychain, `make dmg` signs the app with that identity so TCC permissions stay stable during local testing. That is not a Developer ID or notarized release. Without a signing identity, the DMG is unsigned.
+`make dmg` signs with a stable `Mac Clippy` self-signed certificate, creating
+it on the first run if needed. Later DMGs reuse that identity so Accessibility
+and Input Monitoring survive updates. Set `DEVELOPER_IDENTITY` to override.
+This is not notarized.
 
 Open the DMG, drag `MacClippy.app` to `Applications`, and launch it from
-Finder. Clipboard capture works locally. Automatic paste injection and snippet
+Finder. A downloaded copy may be blocked on first launch. Use
+**System Settings → Privacy & Security → Open Anyway**, or:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/MacClippy.app
+```
+
+Clipboard capture works locally. Automatic paste injection and snippet
 expansion require macOS Accessibility permission; without it, Mac Clippy keeps
 the clipboard available for manual paste.
+
+If you already granted those permissions to an unsigned copy, reset them once
+after installing a signed DMG:
+
+```sh
+tccutil reset Accessibility com.macallyouneed.macclippy
+tccutil reset ListenEvent com.macallyouneed.macclippy
+```
+
+Then grant access again. Later signed updates should keep the grant.
 
 ## Privacy and storage
 
@@ -96,12 +116,22 @@ Git.
 
 ## Release packaging
 
-`make dmg` builds an arm64 Release DMG. It signs with a local Apple Development
-identity when one is available; otherwise the DMG is unsigned. `make release`
-is the Developer ID archive → final DMG → notarize/staple/Gatekeeper flow.
+`make dmg` builds an arm64 Release DMG and signs it with the `Mac Clippy`
+self-signed certificate (`make signing-cert`). `make release` is the Developer
+ID archive → final DMG → notarize/staple/Gatekeeper flow.
 
 GitHub Actions publishes that DMG to a GitHub Release when you push a version
 tag. `dist/` stays gitignored; the runner builds a fresh DMG and uploads it.
+To keep TCC permissions across those published updates, create the certificate
+once and add the printed GitHub secrets:
+
+```sh
+make signing-cert
+gh secret set MACOS_CERT_P12 < .build/signing/MacClippy.p12.base64
+gh secret set MACOS_CERT_PASSWORD --body "$(cat .build/signing/password.txt)"
+```
+
+Without those secrets the workflow still publishes an unsigned DMG.
 
 ```sh
 git tag v1.0.0

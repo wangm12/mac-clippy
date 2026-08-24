@@ -23,8 +23,13 @@ jobs:
         run: |
           brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
           ./scripts/verify-tool-versions.sh
+      - name: Import stable signing certificate
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: ./scripts/import-signing-cert.sh
       - name: Package Release DMG
-        run: ./scripts/package-dmg.sh
+        run: make dmg
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
         with:

@@ -18,6 +18,34 @@ final class MacClippyDockCategoryTests: XCTestCase {
         XCTAssertEqual(MacClippyDockCardCategoryPolicy.overflowCount(for: categories), 1)
     }
 
+    func testCategoryIndicatorShowsOnAllTabOnlyWhenTagged() {
+        let tagged = [category(name: "grok_api")]
+        XCTAssertTrue(
+            MacClippyDockCardCategoryPolicy.shouldShowIndicator(
+                categories: tagged,
+                selectedTab: .history
+            )
+        )
+        XCTAssertFalse(
+            MacClippyDockCardCategoryPolicy.shouldShowIndicator(
+                categories: [],
+                selectedTab: .history
+            )
+        )
+        XCTAssertFalse(
+            MacClippyDockCardCategoryPolicy.shouldShowIndicator(
+                categories: tagged,
+                selectedTab: .pinboard(RecordID.generate())
+            )
+        )
+        XCTAssertFalse(
+            MacClippyDockCardCategoryPolicy.shouldShowIndicator(
+                categories: tagged,
+                selectedTab: .snippets
+            )
+        )
+    }
+
     func testCategoryFooterDoesNotRenderWhenThereAreNoCategories() {
         XCTAssertTrue(MacClippyDockCardCategoryPolicy.visibleCategories(from: []).isEmpty)
         XCTAssertEqual(MacClippyDockCardCategoryPolicy.overflowCount(for: []), 0)
@@ -53,6 +81,23 @@ final class MacClippyDockCategoryTests: XCTestCase {
         ]
 
         XCTAssertEqual(model.categories(for: itemID).map(\.name), ["Work", "API"])
+    }
+
+    func testChangeColorMenuShowsNamedSwatchesInsteadOfHexCodes() throws {
+        let menus = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("MacClippy/MacClippyDockCardMenus.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(menus.contains("MacClippyCategoryColorPolicy.displayName"))
+        XCTAssertTrue(menus.contains("MacClippyCategoryColorSwatch.image"))
+        XCTAssertFalse(menus.contains("Text(color)"))
+
+        let swatch = MacClippyCategoryColorSwatch.image(for: "#0A84FF")
+        XCTAssertEqual(swatch.size, NSSize(width: 14, height: 14))
+        XCTAssertFalse(swatch.isTemplate)
     }
 
     private func category(name: String) -> MacClippyDockCategoryPresentation {

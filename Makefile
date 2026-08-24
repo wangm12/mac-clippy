@@ -20,7 +20,7 @@ XCODEBUILD_FLAGS := \
 	-skipPackagePluginValidation \
 	CODE_SIGNING_ALLOWED=NO
 
-.PHONY: generate build test test-scale test-stress test-tsan test-app-tsan lint ci ci-fast ci-full dmg release build-release-unsigned verify-build-metadata archive-signed verify-signed notarize clean
+.PHONY: generate build test test-scale test-stress test-tsan test-app-tsan lint ci ci-fast ci-full dmg signing-cert release build-release-unsigned verify-build-metadata archive-signed verify-signed notarize clean
 
 generate:
 	xcodegen generate
@@ -29,6 +29,7 @@ build: generate
 	xcodebuild $(XCODEBUILD_FLAGS) build
 
 test: generate
+	./scripts/select-codesign-identity-test.sh
 	swift test --package-path "$(PACKAGE_DIR)"
 	xcodebuild $(XCODEBUILD_FLAGS) test
 
@@ -54,6 +55,7 @@ lint:
 	./scripts/lint.sh
 
 ci-fast: generate lint
+	./scripts/select-codesign-identity-test.sh
 	swift test --package-path "$(PACKAGE_DIR)"
 	xcodebuild $(XCODEBUILD_FLAGS) build
 	xcodebuild $(XCODEBUILD_FLAGS) test
@@ -62,24 +64,20 @@ ci-full: ci-fast test-scale test-stress test-tsan test-app-tsan build-release-un
 
 ci: ci-full
 
+signing-cert:
+	./scripts/make-signing-cert.sh
+
 dmg:
-	@set -e; \
-	identity="$${DEVELOPER_IDENTITY:-$$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/^[[:space:]]*[0-9]+\)/ { if ($$2 ~ /^Developer ID Application:/) { print $$2; found=1; exit } if (!first) first=$$2 } END { if (!found && first) print first }')}"; \
-	if [ -n "$$identity" ]; then \
-		team="$${DEVELOPMENT_TEAM:-$$(security find-certificate -c "$$identity" -p 2>/dev/null | openssl x509 -noout -subject 2>/dev/null | sed -n 's/.*OU[ =]*\([[:alnum:]]\{10\}\).*/\1/p')}"; \
-		if [ -n "$$team" ]; then \
-			echo "==> Using local signing identity: $$identity"; \
-			CODE_SIGNING_ALLOWED=YES \
-			CODE_SIGN_IDENTITY="$$identity" \
-			DEVELOPMENT_TEAM="$$team" \
-			./scripts/package-dmg.sh; \
-		else \
-			echo "warning: signing identity found but Team ID could not be determined; building unsigned DMG" >&2; \
-			./scripts/package-dmg.sh; \
-		fi; \
+	@set -euo pipefail; \
+	eval "$$(./scripts/resolve-dmg-signing.sh)"; \
+	if [ -n "$${CODE_SIGN_IDENTITY:-}" ] && [ -n "$${DEVELOPMENT_TEAM:-}" ]; then \
+		echo "==> Using signing identity: $$CODE_SIGN_IDENTITY"; \
+		CODE_SIGNING_ALLOWED=YES \
+		CODE_SIGN_IDENTITY="$$CODE_SIGN_IDENTITY" \
+		DEVELOPMENT_TEAM="$$DEVELOPMENT_TEAM" \
+		./scripts/package-dmg.sh; \
 	else \
-		echo "warning: no Apple signing identity found; building unsigned DMG" >&2; \
-		echo "         install an Apple Development certificate for local TCC testing" >&2; \
+		echo "warning: building unsigned DMG" >&2; \
 		./scripts/package-dmg.sh; \
 	fi
 

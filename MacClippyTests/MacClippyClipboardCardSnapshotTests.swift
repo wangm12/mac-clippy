@@ -152,6 +152,8 @@ final class MacClippyClipboardCardSnapshotTests: XCTestCase {
 
         XCTAssertFalse(source.contains("clipboardCardHeader"))
         XCTAssertFalse(source.contains("cardCategoryFooter"))
+        XCTAssertTrue(source.contains("cardCategoryIndicator"))
+        XCTAssertTrue(source.contains("bottomLeading"))
         XCTAssertFalse(source.contains("Text(context.source.displayName)"))
         XCTAssertFalse(source.contains("MacClippyCardHeaderTrailingLabel"))
         XCTAssertTrue(source.contains("sourceCardBackground"))
@@ -355,12 +357,20 @@ final class MacClippyClipboardCardSnapshotTests: XCTestCase {
         XCTAssertEqual(MacClippyDockCardVisibleNamePolicy.text(for: fileItem), "passport.jpg")
         XCTAssertEqual(MacClippyDockCardVisibleNamePolicy.text(for: imageItem), "Image · 640×480")
         XCTAssertEqual(MacClippyDockCardVisibleNamePolicy.text(for: namedImage), "Visa photo")
+        XCTAssertNil(MacClippyDockCardNameTagPolicy.text(for: namedImage))
+
+        let namedText = try historyEntry(preview: "gsk_secret_token", customLabel: "Groq key")
+        XCTAssertEqual(MacClippyDockCardNameTagPolicy.text(for: namedText), "Groq key")
+        XCTAssertNil(MacClippyDockCardNameTagPolicy.text(for: try historyEntry(preview: "plain")))
+        XCTAssertEqual(MacClippyDockCardNameTagPolicy.maximumLines, 2)
 
         let label = try appSource(named: "MacClippyClipboardCardLabel.swift")
         XCTAssertTrue(label.contains("MacClippyDockCardVisibleNamePolicy.text(for: item)"))
         XCTAssertTrue(label.contains("cardNamedPreview"))
         XCTAssertTrue(label.contains("cardImageBody"))
         XCTAssertTrue(label.contains("cardFilesBody"))
+        XCTAssertTrue(label.contains("cardNameTag"))
+        XCTAssertTrue(label.contains("MacClippyDockCardNameTagPolicy.text(for: item)"))
     }
 
     @MainActor
@@ -422,6 +432,7 @@ final class MacClippyClipboardCardSnapshotTests: XCTestCase {
 
     private func historyEntry(
         preview: String,
+        customLabel: String? = nil,
         modified: Date = Date(timeIntervalSince1970: 1)
     ) throws -> MacClippyHistoryEntry {
         MacClippyHistoryEntry(
@@ -431,7 +442,8 @@ final class MacClippyClipboardCardSnapshotTests: XCTestCase {
                 modified: modified,
                 deviceID: try XCTUnwrap(DeviceID(rawValue: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")),
                 lamport: 1,
-                preview: preview
+                preview: preview,
+                customLabel: customLabel
             ),
             contentKind: .text,
             preview: preview

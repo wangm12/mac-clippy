@@ -10,6 +10,7 @@ enum MacClippyPresentationPreferences {
 /// Menu-bar visibility and Dock activation remain independent preferences.
 enum MacClippyCodeSignatureKind: Equatable {
     case teamSigned(teamID: String)
+    case namedSigned
     case adhoc
     case unsigned
 }
@@ -20,21 +21,26 @@ enum MacClippyPermissionTrustPolicy {
         if !isSigned {
             return .unsigned
         }
-        if isAdhoc || trimmedTeam?.isEmpty != false {
+        if isAdhoc {
             return .adhoc
         }
-        return .teamSigned(teamID: trimmedTeam!)
+        if let trimmedTeam, !trimmedTeam.isEmpty {
+            return .teamSigned(teamID: trimmedTeam)
+        }
+        return .namedSigned
     }
 
     static func permissionsCanPersist(_ kind: MacClippyCodeSignatureKind) -> Bool {
-        if case .teamSigned = kind {
+        switch kind {
+        case .teamSigned, .namedSigned:
             return true
+        case .adhoc, .unsigned:
+            return false
         }
-        return false
     }
 
     static func unsignedCopyExplanation() -> String {
-        "This copy is unsigned. macOS can show Grant Access without trusting the process. In Xcode, add an Apple Development certificate, run make dmg, replace /Applications/MacClippy.app, then grant access again."
+        "This copy is unsigned. macOS can show Grant Access without trusting the process. Run make dmg, replace /Applications/MacClippy.app, then grant access again."
     }
 }
 

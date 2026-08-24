@@ -31,6 +31,11 @@ jobs:
           test -f .swiftlint-baseline.yml
           test -x scripts/lint.sh
           test -x scripts/verify-dmg.sh
+          test -x scripts/select-codesign-identity.sh
+          test -x scripts/select-codesign-identity-test.sh
+          test -x scripts/make-signing-cert.sh
+          test -x scripts/import-signing-cert.sh
+          test -x scripts/resolve-dmg-signing.sh
           test -f MacClippyKit/Package.resolved
           test -f MacClippy.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
       - name: Show toolchain
@@ -52,6 +57,8 @@ jobs:
           test -z "$(git status --porcelain --untracked-files=all -- MacClippy.xcodeproj)"
       - name: SwiftLint baseline gate
         run: ./scripts/lint.sh
+      - name: Signing identity selector tests
+        run: ./scripts/select-codesign-identity-test.sh
       - name: Package tests
         run: swift test --package-path MacClippyKit
       - name: Strict concurrency package tests

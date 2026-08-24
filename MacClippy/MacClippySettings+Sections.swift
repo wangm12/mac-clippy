@@ -26,14 +26,12 @@ extension MacClippySettingsView {
                 .pickerStyle(.segmented)
                 .frame(width: MacClippySettingsMetrics.historyPickerWidth)
             }
-            if selectedHistoryCapacity == .unlimited {
-                Divider()
-                Label("Unlimited history can use more disk space over time.", systemImage: "exclamationmark.triangle")
-                    .font(.footnote)
-                    .foregroundStyle(.orange)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-            }
+            .macClippySettingsNote(
+                selectedHistoryCapacity == .unlimited
+                    ? "Unlimited history can use more disk space over time."
+                    : nil,
+                tone: .warning
+            )
         }
     }
 
@@ -49,7 +47,6 @@ extension MacClippySettingsView {
                 Toggle("Hide menu bar icon", isOn: $hideFromMenuBar)
                     .labelsHidden()
             }
-            Divider()
             MacClippySettingsRow(
                 title: "Hide Dock icon",
                 detail: hideDockIcon
@@ -59,17 +56,12 @@ extension MacClippySettingsView {
                 Toggle("Hide Dock icon", isOn: $hideDockIcon)
                     .labelsHidden()
             }
-            if hideFromMenuBar && hideDockIcon {
-                Divider()
-                Label(
-                    "MacClippy will be accessible through the global shortcut only.",
-                    systemImage: "info.circle"
-                )
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-            }
+            .macClippySettingsNote(
+                hideFromMenuBar && hideDockIcon
+                    ? "MacClippy will be accessible through the global shortcut only."
+                    : nil,
+                tone: .info
+            )
         }
     }
 
@@ -84,14 +76,7 @@ extension MacClippySettingsView {
                 }
                 .frame(width: 190, alignment: .trailing)
             }
-            if let hotKeyError {
-                Divider()
-                Label(hotKeyError, systemImage: "exclamationmark.triangle")
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-            }
+            .macClippySettingsNote(hotKeyError, tone: .danger)
         }
     }
 
@@ -109,73 +94,57 @@ extension MacClippySettingsView {
                 .labelsHidden()
                 .frame(width: 190)
             }
-            if snippetExpansionMode != MacClippySnippetExpansionMode.disabled.rawValue,
-               !accessibilityTrusted || !inputMonitoringTrusted {
-                Label(
-                    "Enable Accessibility and Input Monitoring below to expand snippets while typing.",
-                    systemImage: "exclamationmark.triangle"
-                )
-                .font(.footnote)
-                .foregroundStyle(.orange)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 12)
-            }
+            .macClippySettingsNote(
+                snippetExpansionMode != MacClippySnippetExpansionMode.disabled.rawValue
+                    && (!accessibilityTrusted || !inputMonitoringTrusted)
+                    ? "Enable Accessibility and Input Monitoring to expand snippets while typing."
+                    : nil,
+                tone: .warning
+            )
         }
     }
 
     var permissionsSection: some View {
-        MacClippySettingsGroup(
-            title: "Permissions",
-            subtitle: "Only needed for automatic paste, global shortcuts, and Snippet expansion."
-        ) {
-            permissionRow(
-                title: "Accessibility",
-                detail: "Automatic paste and Snippet expansion",
-                enabled: accessibilityTrusted,
-                action: openAccessibilitySettings
-            )
-            Divider()
-            permissionRow(
-                title: "Input Monitoring",
-                detail: "Global shortcut and Snippet trigger monitoring",
-                enabled: inputMonitoringTrusted,
-                action: openInputMonitoringSettings
-            )
-            if let permissionSettingsError {
-                Divider()
-                Label(permissionSettingsError, systemImage: "exclamationmark.triangle")
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
+        Group {
+            MacClippySettingsGroup(
+                title: "Permissions",
+                subtitle: "Only needed for automatic paste, global shortcuts, and Snippet expansion."
+            ) {
+                permissionRow(
+                    title: "Accessibility",
+                    detail: "Automatic paste and Snippet expansion",
+                    enabled: accessibilityTrusted,
+                    action: openAccessibilitySettings
+                )
+                permissionRow(
+                    title: "Input Monitoring",
+                    detail: "Global shortcut and Snippet trigger monitoring",
+                    enabled: inputMonitoringTrusted,
+                    action: openInputMonitoringSettings
+                )
+                .macClippySettingsNote(permissionSettingsError, tone: .danger)
             }
-            Divider()
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Permissions apply to this exact app copy")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text(Bundle.main.bundleURL.path)
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                if !MacClippyPermissionTrustPolicy.permissionsCanPersist(MacClippyCodeSignature.kind()) {
-                    Text(MacClippyPermissionTrustPolicy.unsignedCopyExplanation())
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                HStack(spacing: 8) {
-                    Button("Refresh") { refreshPermissionStatus() }
-                    if !accessibilityTrusted || !inputMonitoringTrusted {
-                        Text("After changing access, quit and reopen MacClippy if macOS does not update the status.")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+
+            MacClippySettingsGroup(
+                title: "This copy",
+                subtitle: thisCopySubtitle
+            ) {
+                VStack(alignment: .leading, spacing: MacClippySettingsMetrics.noteSpacing) {
+                    Text(Bundle.main.bundleURL.path)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    HStack(spacing: 10) {
+                        Button("Refresh") { refreshPermissionStatus() }
+                        if !accessibilityTrusted || !inputMonitoringTrusted {
+                            Text("Quit and reopen MacClippy if macOS does not update the status.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
         }
     }
 
@@ -189,14 +158,7 @@ extension MacClippySettingsView {
                     .labelsHidden()
                     .onChange(of: launchAtLogin) { _, enabled in updateLaunchAtLogin(enabled) }
             }
-            if let launchAtLoginError {
-                Divider()
-                Label(launchAtLoginError, systemImage: "exclamationmark.triangle")
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-            }
+            .macClippySettingsNote(launchAtLoginError, tone: .danger)
         }
     }
 
@@ -212,53 +174,64 @@ extension MacClippySettingsView {
                 Toggle("Pause capture", isOn: $privacyPause)
                     .labelsHidden()
             }
-            Divider()
             MacClippySettingsRow(
                 title: "Privacy & data notice",
                 detail: "Review what MacClippy stores and how permissions are used"
             ) {
                 Button("View notice…") { isPrivacyNoticePresented = true }
             }
-            Divider()
-            DisclosureGroup(isExpanded: $isCaptureRulesExpanded) {
-                VStack(alignment: .leading, spacing: 12) {
+            MacClippySettingsDisclosure(
+                title: "Advanced capture rules",
+                detail: "Exclude apps and content patterns from new captures",
+                isExpanded: $isCaptureRulesExpanded,
+                reduceMotion: reduceMotion
+            )
+            if isCaptureRulesExpanded {
+                MacClippySettingsRow(
+                    title: "Ignore concealed pasteboard content",
+                    detail: nil
+                ) {
                     Toggle("Ignore concealed pasteboard content", isOn: $excludeConcealed)
-                    Toggle("Ignore transient pasteboard content", isOn: $excludeTransient)
-                    Toggle("Capture All", isOn: $captureAll)
-                    if captureAll {
-                        Text("Capture All includes concealed and transient content. Built-in password-manager exclusions still apply.")
-                            .font(.footnote)
-                            .foregroundStyle(.orange)
-                    }
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("Excluded app bundle IDs")
-                        TextField("com.example.app, com.example.other", text: $excludedApps)
-                    }
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("Excluded text patterns")
-                        Text("One regular expression per line")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        TextEditor(text: $excludedTextPatterns)
-                            .font(.system(.body, design: .monospaced))
-                            .frame(height: 76)
-                            .scrollContentBackground(.hidden)
-                            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
-                            .accessibilityLabel("Excluded text patterns")
-                            .accessibilityHint("Enter one regular expression per line")
-                    }
+                        .labelsHidden()
                 }
-                .padding(.top, 10)
-            } label: {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Advanced capture rules")
-                    Text("Exclude apps and content patterns from new captures")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                MacClippySettingsRow(
+                    title: "Ignore transient pasteboard content",
+                    detail: nil
+                ) {
+                    Toggle("Ignore transient pasteboard content", isOn: $excludeTransient)
+                        .labelsHidden()
+                }
+                MacClippySettingsRow(
+                    title: "Capture All",
+                    detail: nil
+                ) {
+                    Toggle("Capture All", isOn: $captureAll)
+                        .labelsHidden()
+                }
+                .macClippySettingsNote(
+                    captureAll
+                        ? "Capture All includes concealed and transient content. Built-in password-manager exclusions still apply."
+                        : nil,
+                    tone: .warning
+                )
+                MacClippySettingsField(title: "Excluded app bundle IDs") {
+                    TextField("com.example.app, com.example.other", text: $excludedApps)
+                        .font(.system(.body, design: .monospaced))
+                        .textFieldStyle(.plain)
+                        .accessibilityLabel("Excluded app bundle IDs")
+                }
+                MacClippySettingsField(
+                    title: "Excluded text patterns",
+                    detail: "One regular expression per line"
+                ) {
+                    TextEditor(text: $excludedTextPatterns)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(height: 76)
+                        .scrollContentBackground(.hidden)
+                        .accessibilityLabel("Excluded text patterns")
+                        .accessibilityHint("Enter one regular expression per line")
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
         }
     }
 
@@ -284,6 +257,13 @@ extension MacClippySettingsView {
         }
     }
 
+    var thisCopySubtitle: String {
+        if !MacClippyPermissionTrustPolicy.permissionsCanPersist(MacClippyCodeSignature.kind()) {
+            return MacClippyPermissionTrustPolicy.unsignedCopyExplanation()
+        }
+        return "Permissions apply to this exact app copy."
+    }
+
     var selectedHistoryCapacity: MacClippyHistoryCapacity {
         MacClippyHistoryCapacity(maxAgeDays: maxAgeDays)
     }
@@ -297,20 +277,113 @@ extension MacClippySettingsView {
 
 }
 
-struct MacClippySettingsGroup<Content: View>: View {
+enum MacClippySettingsNoteTone {
+    case info
+    case warning
+    case danger
+
+    var icon: String {
+        switch self {
+        case .info: "info.circle"
+        case .warning, .danger: "exclamationmark.triangle"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .info: .secondary
+        case .warning: .orange
+        case .danger: .red
+        }
+    }
+}
+
+struct MacClippySettingsNote: View {
+    let text: String
+    var tone: MacClippySettingsNoteTone = .info
+
+    var body: some View {
+        Label(text, systemImage: tone.icon)
+            .font(.footnote)
+            .foregroundStyle(tone.color)
+            .fixedSize(horizontal: false, vertical: true)
+            .labelStyle(.titleAndIcon)
+    }
+}
+
+@resultBuilder
+enum MacClippySettingsListBuilder {
+    static func buildExpression<V: View>(_ view: V) -> [AnyView] {
+        [AnyView(view)]
+    }
+
+    static func buildBlock(_ parts: [AnyView]...) -> [AnyView] {
+        parts.flatMap { $0 }
+    }
+
+    static func buildOptional(_ part: [AnyView]?) -> [AnyView] {
+        part ?? []
+    }
+
+    static func buildEither(first part: [AnyView]) -> [AnyView] {
+        part
+    }
+
+    static func buildEither(second part: [AnyView]) -> [AnyView] {
+        part
+    }
+
+    static func buildArray(_ parts: [[AnyView]]) -> [AnyView] {
+        parts.flatMap { $0 }
+    }
+}
+
+struct MacClippySettingsHairline: View {
+    var body: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.08))
+            .frame(height: 1)
+            .accessibilityHidden(true)
+    }
+}
+
+struct MacClippySettingsList: View {
+    let items: [AnyView]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                if index > 0 {
+                    MacClippySettingsHairline()
+                }
+                item
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, MacClippySettingsMetrics.rowVerticalPadding)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct MacClippySettingsGroup: View {
     let title: String
     let subtitle: String?
-    private let content: () -> Content
+    private let items: [AnyView]
 
-    init(title: String, subtitle: String? = nil, @ViewBuilder content: @escaping () -> Content) {
+    init(
+        title: String,
+        subtitle: String? = nil,
+        @MacClippySettingsListBuilder content: () -> [AnyView]
+    ) {
         self.title = title
         self.subtitle = subtitle
-        self.content = content
+        self.items = content()
     }
 
     var body: some View {
         Section {
-            content()
+            MacClippySettingsList(items: items)
+                .listRowSeparator(.hidden)
         } header: {
             Text(title)
         } footer: {
@@ -341,10 +414,84 @@ struct MacClippySettingsRow<Control: View>: View {
                     Text(detail)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             control()
+        }
+    }
+}
+
+struct MacClippySettingsDisclosure: View {
+    let title: String
+    let detail: String?
+    @Binding var isExpanded: Bool
+    var reduceMotion: Bool = false
+
+    var body: some View {
+        Button {
+            withAnimation(MacClippyMotion.animation(MacClippyMotion.contentAnimation, reduceMotion: reduceMotion)) {
+                isExpanded.toggle()
+            }
+        } label: {
+            MacClippySettingsRow(title: title, detail: detail) {
+                Image(systemName: "chevron.down")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .rotationEffect(.degrees(isExpanded ? 0 : -90))
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityHint(detail ?? "")
+        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+    }
+}
+
+struct MacClippySettingsField<Content: View>: View {
+    let title: String
+    var detail: String? = nil
+    private let content: () -> Content
+
+    init(title: String, detail: String? = nil, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.detail = detail
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+            if let detail {
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            content()
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(
+                    Color.primary.opacity(0.045),
+                    in: RoundedRectangle(
+                        cornerRadius: MacClippySettingsMetrics.fieldCornerRadius,
+                        style: .continuous
+                    )
+                )
+        }
+    }
+}
+
+extension View {
+    @ViewBuilder
+    func macClippySettingsNote(_ text: String?, tone: MacClippySettingsNoteTone) -> some View {
+        if let text, !text.isEmpty {
+            VStack(alignment: .leading, spacing: MacClippySettingsMetrics.noteSpacing) {
+                self
+                MacClippySettingsNote(text: text, tone: tone)
+            }
+        } else {
+            self
         }
     }
 }

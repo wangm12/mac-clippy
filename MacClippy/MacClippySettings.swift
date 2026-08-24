@@ -87,6 +87,7 @@ struct MacClippySettingsView: View {
             .listStyle(.sidebar)
             .environment(\.defaultMinListRowHeight, 36)
             .navigationTitle("Settings")
+            .toolbar(removing: .sidebarToggle)
             .navigationSplitViewColumnWidth(
                 min: MacClippySettingsMetrics.sidebarMinWidth,
                 ideal: MacClippySettingsMetrics.sidebarIdealWidth,
@@ -98,6 +99,7 @@ struct MacClippySettingsView: View {
             }
             .formStyle(.grouped)
             .navigationTitle(selectedPage?.title ?? "Settings")
+            .toolbar(removing: .sidebarToggle)
         }
         .navigationSplitViewStyle(.balanced)
         .toolbar(removing: .sidebarToggle)
