@@ -17,6 +17,10 @@ extension MacClippyDockModel {
         } else {
             resetPinboardSearchState()
         }
+        if tab == .history,
+           !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            scheduleReload()
+        }
         // Clearing the selection on a tab switch keeps the multi-select surface
         // scoped to one visible list; a stale selection from the previous tab
         // would reference IDs that are not in the new visible list.

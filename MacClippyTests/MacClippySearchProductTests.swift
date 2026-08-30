@@ -304,8 +304,8 @@ final class MacClippySearchProductTests: XCTestCase {
         )
         _ = try runtime.setCustomLabel(id: other.id, label: "editor")
 
-        XCTAssertEqual(try runtime.history(limit: 16, query: "safari").map(\.id), [safari.id])
-        XCTAssertEqual(try runtime.history(limit: 16, query: "Safari").map(\.id), [safari.id])
+        XCTAssertTrue(try runtime.history(limit: 16, query: "safari").isEmpty)
+        XCTAssertTrue(try runtime.history(limit: 16, query: "Safari").isEmpty)
         XCTAssertEqual(try runtime.history(limit: 16, query: "app:safari").map(\.id), [safari.id])
         XCTAssertEqual(try runtime.history(limit: 16, query: "app:EDITOR").map(\.id), [other.id])
     }
@@ -326,13 +326,13 @@ final class MacClippySearchProductTests: XCTestCase {
         )
         _ = try runtime.setCustomLabel(id: messages.id, label: "sms")
 
-        XCTAssertEqual(try runtime.history(limit: 16, query: "微信").map(\.id), [weChat.id])
+        XCTAssertTrue(try runtime.history(limit: 16, query: "微信").isEmpty)
         XCTAssertEqual(try runtime.history(limit: 16, query: "app:微信").map(\.id), [weChat.id])
-        XCTAssertEqual(try runtime.history(limit: 16, query: "Messages").map(\.id), [messages.id])
+        XCTAssertTrue(try runtime.history(limit: 16, query: "Messages").isEmpty)
         XCTAssertEqual(try runtime.history(limit: 16, query: "app:Messages").map(\.id), [messages.id])
     }
 
-    func testSearchableIndexTextIncludesSourceSegments() {
+    func testSearchableIndexTextOmitsSourceSegments() {
         let indexed = MacClippyRuntime.searchableIndexText(
             for: .text("body only"),
             ocrText: nil,
@@ -341,9 +341,32 @@ final class MacClippySearchProductTests: XCTestCase {
             sourceAppDisplayName: "微信"
         )
         XCTAssertTrue(indexed.contains("body only"))
-        XCTAssertTrue(indexed.contains("com.tencent.xinWeChat"))
-        XCTAssertTrue(indexed.contains("xinWeChat"))
-        XCTAssertTrue(indexed.contains("微信"))
+        XCTAssertFalse(indexed.contains("com.tencent.xinWeChat"))
+        XCTAssertFalse(indexed.contains("xinWeChat"))
+        XCTAssertFalse(indexed.contains("微信"))
         XCTAssertFalse(indexed.contains("Unknown source"))
+    }
+
+    func testSearchableIndexTextOmitsPasteboardUTIs() {
+        let indexed = MacClippyRuntime.searchableIndexText(
+            for: .text("MLX-VLM"),
+            ocrText: nil,
+            label: nil,
+            representationUTIs: [
+                "public.html",
+                "public.utf8-plain-text",
+                "org.chromium.source-url",
+                "org.chromium.internal.source-rfh-token"
+            ],
+            sourceAppBundleID: "com.openai.codex",
+            sourceAppDisplayName: "ChatGPT"
+        )
+        XCTAssertTrue(indexed.contains("MLX-VLM"))
+        XCTAssertFalse(indexed.contains("ChatGPT"))
+        XCTAssertFalse(indexed.contains("codex"))
+        XCTAssertFalse(indexed.contains("public.html"))
+        XCTAssertFalse(indexed.contains("public.utf8-plain-text"))
+        XCTAssertFalse(indexed.contains("org.chromium"))
+        XCTAssertFalse(indexed.contains("source-url"))
     }
 }

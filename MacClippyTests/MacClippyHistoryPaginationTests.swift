@@ -274,6 +274,40 @@ final class MacClippyHistoryPaginationTests: XCTestCase {
         })
     }
 
+    @MainActor
+    func testHistoryQueryStaysOnLastSuccessUntilReloadCompletes() throws {
+        let record = try runtime.appendTestRecord(.text("hello clipboard"))
+        _ = try runtime.setCustomLabel(id: record.id, label: "hello")
+
+        let model = MacClippyDockModel(runtime: runtime)
+        model.reload()
+        wait { !model.isLoading && model.historyQuery == "" }
+
+        model.query = "hello"
+        model.reload()
+        XCTAssertEqual(model.historyQuery, "")
+        wait { !model.isLoading && model.historyQuery == "hello" }
+        XCTAssertEqual(model.historyItems.map(\.id), [record.id])
+    }
+
+    @MainActor
+    func testSwitchingToHistoryWithAQueryReloadsSearch() throws {
+        let matching = try runtime.appendTestRecord(.text("matching tab switch"))
+        _ = try runtime.setCustomLabel(id: matching.id, label: "matching")
+        let other = try runtime.appendTestRecord(.text("other tab switch"))
+        _ = try runtime.setCustomLabel(id: other.id, label: "other")
+
+        let model = MacClippyDockModel(runtime: runtime)
+        model.reload()
+        wait { model.historyItems.count == 2 }
+
+        model.selectTab(.snippets)
+        model.query = "matching"
+        model.selectTab(.history)
+        wait { !model.isLoading && model.historyQuery == "matching" }
+        XCTAssertEqual(model.historyItems.map(\.id), [matching.id])
+    }
+
     func testHTMLHistoryPageUsesPersistedPreviewInsteadOfDecodingTheBody() throws {
         let html = "<p>" + String(repeating: "Hello ", count: 400) + "</p>"
         let meta = try runtime.appendTestRecord(.html(html))

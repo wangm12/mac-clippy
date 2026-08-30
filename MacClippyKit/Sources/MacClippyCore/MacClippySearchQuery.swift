@@ -151,6 +151,13 @@ public enum MacClippySearchQuery {
             && term.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" }
     }
 
+    public static func boundedUTF8Prefix(_ text: String, maxBytes: Int) -> String {
+        guard maxBytes > 0 else { return "" }
+        guard text.utf8.count > maxBytes else { return text }
+        return String(decoding: text.utf8.prefix(maxBytes), as: UTF8.self)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\u{FFFD}"))
+    }
+
     private static func quoted(_ value: String) -> String {
         "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
     }

@@ -258,7 +258,7 @@ extension MacClippyRuntime {
                 meta.preview,
                 meta.ocrText ?? "",
                 meta.customLabel ?? ""
-            ] + MacClippySourceAppResolver.searchHaystacks(for: meta.sourceAppBundleID)
+            ]
             let textMatches = MacClippySearchQuery.allTerms(context.bareTerms, appearIn: haystacks)
             guard textMatches || context.ftsMatchIDs.contains(meta.id) else {
                 return false

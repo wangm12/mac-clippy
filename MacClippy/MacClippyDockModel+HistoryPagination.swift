@@ -27,7 +27,6 @@ extension MacClippyDockModel {
         historyLoadCancellationToken = nil
         historyLoadGeneration &+= 1
         historyPageToken = nil
-        historyQuery = query
         historyHasMore = true
         historyIsLoadingMore = false
     }

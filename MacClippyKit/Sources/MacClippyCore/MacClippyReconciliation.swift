@@ -66,6 +66,35 @@ private struct MacClippyReachabilityFilter {
     }
 }
 
+/// Whether a clipboard row should have an FTS document. Images without OCR
+/// or a label are intentionally unindexed; treating them as missing would
+/// rebuild search on every launch.
+public enum MacClippySearchIndexExpectation {
+    public static func requiresIndex(_ meta: ClipboardItemMeta) -> Bool {
+        if let ocrText = meta.ocrText?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !ocrText.isEmpty {
+            return true
+        }
+        if let label = meta.customLabel?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !label.isEmpty {
+            return true
+        }
+        return hasSearchablePreview(meta.preview)
+    }
+
+    private static func hasSearchablePreview(_ preview: String) -> Bool {
+        let trimmed = preview.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        if trimmed == "(no preview)" || trimmed == "(rich text)" {
+            return false
+        }
+        if trimmed.hasPrefix("(image "), trimmed.hasSuffix(")") {
+            return false
+        }
+        return true
+    }
+}
+
 // Startup reconciliation for orphan blobs and FTS rows. The capture path
 // writes the clipboard database, external blobs, and FTS in separate steps, so
 // a crash can leave secondary artifacts behind. This service is deliberately
@@ -373,7 +402,10 @@ public enum MacClippyReconciliation {
             guard !page.isEmpty else { break }
             let pageIDs = page.map(\.id)
             let indexedIDs = try search.indexedRecordIDs(kind: .clipboardItem, matching: pageIDs)
-            for id in pageIDs where !indexedIDs.contains(id) { missing.append(id) }
+            for meta in page where !indexedIDs.contains(meta.id) {
+                guard MacClippySearchIndexExpectation.requiresIndex(meta) else { continue }
+                missing.append(meta.id)
+            }
             guard page.count == pageSize, let last = page.last else { break }
             cursor = MacClippyClipboardHistoryCursor(
                 modified: last.modified,

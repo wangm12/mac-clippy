@@ -106,7 +106,7 @@ extension MacClippyDockModel {
                         entry.preview,
                         entry.meta.ocrText ?? "",
                         entry.meta.customLabel ?? ""
-                    ] + MacClippySourceAppResolver.searchHaystacks(for: entry.meta.sourceAppBundleID)
+                    ]
                 )
             }
         }
@@ -130,7 +130,7 @@ extension MacClippyDockModel {
                     entry.preview,
                     entry.meta.ocrText ?? "",
                     entry.meta.customLabel ?? ""
-                ] + MacClippySourceAppResolver.searchHaystacks(for: entry.meta.sourceAppBundleID)
+                ]
             )
         }
     }

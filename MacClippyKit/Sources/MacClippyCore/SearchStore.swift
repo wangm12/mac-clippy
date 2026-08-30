@@ -87,7 +87,8 @@ public final class MacClippySearchStore {
         }
     ]
 
-    public static let currentSourceProjectionVersion: Int64 = 1
+    // 3: stop indexing source-app tokens so bare `chat`/`Safari` match content.
+    public static let currentSourceProjectionVersion: Int64 = 3
 
     let database: MacClippyDatabase
 

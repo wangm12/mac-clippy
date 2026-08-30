@@ -55,9 +55,15 @@ extension MacClippyRuntime {
         for record: ClipboardRecord,
         ocrText: String?,
         label: String?,
-        representationUTIs: [String] = [],
-        sourceAppBundleID: String? = nil,
-        sourceAppDisplayName: String? = nil
+        // Accepted so capture/repair call sites stay unchanged. Pasteboard
+        // UTIs must not be indexed: `text`/`html`/`url` would match almost
+        // every clip, and FTS snippets would show `public.html`.
+        representationUTIs _: [String] = [],
+        // Source-app tokens stay on the record for `app:` filters. Indexing
+        // them makes bare `chat` / `codex` / `Safari` match every clip from
+        // that app.
+        sourceAppBundleID _: String? = nil,
+        sourceAppDisplayName _: String? = nil
     ) -> String {
         var segments: [String] = []
         if let bodyText = MacClippyClipboardText.plainText(from: record),
@@ -75,18 +81,10 @@ extension MacClippyRuntime {
         if case let .files(urls) = record {
             segments.append(contentsOf: MacClippyFilePresentation.searchSegments(for: urls))
         }
-        segments.append(contentsOf: representationUTIs)
-        segments.append(
-            contentsOf: MacClippySourceAppSearch.segments(
-                bundleID: sourceAppBundleID,
-                displayName: sourceAppDisplayName ?? MacClippySourceAppResolver.displayName(for: sourceAppBundleID)
-            )
+        return MacClippySearchQuery.boundedUTF8Prefix(
+            segments.joined(separator: "\n"),
+            maxBytes: MacClippyRuntime.searchIndexTextByteLimit
         )
-        let text = segments.joined(separator: "\n")
-        return String(
-            bytes: text.utf8.prefix(MacClippyRuntime.searchIndexTextByteLimit),
-            encoding: .utf8
-        ) ?? ""
     }
 
     // Resolve uncached history projections in one envelope read. The fallback

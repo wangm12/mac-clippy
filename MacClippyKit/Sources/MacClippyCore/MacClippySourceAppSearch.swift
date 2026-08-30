@@ -1,8 +1,8 @@
 import Foundation
 
-/// Search tokens for the app a clip was copied from. Bundle IDs stay
-/// searchable; the last dotted component and a localized display name cover
-/// queries like `Safari` and `微信` without a new storage column.
+/// Tokens for `app:` filters. These stay off the FTS document so a bare
+/// `Safari` or `chat` query matches clipboard text, not every clip from
+/// that app.
 public enum MacClippySourceAppSearch {
     public static let unknownDisplayName = "Unknown source"
 

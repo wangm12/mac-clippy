@@ -54,6 +54,7 @@ final class MacClippyReconciliationTests: XCTestCase {
         let detected = try MacClippyReconciliation.detect(store: store, search: search, blobs: blobs)
         XCTAssertEqual(detected.orphanFTSRecordIDs, [orphanID])
         XCTAssertTrue(detected.orphanBlobIDs.isEmpty)
+        XCTAssertEqual(detected.missingFTSRecordIDs, [])
 
         _ = try MacClippyReconciliation.reconcile(
             store: store,
@@ -64,6 +65,22 @@ final class MacClippyReconciliationTests: XCTestCase {
 
         XCTAssertTrue(try search.search(query: "orphan", limit: 10).isEmpty)
         XCTAssertEqual(try search.search(query: "live", limit: 10).map(\.id), [liveMeta.id])
+    }
+
+    func testDetectsMissingFTSForTextButNotUnsearchableImages() throws {
+        let store = try clipboardStore()
+        let search = try searchStore()
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let blobs = try BlobStore(rootURL: root, key: testKey())
+
+        let blobID = try blobs.write(Data(repeating: 1, count: 16))
+        _ = try store.append(.image(blobID: blobID, width: 4, height: 4), now: Date(timeIntervalSince1970: 1))
+        let text = try store.append(.text("needs an index row"), now: Date(timeIntervalSince1970: 2))
+
+        let detected = try MacClippyReconciliation.detect(store: store, search: search, blobs: blobs)
+        XCTAssertEqual(detected.missingFTSRecordIDs, [text.id])
+        XCTAssertEqual(detected.missingFTSRecordCount, 1)
     }
 
     func testReconciliationDoesNotSkipOrphanFTSRowsWhenDeletingPages() throws {
