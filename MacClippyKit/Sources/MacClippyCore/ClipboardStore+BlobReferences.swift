@@ -415,6 +415,38 @@ extension MacClippyClipboardStore {
         }
     }
 
+    /// Returns the subset of `ids` that stored a representation with `uti`.
+    /// Used to badge Universal Clipboard items from `com.apple.is-remote-clipboard`
+    /// without adding a column or decrypting payloads.
+    public func recordIDsContainingUTI(_ uti: String, in ids: [RecordID]) throws -> Set<RecordID> {
+        guard !ids.isEmpty, !uti.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return []
+        }
+        var found: Set<RecordID> = []
+        for batch in Self.idBatches(ids) {
+            let placeholders = Array(repeating: "?", count: batch.count).joined(separator: ",")
+            let rows = try database.queue.read { connection in
+                try Row.fetchAll(
+                    connection,
+                    sql: """
+                        SELECT DISTINCT record_id
+                        FROM clipboard_representations
+                        WHERE uti = ? AND record_id IN (\(placeholders))
+                    """,
+                    arguments: StatementArguments([uti] + batch.map(\.rawValue))
+                )
+            }
+            for row in rows {
+                guard let rawID: String = row["record_id"],
+                      let id = RecordID(rawValue: rawID) else {
+                    throw MacClippyStoreError.invalidStoredRecord
+                }
+                found.insert(id)
+            }
+        }
+        return found
+    }
+
     public func representationUTIs(for id: RecordID) throws -> [String] {
         try database.queue.read { connection in
             let rows = try Row.fetchAll(

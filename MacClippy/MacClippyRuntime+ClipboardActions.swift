@@ -303,6 +303,35 @@ extension MacClippyRuntime {
                 }
             }
         }
+
+        @discardableResult
+        func appendTestRecord(
+            _ record: ClipboardRecord,
+            representations: [MacClippyClipboardRepresentation]
+        ) throws -> ClipboardItemMeta {
+            try withStoreLock {
+                try clipboardStore.append(record, representations: representations)
+            }
+        }
+
+        @discardableResult
+        func insertRemoteClipboardSample() throws -> ClipboardItemMeta {
+            let body = MacClippyClipboardCardPreviewFactory.sampleText
+            let meta = try appendTestRecord(
+                .text(body),
+                representations: [
+                    MacClippyClipboardRepresentation(
+                        uti: "public.utf8-plain-text",
+                        payloadBytes: Data(body.utf8)
+                    ),
+                    MacClippyClipboardRepresentation(
+                        uti: CaptureExclusionRules.remoteClipboardPasteboardType,
+                        payloadBytes: Data()
+                    )
+                ]
+            )
+            return try setCustomLabel(id: meta.id, label: "Remote test")
+        }
     #endif
 
     // P2a test-only OCR seeding. The production OCR path runs through

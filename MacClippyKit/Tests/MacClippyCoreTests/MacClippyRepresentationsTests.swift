@@ -107,6 +107,46 @@ final class MacClippyRepresentationsTests: XCTestCase {
         }
     }
 
+    func testRecordIDsContainingUTIFindsRemoteClipboardMarker() throws {
+        let store = try clipboardStore()
+        let remote = try store.append(
+            .text("from iphone"),
+            representations: [
+                MacClippyClipboardRepresentation(uti: "public.utf8-plain-text", payloadBytes: Data("from iphone".utf8)),
+                MacClippyClipboardRepresentation(
+                    uti: CaptureExclusionRules.remoteClipboardPasteboardType,
+                    payloadBytes: Data()
+                )
+            ]
+        )
+        let local = try store.append(
+            .text("local"),
+            representations: [
+                MacClippyClipboardRepresentation(uti: "public.utf8-plain-text", payloadBytes: Data("local".utf8))
+            ]
+        )
+
+        XCTAssertEqual(
+            try store.recordIDsContainingUTI(
+                CaptureExclusionRules.remoteClipboardPasteboardType,
+                in: [remote.id, local.id]
+            ),
+            [remote.id]
+        )
+        XCTAssertTrue(
+            try store.recordIDsContainingUTI(
+                CaptureExclusionRules.remoteClipboardPasteboardType,
+                in: []
+            ).isEmpty
+        )
+        XCTAssertTrue(
+            try store.recordIDsContainingUTI(
+                CaptureExclusionRules.remoteClipboardPasteboardType,
+                in: [local.id]
+            ).isEmpty
+        )
+    }
+
     func testLegacyAppendWithoutRepresentationsStillWorks() throws {
         let store = try clipboardStore()
         let meta = try store.append(.text("legacy"), now: Date(timeIntervalSince1970: 1))

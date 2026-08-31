@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import XCTest
 
 @testable import MacClippy
@@ -152,7 +153,7 @@ final class MacClippyClipboardCardSnapshotTests: XCTestCase {
 
         XCTAssertFalse(source.contains("clipboardCardHeader"))
         XCTAssertFalse(source.contains("cardCategoryFooter"))
-        XCTAssertTrue(source.contains("cardCategoryIndicator"))
+        XCTAssertTrue(source.contains("cardBottomLeadingChrome"))
         XCTAssertTrue(source.contains("bottomLeading"))
         XCTAssertFalse(source.contains("Text(context.source.displayName)"))
         XCTAssertFalse(source.contains("MacClippyCardHeaderTrailingLabel"))
@@ -275,6 +276,54 @@ final class MacClippyClipboardCardSnapshotTests: XCTestCase {
         XCTAssertTrue(label.contains("Categories: Work"))
         XCTAssertTrue(label.contains("3 copies"))
         XCTAssertFalse(label.contains("⌘1"))
+    }
+
+    @MainActor
+    func testRemoteClipboardCardSnapshotAndAccessibility() throws {
+        let remote = try historyEntry(preview: "from phone", isRemoteClipboard: true)
+        let local = try historyEntry(preview: "from phone")
+        let remoteContext = cardContext(item: remote, terms: [], selected: false, generation: 0)
+        let localContext = cardContext(item: local, terms: [], selected: false, generation: 0)
+
+        XCTAssertTrue(remoteContext.snapshot.isRemoteClipboard)
+        XCTAssertFalse(localContext.snapshot.isRemoteClipboard)
+        XCTAssertNotEqual(remoteContext, localContext)
+
+        let label = MacClippyDockCardAccessibilityPolicy.label(for: remoteContext)
+        XCTAssertTrue(label.contains(MacClippyDockCardRemoteClipboardPolicy.accessibilityPhrase))
+        XCTAssertFalse(
+            MacClippyDockCardAccessibilityPolicy.label(for: localContext)
+                .contains(MacClippyDockCardRemoteClipboardPolicy.accessibilityPhrase)
+        )
+
+        let source = try appSource(named: "MacClippyClipboardCardLabel.swift")
+        XCTAssertTrue(source.contains("cardBottomLeadingChrome"))
+        XCTAssertTrue(source.contains("MacClippyDockCardRemoteClipboardPolicy.symbolName"))
+        XCTAssertTrue(source.contains("alignment: .bottomLeading"))
+    }
+
+    @MainActor
+    func testRemoteClipboardCardWritesPreviewImage() throws {
+        let view = MacClippyClipboardCardPreviewFactory.card(isRemoteClipboard: true)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 2
+        renderer.proposedSize = ProposedViewSize(width: 320, height: 340)
+        guard let nsImage = renderer.nsImage else {
+            XCTFail("expected a rendered remote clipboard card")
+            return
+        }
+        guard let tiff = nsImage.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff),
+              let png = bitmap.representation(using: .png, properties: [:]) else {
+            XCTFail("expected PNG data for the remote clipboard card")
+            return
+        }
+
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("mac-clippy-remote-card-preview.png")
+        try png.write(to: url)
+        XCTAssertGreaterThan(png.count, 1_000)
+        print("Wrote remote clipboard card preview to \(url.path)")
     }
 
     // Snippet cards are held to the same honesty rule as clipboard cards: no
@@ -433,7 +482,8 @@ final class MacClippyClipboardCardSnapshotTests: XCTestCase {
     private func historyEntry(
         preview: String,
         customLabel: String? = nil,
-        modified: Date = Date(timeIntervalSince1970: 1)
+        modified: Date = Date(timeIntervalSince1970: 1),
+        isRemoteClipboard: Bool = false
     ) throws -> MacClippyHistoryEntry {
         MacClippyHistoryEntry(
             meta: ClipboardItemMeta(
@@ -446,7 +496,8 @@ final class MacClippyClipboardCardSnapshotTests: XCTestCase {
                 customLabel: customLabel
             ),
             contentKind: .text,
-            preview: preview
+            preview: preview,
+            isRemoteClipboard: isRemoteClipboard
         )
     }
 }

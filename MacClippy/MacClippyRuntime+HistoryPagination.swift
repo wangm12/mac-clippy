@@ -246,7 +246,8 @@ extension MacClippyRuntime {
                     contentKind: entry.contentKind,
                     preview: MacClippySearchQuery.displayText(fromFTSSnippet: hit.snippet),
                     fileURLs: entry.fileURLs,
-                    imageDimensions: entry.imageDimensions
+                    imageDimensions: entry.imageDimensions,
+                    isRemoteClipboard: entry.isRemoteClipboard
                 ))
                 lastSearchCursor = MacClippySearchCursor(rank: hit.rank, rowID: hit.rowID)
                 guard items.count == limit else { continue }
@@ -330,7 +331,8 @@ extension MacClippyRuntime {
                     contentKind: entry.contentKind,
                     preview: MacClippySearchQuery.displayText(fromFTSSnippet: hit.snippet),
                     fileURLs: entry.fileURLs,
-                    imageDimensions: entry.imageDimensions
+                    imageDimensions: entry.imageDimensions,
+                    isRemoteClipboard: entry.isRemoteClipboard
                 ))
                 lastSearchCursor = MacClippySearchCursor(rank: hit.rank, rowID: hit.rowID)
                 guard items.count == context.limit else { continue }

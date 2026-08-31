@@ -61,6 +61,29 @@ the macOS Keychain. Search metadata is kept separately to support fast search.
 Conservative capture exclusions are enabled by default, and additional app and
 text exclusions can be configured in Settings.
 
+## Cross-device clipboard
+
+Mac Clippy does not sync history through iCloud and has no iPhone app. A copy
+made on a nearby iPhone can still appear in this Mac's history because
+[Universal Clipboard](https://support.apple.com/en-us/102430) writes that item
+onto the Mac pasteboard. Mac Clippy then records it like any other local copy.
+
+That handoff is Apple Continuity, not an app network call. It works when:
+
+- Mac Clippy is already running. A copy that lands before launch is not
+  captured; `start()` ignores the pasteboard generation already present.
+- Both devices use the same Apple Account, are about 10 meters apart, and have
+  Handoff, Wi-Fi, and Bluetooth on.
+- Capture is not paused, and the Mac frontmost app is not an excluded password
+  manager.
+
+To verify: leave Mac Clippy running, copy text on iPhone, paste with
+Command-V on the Mac, then confirm a new history row. Repeat with an image.
+If paste works but history does not, inspect the pasteboard types (for example
+with [Pasteboard Viewer](https://github.com/sindresorhus/Pasteboard-Viewer))
+before changing capture rules. Do not add `com.apple.is-remote-clipboard` to
+ignored pasteboard types.
+
 ## Development
 
 Requirements:

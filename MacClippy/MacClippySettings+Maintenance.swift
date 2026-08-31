@@ -10,6 +10,21 @@ import MacClippyPlatform
 import ServiceManagement
 
 extension MacClippySettingsView {
+    #if DEBUG
+    func insertRemoteClipboardSample() {
+        guard let delegate = NSApp.delegate as? AppDelegate else { return }
+        diagnosticsMessage = nil
+        diagnosticsMessageIsError = false
+        do {
+            try delegate.insertRemoteClipboardSample()
+            diagnosticsMessage = "Inserted a remote clipboard sample. Open the dock to see the icon."
+        } catch {
+            diagnosticsMessage = "Could not insert the remote clipboard sample."
+            diagnosticsMessageIsError = true
+        }
+    }
+    #endif
+
     func refreshStorageHealth() {
         guard let delegate = NSApp.delegate as? AppDelegate else { return }
         delegate.refreshStorageHealth { health in
@@ -128,6 +143,19 @@ extension MacClippySettingsView {
             ) {
                 diagnosticsContent
             }
+            #if DEBUG
+            MacClippySettingsGroup(
+                title: "Preview samples",
+                subtitle: "Debug-only. Adds a history card stamped with com.apple.is-remote-clipboard."
+            ) {
+                MacClippySettingsRow(
+                    title: "Remote clipboard sample",
+                    detail: "Insert a card so the bottom-left remote icon is visible in the dock."
+                ) {
+                    Button("Insert") { insertRemoteClipboardSample() }
+                }
+            }
+            #endif
             MacClippySettingsGroup(
                 title: "History",
                 subtitle: "Pinned items stay. Use this only for a manual cleanup."

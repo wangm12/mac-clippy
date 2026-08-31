@@ -263,6 +263,35 @@ final class MacClippyLabelTests: XCTestCase {
         XCTAssertEqual(clearedEntry?.displayTitle, clearedEntry?.preview)
     }
 
+    func testInsertRemoteClipboardSampleIsMarkedRemote() throws {
+        let meta = try runtime.insertRemoteClipboardSample()
+        let entry = try runtime.history(limit: 10, query: "").first(where: { $0.id == meta.id })
+        XCTAssertEqual(entry?.isRemoteClipboard, true)
+        XCTAssertEqual(entry?.customLabel, "Remote test")
+        XCTAssertEqual(entry?.preview, MacClippyClipboardCardPreviewFactory.sampleText)
+    }
+
+    func testHistoryEntryMarksRemoteClipboardFromStoredUTI() throws {
+        let remote = try runtime.appendTestRecord(
+            .text("from phone"),
+            representations: [
+                MacClippyClipboardRepresentation(uti: "public.utf8-plain-text", payloadBytes: Data("from phone".utf8)),
+                MacClippyClipboardRepresentation(
+                    uti: CaptureExclusionRules.remoteClipboardPasteboardType,
+                    payloadBytes: Data()
+                )
+            ]
+        )
+        let local = try runtime.appendTestRecord(.text("local only"))
+
+        let entries = try runtime.history(limit: 10, query: "")
+        XCTAssertEqual(entries.first(where: { $0.id == remote.id })?.isRemoteClipboard, true)
+        XCTAssertEqual(entries.first(where: { $0.id == local.id })?.isRemoteClipboard, false)
+
+        let cached = try runtime.history(limit: 10, query: "")
+        XCTAssertEqual(cached.first(where: { $0.id == remote.id })?.isRemoteClipboard, true)
+    }
+
     func testHistoryEntryTypeMetadataSubtitleIsNilForTextKinds() throws {
         let textMeta = try runtime.appendTestRecord(.text("body"))
         let htmlMeta = try runtime.appendTestRecord(.html("<p>hi</p>"))

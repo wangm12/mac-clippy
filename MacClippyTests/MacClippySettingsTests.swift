@@ -88,6 +88,23 @@ final class MacClippySettingsTests: XCTestCase {
         XCTAssertTrue(rules.shouldExclude(appBundleID: "com.bitwarden.desktop", pasteboardTypes: []))
     }
 
+    func testDefaultExclusionRulesKeepUniversalClipboardText() throws {
+        let suiteName = "MacClippySettingsRemoteClipboard-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let rules = MacClippyRetentionPreferences.exclusionRules(from: defaults)
+        XCTAssertFalse(
+            rules.shouldExclude(
+                appBundleID: "com.apple.Safari",
+                pasteboardTypes: [
+                    CaptureExclusionRules.remoteClipboardPasteboardType,
+                    "public.utf8-plain-text"
+                ]
+            )
+        )
+    }
+
     func testHotKeyRecordingNotificationUsesActiveState() {
         let activeExpectation = expectation(description: "recording starts")
         let inactiveExpectation = expectation(description: "recording stops")

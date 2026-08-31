@@ -11,19 +11,34 @@ struct MacClippyHistoryEntry: Identifiable, Sendable {
     let preview: String
     let fileURLs: [URL]
     let imageDimensions: CGSize?
+    let isRemoteClipboard: Bool
 
     init(
         meta: ClipboardItemMeta,
         contentKind: ContentKind,
         preview: String,
         fileURLs: [URL] = [],
-        imageDimensions: CGSize? = nil
+        imageDimensions: CGSize? = nil,
+        isRemoteClipboard: Bool = false
     ) {
         self.meta = meta
         self.contentKind = contentKind
         self.preview = preview
         self.fileURLs = fileURLs
         self.imageDimensions = imageDimensions
+        self.isRemoteClipboard = isRemoteClipboard
+    }
+
+    func withRemoteClipboard(_ isRemoteClipboard: Bool) -> MacClippyHistoryEntry {
+        guard isRemoteClipboard != self.isRemoteClipboard else { return self }
+        return MacClippyHistoryEntry(
+            meta: meta,
+            contentKind: contentKind,
+            preview: preview,
+            fileURLs: fileURLs,
+            imageDimensions: imageDimensions,
+            isRemoteClipboard: isRemoteClipboard
+        )
     }
 
     var id: RecordID { meta.id }

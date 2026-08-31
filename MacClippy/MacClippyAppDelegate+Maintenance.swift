@@ -73,6 +73,13 @@ extension AppDelegate {
         }
     }
 
+    #if DEBUG
+    func insertRemoteClipboardSample() throws {
+        guard let runtime else { throw StartupError.runtimeUnavailable }
+        _ = try runtime.insertRemoteClipboardSample()
+    }
+    #endif
+
     func exportDiagnostics(
         to url: URL,
         completion: @escaping @MainActor @Sendable (Result<Void, Error>) -> Void

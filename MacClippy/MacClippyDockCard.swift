@@ -26,6 +26,7 @@ struct MacClippyClipboardCardSnapshot: Equatable, Sendable {
     let isPreviewVisible: Bool
     let sourcePresentationGeneration: UInt
     let showsCategoryIndicator: Bool
+    let isRemoteClipboard: Bool
 }
 
 struct MacClippyClipboardCardContext: Equatable {
@@ -63,7 +64,8 @@ struct MacClippyClipboardCardContext: Equatable {
             highlightTerms: highlightTerms,
             isPreviewVisible: isPreviewVisible,
             sourcePresentationGeneration: sourcePresentationGeneration,
-            showsCategoryIndicator: showsCategoryIndicator
+            showsCategoryIndicator: showsCategoryIndicator,
+            isRemoteClipboard: item.isRemoteClipboard
         )
     }
 

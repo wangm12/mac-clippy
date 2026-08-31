@@ -204,6 +204,12 @@ struct MacClippyDockCategoryPresentation: Identifiable, Equatable, Sendable {
     let colorHex: String
 }
 
+enum MacClippyDockCardRemoteClipboardPolicy {
+    static let symbolName = "iphone"
+    static let help = "Copied from another Apple device"
+    static let accessibilityPhrase = "from another Apple device"
+}
+
 enum MacClippyDockCardCategoryPolicy {
     static let visibleCategoryLimit = 2
 

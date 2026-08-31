@@ -50,6 +50,27 @@ final class MacClippyHistoryPaginationTests: XCTestCase {
         XCTAssertEqual(Set(allIDs).count, 20)
     }
 
+    func testBareSearchPagePreservesRemoteClipboardFlag() throws {
+        let remote = try runtime.appendTestRecord(
+            .text("remote search body"),
+            representations: [
+                MacClippyClipboardRepresentation(
+                    uti: "public.utf8-plain-text",
+                    payloadBytes: Data("remote search body".utf8)
+                ),
+                MacClippyClipboardRepresentation(
+                    uti: CaptureExclusionRules.remoteClipboardPasteboardType,
+                    payloadBytes: Data()
+                )
+            ]
+        )
+        _ = try runtime.setCustomLabel(id: remote.id, label: "remotehit")
+
+        let page = try runtime.historyPage(limit: 16, query: "remotehit")
+        XCTAssertEqual(page.items.first?.id, remote.id)
+        XCTAssertEqual(page.items.first?.isRemoteClipboard, true)
+    }
+
     func testBareSearchPagesPreserveFTSOrderWithoutRepeatingRecords() throws {
         for index in 0..<20 {
             let record = try runtime.appendTestRecord(.text("search page " + String(index)))

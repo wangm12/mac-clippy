@@ -97,23 +97,50 @@ extension MacClippyRuntime {
         let cached = cachedHistoryEntries(for: metas, validateContentKind: validateContentKind)
         var entriesByID = cached.entriesByID
         let uncachedMetas = cached.uncachedMetas
-        guard !uncachedMetas.isEmpty else { return entriesByID }
-        let bodyMetas = metadataOnlyHistoryEntries(
-            for: uncachedMetas,
-            entriesByID: &entriesByID
-        )
-        guard !bodyMetas.isEmpty else { return entriesByID }
-        if let batchEntries = try batchHistoryEntries(for: bodyMetas) {
-            entriesByID.merge(batchEntries) { _, newer in newer }
-            return entriesByID
-        }
-
-        for meta in bodyMetas {
-            if let entry = try entry(for: meta) {
-                entriesByID[meta.id] = entry
+        if !uncachedMetas.isEmpty {
+            let bodyMetas = metadataOnlyHistoryEntries(
+                for: uncachedMetas,
+                entriesByID: &entriesByID
+            )
+            if !bodyMetas.isEmpty {
+                if let batchEntries = try batchHistoryEntries(for: bodyMetas) {
+                    entriesByID.merge(batchEntries) { _, newer in newer }
+                } else {
+                    for meta in bodyMetas {
+                        if let entry = try entry(for: meta) {
+                            entriesByID[meta.id] = entry
+                        }
+                    }
+                }
             }
         }
-        return entriesByID
+        return try stampRemoteClipboard(entriesByID, metas: metas)
+    }
+
+    func stampRemoteClipboard(
+        _ entries: [RecordID: MacClippyHistoryEntry],
+        metas: [ClipboardItemMeta]
+    ) throws -> [RecordID: MacClippyHistoryEntry] {
+        guard !entries.isEmpty else { return entries }
+        let remoteIDs = try clipboardStore.recordIDsContainingUTI(
+            CaptureExclusionRules.remoteClipboardPasteboardType,
+            in: Array(entries.keys)
+        )
+        var stamped: [RecordID: MacClippyHistoryEntry] = [:]
+        stamped.reserveCapacity(entries.count)
+        let metasByID = Dictionary(uniqueKeysWithValues: metas.map { ($0.id, $0) })
+        for (id, entry) in entries {
+            let next = entry.withRemoteClipboard(remoteIDs.contains(id))
+            stamped[id] = next
+            if let meta = metasByID[id] {
+                historyEntryCache.setObject(
+                    MacClippyHistoryEntryCacheBox(next),
+                    forKey: cacheKey(for: meta),
+                    cost: historyEntryCacheCost(next)
+                )
+            }
+        }
+        return stamped
     }
 
     private func cachedHistoryEntries(

@@ -29,7 +29,8 @@ extension MacClippyRuntime {
             recordCorruptStoredRecord(operation: "history_content_kind_mismatch")
             return nil
         }
-        let entry = entry(for: meta, body: body)
+        let projected = entry(for: meta, body: body)
+        let entry = try stampRemoteClipboard([meta.id: projected], metas: [meta])[meta.id] ?? projected
         historyEntryCache.setObject(
             MacClippyHistoryEntryCacheBox(entry),
             forKey: key,

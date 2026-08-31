@@ -122,7 +122,7 @@ struct MacClippyClipboardCardLabel: View, Equatable {
                 cardSelectionBadge
             }
             .overlay(alignment: .bottomLeading) {
-                cardCategoryIndicator
+                cardBottomLeadingChrome
             }
     }
 
@@ -137,29 +137,42 @@ struct MacClippyClipboardCardLabel: View, Equatable {
     }
 
     @ViewBuilder
-    private var cardCategoryIndicator: some View {
+    private var cardBottomLeadingChrome: some View {
         let categories = MacClippyDockCardCategoryPolicy.visibleCategories(from: context.categories)
         let overflow = MacClippyDockCardCategoryPolicy.overflowCount(for: context.categories)
-        if context.showsCategoryIndicator, !categories.isEmpty {
+        let showsCategories = context.showsCategoryIndicator && !categories.isEmpty
+        let showsRemote = context.item.isRemoteClipboard
+        if showsRemote || showsCategories {
             HStack(spacing: 6) {
-                ForEach(categories) { category in
-                    HStack(spacing: 5) {
-                        Circle()
-                            .fill(Color(macClippyHex: category.colorHex))
-                            .frame(width: 7, height: 7)
-                        Text(category.name)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(MacClippyDockTheme.contentTextColor)
-                            .lineLimit(1)
-                    }
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 4)
-                    .background(MacClippyDockTheme.cardColor, in: Capsule())
-                }
-                if overflow > 0 {
-                    Text("+\(overflow)")
+                if showsRemote {
+                    Image(systemName: MacClippyDockCardRemoteClipboardPolicy.symbolName)
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(MacClippyDockTheme.contentMutedColor)
+                        .foregroundStyle(MacClippyDockTheme.contentTextColor)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(MacClippyDockTheme.cardColor, in: Capsule())
+                        .help(MacClippyDockCardRemoteClipboardPolicy.help)
+                }
+                if showsCategories {
+                    ForEach(categories) { category in
+                        HStack(spacing: 5) {
+                            Circle()
+                                .fill(Color(macClippyHex: category.colorHex))
+                                .frame(width: 7, height: 7)
+                            Text(category.name)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(MacClippyDockTheme.contentTextColor)
+                                .lineLimit(1)
+                        }
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(MacClippyDockTheme.cardColor, in: Capsule())
+                    }
+                    if overflow > 0 {
+                        Text("+\(overflow)")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(MacClippyDockTheme.contentMutedColor)
+                    }
                 }
             }
             .padding(.leading, fillsCard ? MacClippyDockCardMetrics.imageInset : MacClippyDockCardMetrics.padding)
@@ -444,3 +457,62 @@ extension MacClippyClipboardCardLabel {
         }
     }
 }
+
+#if DEBUG
+enum MacClippyClipboardCardPreviewFactory {
+    static let sampleText = "Remote clipboard test — copied from iPhone"
+
+    @MainActor
+    static func context(isRemoteClipboard: Bool) -> MacClippyClipboardCardContext {
+        let now = Date()
+        let item = MacClippyHistoryEntry(
+            meta: ClipboardItemMeta(
+                id: .generate(),
+                created: now,
+                modified: now.addingTimeInterval(-90),
+                deviceID: .generate(),
+                lamport: 1,
+                preview: sampleText
+            ),
+            contentKind: .text,
+            preview: sampleText,
+            isRemoteClipboard: isRemoteClipboard
+        )
+        return MacClippyClipboardCardContext(
+            item: item,
+            index: 0,
+            source: MacClippySourceAppPresentation(
+                displayName: "Safari",
+                icon: nil,
+                accent: NSColor.systemBlue
+            ),
+            dedupRun: 1,
+            isSelected: false,
+            activeBorder: false,
+            isElevated: false,
+            categories: [],
+            highlightTerms: [],
+            isPreviewVisible: false,
+            sourcePresentationGeneration: 0
+        )
+    }
+
+    @MainActor
+    static func card(isRemoteClipboard: Bool) -> some View {
+        MacClippyClipboardCardLabel(
+            context: context(isRemoteClipboard: isRemoteClipboard),
+            loadThumbnail: { _ in nil }
+        )
+        .padding(32)
+        .background(MacClippyDockTheme.backdropColor)
+    }
+}
+
+#Preview("Remote clipboard") {
+    MacClippyClipboardCardPreviewFactory.card(isRemoteClipboard: true)
+}
+
+#Preview("Local clipboard") {
+    MacClippyClipboardCardPreviewFactory.card(isRemoteClipboard: false)
+}
+#endif

@@ -10,6 +10,9 @@ enum MacClippyDockCardAccessibilityPolicy {
         }
         parts.append(contentKindLabel(context.item.contentKind))
         parts.append("from \(context.source.displayName)")
+        if context.item.isRemoteClipboard {
+            parts.append(MacClippyDockCardRemoteClipboardPolicy.accessibilityPhrase)
+        }
         if context.dedupRun > 1 {
             parts.append("\(context.dedupRun) copies")
         }

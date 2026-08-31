@@ -429,6 +429,46 @@ final class MacClippyPlatformTests: XCTestCase {
         observer.stop()
     }
 
+    func testPasteboardObserverDeliversUniversalClipboardText() {
+        let remote = CaptureExclusionRules.remoteClipboardPasteboardType
+        let textType = "public.utf8-plain-text"
+        let reader = TestPasteboardReader(change: PasteboardChange(
+            changeCount: 1,
+            items: [PasteboardItem(
+                types: [textType],
+                representations: [textType: Data("seed".utf8)]
+            )],
+            sourceAppBundleID: "com.example.editor"
+        ))
+        let observer = PasteboardObserver(
+            reader: reader,
+            exclusionRules: CaptureExclusionRules(),
+            pollInterval: 1,
+            retryState: MacClippyPasteboardReadRetryState(maxAttempts: 1)
+        )
+        var changes: [PasteboardChange] = []
+        observer.start { changes.append($0) }
+        observer.poll()
+        XCTAssertTrue(changes.isEmpty)
+
+        reader.change = PasteboardChange(
+            changeCount: 2,
+            items: [PasteboardItem(
+                types: [remote, textType],
+                representations: [
+                    remote: Data(),
+                    textType: Data("iphone copy".utf8)
+                ]
+            )],
+            sourceAppBundleID: "com.example.editor"
+        )
+        observer.poll()
+        XCTAssertEqual(changes.map(\.changeCount), [2])
+        XCTAssertEqual(changes[0].items[0].string(forType: textType), "iphone copy")
+        XCTAssertTrue(changes[0].pasteboardTypes.contains(remote))
+        observer.stop()
+    }
+
     private final class TestPasteboardReader: PasteboardReading {
         var change: PasteboardChange
 
