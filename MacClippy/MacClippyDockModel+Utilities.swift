@@ -11,6 +11,7 @@ private enum MacClippyDockOperationError: Error {
 extension MacClippyDockModel {
     func select(
         _ item: MacClippyHistoryEntry,
+        plain: Bool? = nil,
         completion: @escaping @MainActor @Sendable () -> Void
     ) {
         guard !isSelecting else { return }
@@ -21,10 +22,11 @@ extension MacClippyDockModel {
         self.sideEffectGate = sideEffectGate
         isSelecting = true
         clearActionError()
+        let pastePlain = plain ?? MacClippyRetentionPreferences.shouldPastePlain(shiftHeld: false)
 
         workQueue.async { [weak self, runtimeReference, sideEffectGate] in
             let result = Result {
-                try runtimeReference.paste(id: item.id, sideEffectGate: sideEffectGate)
+                try runtimeReference.paste(id: item.id, plain: pastePlain, sideEffectGate: sideEffectGate)
             }
             DispatchQueue.main.async { [weak self] in
                 guard let self,
@@ -114,8 +116,11 @@ extension MacClippyDockModel {
             let record = MacClippySearchGrammar.SearchRecord(
                 contentKind: entry.contentKind,
                 sourceAppBundleID: entry.meta.sourceAppBundleID,
-                sourceAppDisplayName: MacClippySourceAppResolver.displayName(
-                    for: entry.meta.sourceAppBundleID
+                sourceAppDisplayName: MacClippySourceAppSearch.preferredDisplayName(
+                    stored: entry.meta.sourceAppDisplayName,
+                    resolved: MacClippySourceAppResolver.displayName(
+                        for: entry.meta.sourceAppBundleID
+                    )
                 ),
                 customLabel: entry.meta.customLabel,
                 ocrText: entry.meta.ocrText,

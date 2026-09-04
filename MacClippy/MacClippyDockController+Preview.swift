@@ -353,7 +353,8 @@ extension MacClippyDockController: MacClippySystemQuickLookHosting {
             },
             onDismiss: { [weak self] in
                 self?.hidePreview()
-            }
+            },
+            highlightTerms: model.highlightTerms
         )
     }
 

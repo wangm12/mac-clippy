@@ -239,6 +239,7 @@ extension MacClippyRuntime {
                     try blobStore.delete(id: blobID)
                 }
                 try clipboardStore.completeDeletion(operationID: entry.journal.operationID)
+                thumbnailDiskCache.remove(id: entry.id)
                 deletedIDs.append(entry.id)
             } catch {
                 storageDegradedReasons.insert("orphan-blob-cleanup-failed")

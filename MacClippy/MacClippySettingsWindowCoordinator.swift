@@ -19,16 +19,14 @@ final class MacClippySettingsWindowCoordinator: NSObject, NSWindowDelegate {
     private weak var window: NSWindow?
     private var fallbackWindow: NSWindow?
     private var fallbackHostingView: NSView?
+    private var retiringWindows: [NSWindow] = []
     private var shouldBringRegisteredWindowToFront = false
+    private(set) var lastBroughtToFrontWindow: NSWindow?
 
     func register(_ window: NSWindow) {
         self.window = window
         if let fallbackWindow, fallbackWindow !== window {
-            fallbackWindow.delegate = nil
-            fallbackWindow.orderOut(nil)
-            fallbackWindow.close()
-            self.fallbackHostingView = nil
-            self.fallbackWindow = nil
+            discardFallbackWindow()
         }
 
         if shouldBringRegisteredWindowToFront {
@@ -37,8 +35,14 @@ final class MacClippySettingsWindowCoordinator: NSObject, NSWindowDelegate {
         }
     }
 
-    func bringToFront() {
+    /// Marks that the next registered Settings window should be shown.
+    /// Tests use this instead of `bringToFront()` so they do not mount Settings.
+    func notePendingBringToFront() {
         shouldBringRegisteredWindowToFront = true
+    }
+
+    func bringToFront() {
+        notePendingBringToFront()
         if let window {
             shouldBringRegisteredWindowToFront = false
             activateAndBringToFront(window)
@@ -52,10 +56,7 @@ final class MacClippySettingsWindowCoordinator: NSObject, NSWindowDelegate {
     }
 
     private func presentFallbackWindow() {
-        let hostingView = NSHostingView(
-            rootView: MacClippySettingsView()
-                .environment(\.macClippyShouldRegisterSettingsWindow, false)
-        )
+        let hostingView = NSHostingView(rootView: fallbackRootView())
         let fallbackWindow = NSWindow(
             contentRect: NSRect(
                 x: 0,
@@ -68,6 +69,7 @@ final class MacClippySettingsWindowCoordinator: NSObject, NSWindowDelegate {
             defer: false
         )
         fallbackWindow.title = "MacClippy Settings"
+        fallbackWindow.animationBehavior = .none
         fallbackWindow.contentView = hostingView
         fallbackWindow.isReleasedWhenClosed = false
         fallbackWindow.delegate = self
@@ -88,11 +90,45 @@ final class MacClippySettingsWindowCoordinator: NSObject, NSWindowDelegate {
         fallbackWindow = nil
     }
 
+    private func fallbackRootView() -> AnyView {
+        if isRunningUnderXCTest {
+            return AnyView(Color.clear)
+        }
+        return AnyView(
+            MacClippySettingsView()
+                .environment(\.macClippyShouldRegisterSettingsWindow, false)
+        )
+    }
+
+    private func discardFallbackWindow() {
+        guard let fallbackWindow else { return }
+        fallbackWindow.delegate = nil
+        fallbackWindow.animationBehavior = .none
+        fallbackWindow.contentView = nil
+        fallbackHostingView = nil
+        fallbackWindow.orderOut(nil)
+        fallbackWindow.close()
+        retiringWindows.append(fallbackWindow)
+        self.fallbackWindow = nil
+        DispatchQueue.main.async { [weak self] in
+            self?.retiringWindows.removeAll { $0 === fallbackWindow }
+        }
+    }
+
     private func activateAndBringToFront(_ window: NSWindow) {
+        lastBroughtToFrontWindow = window
+        if isRunningUnderXCTest { return }
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
         window.makeKey()
+    }
+
+    private var isRunningUnderXCTest: Bool {
+        let environment = ProcessInfo.processInfo.environment
+        return NSClassFromString("XCTestCase") != nil
+            || environment["XCTestConfigurationFilePath"] != nil
+            || environment["XCInjectBundleInto"] != nil
     }
 }
 

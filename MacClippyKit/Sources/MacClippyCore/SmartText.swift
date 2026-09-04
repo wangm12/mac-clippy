@@ -141,14 +141,18 @@ public typealias SmartTextService = MacClippySmartText
 public enum MacClippyTextTransform: String, Codable, CaseIterable, Sendable {
     case uppercase
     case lowercase
+    case titleCase
     case trim
     case prettyJSON
     case cleanTrackingURL
+    case markdownQuote
+    case sortLines
 
     public func apply(to text: String) -> String {
         switch self {
         case .uppercase: return text.uppercased()
         case .lowercase: return text.lowercased()
+        case .titleCase: return Self.titleCase(text)
         case .trim: return text.trimmingCharacters(in: .whitespacesAndNewlines)
         case .prettyJSON:
             guard let data = text.data(using: .utf8),
@@ -157,6 +161,10 @@ public enum MacClippyTextTransform: String, Codable, CaseIterable, Sendable {
             return String(decoding: pretty, as: UTF8.self)
         case .cleanTrackingURL:
             return MacClippySmartText.cleanTrackingParameters(text)?.cleaned ?? text
+        case .markdownQuote:
+            return Self.markdownQuote(text)
+        case .sortLines:
+            return Self.sortLines(text)
         }
     }
 
@@ -168,10 +176,43 @@ public enum MacClippyTextTransform: String, Codable, CaseIterable, Sendable {
         switch self {
         case .uppercase: "Uppercase"
         case .lowercase: "Lowercase"
+        case .titleCase: "Title Case"
         case .trim: "Trim whitespace"
         case .prettyJSON: "Pretty JSON"
         case .cleanTrackingURL: "Clean tracking URL"
+        case .markdownQuote: "Markdown quote"
+        case .sortLines: "Sort lines"
         }
+    }
+
+    private static func titleCase(_ text: String) -> String {
+        var result = ""
+        result.reserveCapacity(text.count)
+        var startOfWord = true
+        for character in text {
+            if character.isWhitespace || character.isNewline {
+                result.append(character)
+                startOfWord = true
+            } else if startOfWord {
+                result.append(contentsOf: String(character).uppercased())
+                startOfWord = false
+            } else {
+                result.append(contentsOf: String(character).lowercased())
+            }
+        }
+        return result
+    }
+
+    private static func markdownQuote(_ text: String) -> String {
+        text.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { "> \($0)" }
+            .joined(separator: "\n")
+    }
+
+    private static func sortLines(_ text: String) -> String {
+        text.split(separator: "\n", omittingEmptySubsequences: false)
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+            .joined(separator: "\n")
     }
 }
 
@@ -180,6 +221,12 @@ public typealias TextTransform = MacClippyTextTransform
 public enum MacClippyTextTransforms {
     public static func apply(_ transform: TextTransform, to text: String) -> String? {
         transform.apply(to: text)
+    }
+
+    public static func apply(_ transforms: [TextTransform], to text: String) -> String {
+        transforms.reduce(text) { partial, transform in
+            transform.apply(to: partial)
+        }
     }
 }
 

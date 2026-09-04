@@ -1,6 +1,7 @@
 import AppKit
 
 import MacClippyCore
+import MacClippyPlatform
 
 @MainActor
 extension AppDelegate {
@@ -54,6 +55,40 @@ extension AppDelegate {
 
     func openSettingsWindowFromDock() {
         openSettingsWindow()
+    }
+
+    func refreshStorageUsage(
+        completion: @escaping @MainActor @Sendable (MacClippyStorageUsage?) -> Void
+    ) {
+        guard let runtime else {
+            completion(nil)
+            return
+        }
+        let generation = maintenanceGeneration
+        DispatchQueue.global(qos: .utility).async {
+            let usage = try? runtime.storageUsage()
+            DispatchQueue.main.async {
+                guard self.maintenanceGeneration == generation, self.runtime === runtime else { return }
+                completion(usage)
+            }
+        }
+    }
+
+    func compressOldImages(
+        completion: @escaping @MainActor @Sendable (Result<MacClippyImageCompressReport, Error>) -> Void
+    ) {
+        guard let runtime else {
+            completion(.failure(StartupError.runtimeUnavailable))
+            return
+        }
+        let generation = maintenanceGeneration
+        DispatchQueue.global(qos: .utility).async {
+            let result = Result { try runtime.compressOldImages() }
+            DispatchQueue.main.async {
+                guard self.maintenanceGeneration == generation, self.runtime === runtime else { return }
+                completion(result)
+            }
+        }
     }
 
     func refreshStorageHealth(
@@ -122,6 +157,84 @@ extension AppDelegate {
         }
     }
 
+    func createBackup(
+        at url: URL,
+        completion: @escaping @MainActor @Sendable (Result<MacClippyBackupManifest, Error>) -> Void
+    ) {
+        guard let runtime else {
+            completion(.failure(StartupError.runtimeUnavailable))
+            return
+        }
+        let generation = maintenanceGeneration
+        DispatchQueue.global(qos: .utility).async {
+            let result = Result { try runtime.createBackup(at: url) }
+            DispatchQueue.main.async {
+                guard self.maintenanceGeneration == generation, self.runtime === runtime else { return }
+                completion(result)
+            }
+        }
+    }
+
+    func restoreBackup(
+        from snapshotURL: URL,
+        completion: @escaping @MainActor @Sendable (Result<MacClippyBackupValidation, Error>) -> Void
+    ) {
+        let generation = maintenanceGeneration
+        DispatchQueue.global(qos: .utility).async {
+            let validationResult = Result { try MacClippyBackup.validate(at: snapshotURL) }
+            DispatchQueue.main.async {
+                guard self.maintenanceGeneration == generation else { return }
+                switch validationResult {
+                case let .success(validation):
+                    guard MacClippyBackupSettingsPolicy.canRestore(validation) else {
+                        completion(.failure(MacClippyBackupError.invalidManifest))
+                        return
+                    }
+                    self.installValidatedBackup(from: snapshotURL, completion: completion)
+                case let .failure(error):
+                    completion(.failure(error))
+                }
+            }
+        }
+    }
+
+    private func installValidatedBackup(
+        from snapshotURL: URL,
+        completion: @escaping @MainActor @Sendable (Result<MacClippyBackupValidation, Error>) -> Void
+    ) {
+        rollbackStartup()
+        let generation = maintenanceGeneration
+        DispatchQueue.global(qos: .utility).async {
+            let installResult = Result {
+                let paths = try MacClippyPaths()
+                return try MacClippyBackup.installIntoLiveRoot(
+                    from: snapshotURL,
+                    liveRootURL: paths.rootURL
+                )
+            }
+            DispatchQueue.main.async {
+                guard self.maintenanceGeneration == generation else { return }
+                switch installResult {
+                case let .success(installed):
+                    do {
+                        try self.start()
+                        completion(.success(installed))
+                    } catch {
+                        self.handleStartupFailure(error)
+                        completion(.failure(error))
+                    }
+                case let .failure(error):
+                    do {
+                        try self.start()
+                    } catch {
+                        self.handleStartupFailure(error)
+                    }
+                    completion(.failure(error))
+                }
+            }
+        }
+    }
+
     func deleteUnpinnedHistory(
         completion: @escaping @MainActor @Sendable (Result<MacClippyBatchDeleteResult, Error>) -> Void
     ) {
@@ -145,9 +258,7 @@ extension AppDelegate {
 
     func configureStatusItem(_ button: NSStatusBarButton) {
         button.title = ""
-        button.image = (bundledApplicationIcon?.copy() as? NSImage)
-            ?? NSImage(named: NSImage.applicationIconName)
-        button.image?.size = NSSize(width: 18, height: 18)
+        button.image = MacClippyStatusItemIconPolicy.makeImage()
         button.imageScaling = .scaleProportionallyDown
         button.imagePosition = .imageOnly
         button.toolTip = "Mac Clippy"

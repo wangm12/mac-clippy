@@ -37,16 +37,6 @@ extension MacClippyDockController {
                 self.hide()
             }
         }
-        screenParametersObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.didChangeScreenParametersNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, self.monitorGeneration == monitorGeneration else { return }
-                self.handleScreenParametersChanged()
-            }
-        }
         installKeyWindowObserver(for: dockPanel, monitorGeneration: monitorGeneration)
     }
 
@@ -103,10 +93,6 @@ extension MacClippyDockController {
             NSWorkspace.shared.notificationCenter.removeObserver(spaceChangeObserver)
             self.spaceChangeObserver = nil
         }
-        if let screenParametersObserver {
-            NotificationCenter.default.removeObserver(screenParametersObserver)
-            self.screenParametersObserver = nil
-        }
         if let keyWindowObserver {
             NotificationCenter.default.removeObserver(keyWindowObserver)
             self.keyWindowObserver = nil
@@ -149,6 +135,7 @@ extension MacClippyDockController {
             panelFrame: dockPanel.frame,
             clickLocation: location,
             isInsideExcludedWindow: false,
+            isInsideStatusItem: statusItemScreenFrame?()?.contains(location) == true,
             ignoreUntil: ignoreOutsideClicksUntil,
             now: Date()
         ) else { return }
@@ -272,7 +259,8 @@ extension MacClippyDockController {
             hasMultipleSelection: model.hasMultipleSelection,
             detailsEditing: detailsEditing != .none,
             hasTextSelection: hasNativeTextSelection,
-            isLoading: model.isLoading
+            isLoading: model.isLoading,
+            alwaysPastePlainText: MacClippyRetentionPreferences.alwaysPastePlainText()
         )
         if routeNativeCommandCopy(event, action: action, eventIdentity: eventIdentity) {
             return nil

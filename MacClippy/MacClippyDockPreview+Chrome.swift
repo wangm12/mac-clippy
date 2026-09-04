@@ -50,12 +50,8 @@ struct MacClippyPreviewChromeIconButton: View {
                 .contentShape(Circle())
         }
         .macClippyChromeButtonStyle()
-        .onHover { hovering in
-            guard MacClippyDockHoverPolicy.shouldApplyHover(
-                hovering,
-                pressedMouseButtons: NSEvent.pressedMouseButtons
-            ) else { return }
-            isHovered = hovering
+        .onContinuousHover { phase in
+            isHovered = MacClippyDockHoverPolicy.isHovering(phase)
         }
         .accessibilityLabel(accessibilityLabel)
         .help(help ?? accessibilityLabel)
@@ -79,12 +75,8 @@ struct MacClippyPreviewChromeLabelButton: View {
                 .frame(height: 28)
         }
         .macClippyChromeButtonStyle()
-        .onHover { hovering in
-            guard MacClippyDockHoverPolicy.shouldApplyHover(
-                hovering,
-                pressedMouseButtons: NSEvent.pressedMouseButtons
-            ) else { return }
-            isHovered = hovering
+        .onContinuousHover { phase in
+            isHovered = MacClippyDockHoverPolicy.isHovering(phase)
         }
         .accessibilityLabel(accessibilityLabel)
     }

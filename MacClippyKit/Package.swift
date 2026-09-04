@@ -9,6 +9,7 @@ let package = Package(
     products: [
         .library(name: "MacClippyCore", targets: ["MacClippyCore"]),
         .library(name: "MacClippyPlatform", targets: ["MacClippyPlatform"]),
+        .executable(name: "macclippy", targets: ["macclippy"]),
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.0.0"),
@@ -20,6 +21,13 @@ let package = Package(
                 .product(name: "GRDB", package: "GRDB.swift"),
             ],
             path: "Sources/MacClippyCore"
+        ),
+        .executableTarget(
+            name: "macclippy",
+            dependencies: [
+                "MacClippyCore",
+            ],
+            path: "Sources/macclippy"
         ),
         .target(
             name: "MacClippyPlatform",

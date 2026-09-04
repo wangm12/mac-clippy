@@ -529,7 +529,7 @@ final class MacClippyRepresentationsTests: XCTestCase {
         _ = try ClipboardStore(database: database, deviceKey: testKey())
         XCTAssertEqual(
             try appliedMigrations(in: database),
-            ["001-clipboard-core", "002-clipboard-representations", "003-clipboard-query-indexes", "004-deletion-journal", "005-deletion-records"]
+            ["001-clipboard-core", "002-clipboard-representations", "003-clipboard-query-indexes", "004-deletion-journal", "005-deletion-records", "006-capture-content-hash", "007-structured-search-indexes", "008-search-and-storage-metadata"]
         )
 
         // The side table exists and has the expected columns, including the

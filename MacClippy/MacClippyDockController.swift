@@ -15,9 +15,34 @@ struct MacClippyDockAnimationTransaction: Equatable {
     let operation: Operation
 }
 
+enum MacClippyDockToggleSource: Equatable {
+    case hotKey
+    case statusItem
+}
+
+enum MacClippyDockToggleAction: Equatable {
+    case show
+    case hide
+    case ignore
+}
+
 enum MacClippyDockTogglePolicy {
     static func shouldHide(panelIsVisible: Bool) -> Bool {
         panelIsVisible
+    }
+
+    static func action(
+        source: MacClippyDockToggleSource,
+        panelIsVisible: Bool,
+        isClosing: Bool
+    ) -> MacClippyDockToggleAction {
+        if isClosing {
+            // The status-item mouseDown already hid the panel through the
+            // local outside-click monitor. Reopening that same click flashes.
+            // A hotkey during the exit animation is a new explicit open.
+            return source == .hotKey ? .show : .ignore
+        }
+        return panelIsVisible ? .hide : .show
     }
 }
 
@@ -61,7 +86,7 @@ enum MacClippyDockKeyboardOwnershipPolicy {
 final class MacClippySnippetEditorWindowCoordinator: NSObject, NSWindowDelegate {
     private var window: NSWindow?
 
-    func present(onCreate: @escaping (String, String?, String, @escaping (Bool) -> Void) -> Void) {
+    func present(onCreate: @escaping (String, String?, String, String?, @escaping (Bool) -> Void) -> Void) {
         if let window {
             bringToFront(window)
             return
@@ -74,7 +99,7 @@ final class MacClippySnippetEditorWindowCoordinator: NSObject, NSWindowDelegate 
             )
         )
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 440, height: 410),
+            contentRect: NSRect(x: 0, y: 0, width: 440, height: 468),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -141,9 +166,10 @@ final class MacClippyDockController {
     var keyMonitor: Any?
     var keyUpMonitor: Any?
     var spaceChangeObserver: NSObjectProtocol?
-    var screenParametersObserver: NSObjectProtocol?
     var keyWindowObserver: NSObjectProtocol?
+    var pendingDisplayEvent: MacClippyDisplayLifecycleEvent?
     var ignoreOutsideClicksUntil = Date.distantPast
+    var statusItemScreenFrame: (() -> CGRect?)?
     var isClosing = false
     var monitorGeneration: UInt = 0
     var animationGeneration: UInt = 0

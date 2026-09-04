@@ -50,17 +50,30 @@ final class MacClippyDockModel: ObservableObject {
     @Published var query = "" {
         didSet {
             guard oldValue != query else { return }
-            highlightTerms = MacClippySearchGrammar.parse(query).bareTerms
+            applySearchQuery(query)
             if !selection.isEmpty || allSelectedRecordIDs != nil {
                 invalidateAllSelectionScope()
             }
             scheduleSnippetFilter()
-            scheduleReload()
+            // Pinboard search is local to the selected board. History reload
+            // stays gated so beginSession() can clear `query` before the
+            // session is marked active without issuing a second history load.
+            if case .pinboard = selectedTab {
+                scheduleReload()
+            } else if MacClippyDockSessionOpenPolicy.shouldScheduleReloadForQueryChange(
+                isSessionActive: isSessionActive
+            ) {
+                scheduleReload()
+            }
         }
     }
     // Parsed once per query change so card highlight does not re-parse the
     // grammar on every carousel refresh.
     var highlightTerms: [String] = []
+    @Published var searchFilterChips: [MacClippySearchFilterChip] = []
+    @Published var searchFilterSuggestions: [MacClippySearchFilterChip] = MacClippySearchFilterChipPolicy.suggestions(
+        for: MacClippySearchGrammar.Query()
+    )
 
     @Published var historyItems: [MacClippyHistoryEntry] = []
     @Published var snippets: [MacClippySnippetEntry] = []
@@ -76,7 +89,9 @@ final class MacClippyDockModel: ObservableObject {
     // change. Recomputed only when the visible list changes (reload/tab switch).
     @Published var dedupRunCounts: [RecordID: Int] = [:]
     @Published var selectedTab: MacClippyDockTab = .history
+    @Published var hiddenSmartListIDs: Set<String> = []
     @Published var isLoading = false
+    @Published var hasCompletedInitialPaint = false
     // Keep failures scoped to the surface that can recover them. A copy or
     // preview failure must never replace an otherwise healthy history list.
     @Published var historyLoadError: String?
@@ -148,6 +163,11 @@ final class MacClippyDockModel: ObservableObject {
     @Published var selection = MacClippyDockSelectionState()
 
     let runtime: MacClippyRuntime
+    let defaults: UserDefaults
+
+    var visibleSmartLists: [MacClippySmartList] {
+        MacClippySmartListPolicy.visibleCatalog(hiddenIDs: hiddenSmartListIDs)
+    }
     let workQueue = DispatchQueue(label: "com.macallyouneed.macclippy.dock", qos: .userInitiated)
     let reloadQueue = DispatchQueue(label: "com.macallyouneed.macclippy.reload", qos: .userInitiated)
     let previewQueue = DispatchQueue(label: "com.macallyouneed.macclippy.preview", qos: .userInitiated)
@@ -217,8 +237,10 @@ final class MacClippyDockModel: ObservableObject {
         let pinboards: [MacClippyPinboardEntry]?
     }
 
-    init(runtime: MacClippyRuntime) {
+    init(runtime: MacClippyRuntime, defaults: UserDefaults = .standard) {
         self.runtime = runtime
+        self.defaults = defaults
+        hiddenSmartListIDs = MacClippySmartListPolicy.hiddenIDs(from: defaults)
         thumbnailLoader = MacClippyDockModel.makeThumbnailLoader(runtime: runtime)
         let observer = NotificationCenter.default.addObserver(
             forName: .macClippyHistoryDidChange,
@@ -254,6 +276,36 @@ final class MacClippyDockModel: ObservableObject {
 
     func dismissModal() {
         modal = nil
+    }
+
+    func removeSearchFilter(token: String) {
+        query = MacClippySearchFilterChipPolicy.removing(token: token, from: query)
+    }
+
+    func appendSearchFilter(token: String) {
+        query = MacClippySearchFilterChipPolicy.appending(token: token, to: query)
+    }
+
+    func toggleSmartList(_ list: MacClippySmartList) {
+        query = MacClippySmartListPolicy.apply(list, to: query)
+        if MacClippySmartListPolicy.isActive(list, in: query), selectedTab == .snippets {
+            selectTab(.history)
+        }
+    }
+
+    func hideSmartList(_ list: MacClippySmartList) {
+        if MacClippySmartListPolicy.isActive(list, in: query) {
+            query = MacClippySmartListPolicy.apply(list, to: query)
+        }
+        hiddenSmartListIDs = MacClippySmartListPolicy.hiding(list, in: hiddenSmartListIDs)
+        MacClippySmartListPolicy.persist(hiddenIDs: hiddenSmartListIDs, to: defaults)
+    }
+
+    private func applySearchQuery(_ query: String) {
+        let parsed = MacClippySearchGrammar.parse(query)
+        highlightTerms = MacClippySearchFilterChipPolicy.ocrHighlightTerms(from: parsed)
+        searchFilterChips = MacClippySearchFilterChipPolicy.chips(from: parsed)
+        searchFilterSuggestions = MacClippySearchFilterChipPolicy.suggestions(for: parsed)
     }
 
     deinit {

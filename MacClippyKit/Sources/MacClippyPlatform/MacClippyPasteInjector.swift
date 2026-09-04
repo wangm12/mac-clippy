@@ -10,6 +10,15 @@ public enum MacClippyPasteInjectionResult: Equatable, Sendable {
 
 public typealias PasteInjectionResult = MacClippyPasteInjectionResult
 
+extension Notification.Name {
+    public static let macClippyWillInjectPasteKeystroke = Notification.Name(
+        "com.macallyouneed.macclippy.willInjectPasteKeystroke"
+    )
+    public static let macClippyDidInjectPasteKeystroke = Notification.Name(
+        "com.macallyouneed.macclippy.didInjectPasteKeystroke"
+    )
+}
+
 public final class MacClippyPasteInjector {
     private struct PasteboardSnapshot {
         let items: [[(type: NSPasteboard.PasteboardType, data: Data)]]
@@ -55,6 +64,10 @@ public final class MacClippyPasteInjector {
         isProcessTrusted()
     }
 
+    public func currentPlainText() -> String? {
+        pasteboard.string(forType: .string)
+    }
+
     public func prepareText(
         _ text: String,
         gate: MacClippyPasteInjectionGate? = nil
@@ -91,7 +104,6 @@ public final class MacClippyPasteInjector {
         }
     }
 
-    @discardableResult
     private func prepareLocked(
         _ content: MacClippyPasteboardContent,
         writeSentinel: MacClippyPasteboardWriteSentinel?
@@ -213,7 +225,9 @@ public final class MacClippyPasteInjector {
         // trigger immediately before Cmd+V. All failure paths above return
         // before the hook, preserving the original user input.
         beforePaste?()
+        postPasteKeystrokeNotification(.macClippyWillInjectPasteKeystroke)
         postEvents(keyDown, keyUp)
+        postPasteKeystrokeNotification(.macClippyDidInjectPasteKeystroke)
         return .injected
     }
 
@@ -278,5 +292,15 @@ public final class MacClippyPasteInjector {
         }
         writeSentinel?.cancel(changeCount: expectedAfterClear)
         return false
+    }
+
+    private func postPasteKeystrokeNotification(_ name: Notification.Name) {
+        if Thread.isMainThread {
+            NotificationCenter.default.post(name: name, object: self)
+        } else {
+            DispatchQueue.main.sync {
+                NotificationCenter.default.post(name: name, object: self)
+            }
+        }
     }
 }

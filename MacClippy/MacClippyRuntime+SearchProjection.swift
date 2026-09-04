@@ -171,11 +171,9 @@ extension MacClippyRuntime {
         var bodyMetas: [ClipboardItemMeta] = []
         bodyMetas.reserveCapacity(metas.count)
         for meta in metas {
-            // Text/HTML/RTF cards only need the persisted preview. Kind
-            // validation still decrypts images, files, and records whose
-            // stored kind is missing. Reconciliation already checks envelope
-            // kinds, so pagination must not decode rich-text bodies just to
-            // show a 120-character card.
+            // Visible pages stay on meta+preview for every stored kind.
+            // Decrypt envelopes and clipboard_representations only when
+            // contentKind is missing; copy/paste and details still decode.
             guard let entry = metadataOnlyHistoryEntry(for: meta) else {
                 bodyMetas.append(meta)
                 continue
@@ -272,7 +270,10 @@ extension MacClippyRuntime {
         return MacClippySearchGrammar.SearchRecord(
             meta: meta,
             contentKind: kind,
-            sourceAppDisplayName: MacClippySourceAppResolver.displayName(for: meta.sourceAppBundleID)
+            sourceAppDisplayName: MacClippySourceAppSearch.preferredDisplayName(
+                stored: meta.sourceAppDisplayName,
+                resolved: MacClippySourceAppResolver.displayName(for: meta.sourceAppBundleID)
+            )
         )
     }
 }

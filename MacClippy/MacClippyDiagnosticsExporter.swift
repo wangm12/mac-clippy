@@ -93,12 +93,17 @@ enum MacClippyDiagnosticsExporter {
             ),
             databases: databases,
             blobs: blobSummary,
-            recentEvents: MacClippyDiagnosticsRecorder.shared.recentEvents(),
+            recentEvents: recentDiagnosticEvents(),
             metrics: MacClippyDiagnosticsRecorder.shared.metricSnapshot()
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(export).write(to: url, options: .atomic)
+    }
+
+    private static func recentDiagnosticEvents() -> [MacClippyDiagnosticsEvent] {
+        let persisted = MacClippyDiagnosticsJournal.shared.recentEvents()
+        return persisted.isEmpty ? MacClippyDiagnosticsRecorder.shared.recentEvents() : persisted
     }
 
     private struct DatabaseDefinition {

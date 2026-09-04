@@ -75,7 +75,7 @@ public final class MacClippyOCRService {
     // OCR accuracy does not improve enough from decoding a clipboard image at
     // poster-sized resolution to justify the peak memory cost. Keep the full
     // source data for paste/preview; only the Vision input is bounded.
-    public static let maxImagePixelSize = 2_048
+    public static let maxImagePixelSize = MacClippyOCRSchedulePolicy.recognitionMaxPixelSize
 
     public init() {}
 
@@ -97,7 +97,9 @@ public final class MacClippyOCRService {
 
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceThumbnailMaxPixelSize: maxImagePixelSize,
+            kCGImageSourceThumbnailMaxPixelSize: MacClippyOCRSchedulePolicy.recognitionPixelLimit(
+                sourceMaxPixelSize: maxImagePixelSize
+            ),
             kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceShouldCacheImmediately: true
         ]

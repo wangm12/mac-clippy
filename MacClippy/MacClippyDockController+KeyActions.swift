@@ -12,7 +12,7 @@ extension MacClippyDockController {
         case .dismissModal, .enterSearch, .exitSearch, .closeDock, .showPreview, .hidePreview,
              .showDetails, .hideDetails, .editContent, .rename, .cancelDetailsEdit:
             applyNavigationAction(action)
-        case .copy, .moveFocus, .extendRange, .paste:
+        case .copy, .moveFocus, .extendRange, .paste(_):
             applyClipboardAction(action)
         case .appendSearch, .deleteSearchCharacter:
             applySearchAction(action)
@@ -75,7 +75,7 @@ extension MacClippyDockController {
         case .copy: model.copyFocused()
         case let .moveFocus(direction): moveFocusedPreview(direction: direction)
         case let .extendRange(direction): model.extendRangeByStep(direction)
-        case .paste: pasteFocusedSelection()
+        case let .paste(plain): pasteFocusedSelection(plain: plain)
         default: break
         }
     }
@@ -101,11 +101,11 @@ extension MacClippyDockController {
         }
     }
 
-    private func pasteFocusedSelection() {
+    private func pasteFocusedSelection(plain: Bool) {
         if model.hasMultipleSelection {
             model.pasteSelectedAll(completion: { [weak self] in self?.hide() })
         } else {
-            model.pasteFocused(completion: { [weak self] in self?.hide() })
+            model.pasteFocused(plain: plain, completion: { [weak self] in self?.hide() })
         }
     }
 }

@@ -170,7 +170,9 @@ extension MacClippyDockModel {
         resetPinboardSearchState()
         let query = query
         let runtimeReference = runtime
-        isLoading = true
+        isLoading = MacClippyDockSessionOpenPolicy.shouldPublishLoading(
+            hasVisibleSnapshot: !historyItems.isEmpty
+        )
         clearHistoryError()
         clearPageError()
 
@@ -237,6 +239,14 @@ extension MacClippyDockModel {
                 pageError = message
             }
         }
+    }
+
+    func noteCardListAppeared() {
+        hasCompletedInitialPaint = true
+    }
+
+    func prepareForSurfaceRebuild() {
+        hasCompletedInitialPaint = false
     }
 
     func scheduleReload() {

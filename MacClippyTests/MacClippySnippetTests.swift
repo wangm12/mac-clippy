@@ -67,7 +67,20 @@ final class MacClippySnippetTests: XCTestCase {
         XCTAssertEqual(snippet.name, "Email")
         XCTAssertEqual(snippet.trigger, ";email")
         XCTAssertEqual(snippet.body, "Hello from mac-clippy")
+        XCTAssertNil(snippet.folder)
         XCTAssertEqual(try runtime.snippets().map(\.id), [snippet.id])
+    }
+
+    func testCreateSnippetPersistsNormalizedFolder() throws {
+        let snippet = try runtime.createSnippet(
+            name: "Email",
+            trigger: nil,
+            body: "Hello {{date}}",
+            folder: " Work / Email "
+        )
+
+        XCTAssertEqual(snippet.folder, "Work/Email")
+        XCTAssertEqual(try runtime.snippets().first?.folder, "Work/Email")
     }
 
     func testCreateSnippetManuallyRejectsBlankNameAndBody() throws {

@@ -156,6 +156,31 @@ final class MacClippyPasteInjectorTests: XCTestCase {
         XCTAssertEqual(order, ["beforePaste", "paste"])
     }
 
+    func testInjectPostsWillAndDidAroundPasteEvents() {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("MacClippyPasteInjectNotifications-\(UUID().uuidString)"))
+        XCTAssertTrue(pasteboard.setString("original", forType: .string))
+        var order: [String] = []
+        let center = NotificationCenter.default
+        let will = center.addObserver(forName: .macClippyWillInjectPasteKeystroke, object: nil, queue: nil) { _ in
+            order.append("will")
+        }
+        let did = center.addObserver(forName: .macClippyDidInjectPasteKeystroke, object: nil, queue: nil) { _ in
+            order.append("did")
+        }
+        defer {
+            center.removeObserver(will)
+            center.removeObserver(did)
+        }
+        let injector = MacClippyPasteInjector(
+            pasteboard: pasteboard,
+            isProcessTrusted: { true },
+            postEvents: { _, _ in order.append("paste") }
+        )
+
+        XCTAssertEqual(injector.inject(text: "replacement"), .injected)
+        XCTAssertEqual(order, ["will", "paste", "did"])
+    }
+
     func testClosedSideEffectGatePreventsPasteboardWritesAndEvents() {
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("MacClippyPasteGate-\(UUID().uuidString)"))
         XCTAssertTrue(pasteboard.setString("original", forType: .string))

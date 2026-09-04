@@ -329,6 +329,50 @@ final class MacClippyHistoryPaginationTests: XCTestCase {
         XCTAssertEqual(model.historyItems.map(\.id), [matching.id])
     }
 
+    func testHistoryPageProjectsEveryKindFromMetadataWithoutDecryptingPayloads() throws {
+        let text = try runtime.appendTestRecord(
+            .text("visible page text"),
+            representations: [
+                MacClippyClipboardRepresentation(
+                    uti: "public.utf8-plain-text",
+                    payloadBytes: Data("visible page text".utf8)
+                ),
+                MacClippyClipboardRepresentation(
+                    uti: "com.example.custom",
+                    payloadBytes: Data(repeating: 7, count: 2_048)
+                )
+            ]
+        )
+        let image = try runtime.appendTestRecord(.image(blobID: "unused", width: 12, height: 34))
+        let files = try runtime.appendTestRecord(.files([URL(fileURLWithPath: "/tmp/clip.pdf")]))
+
+        let representationDecrypts = runtime.clipboardStore.representationPayloadDecryptCount
+        let envelopeDecrypts = runtime.clipboardStore.recordEnvelopeDecryptCount
+
+        let page = try runtime.historyPage(limit: 16, query: "")
+        let textEntry = try XCTUnwrap(page.items.first { $0.id == text.id })
+        let imageEntry = try XCTUnwrap(page.items.first { $0.id == image.id })
+        let fileEntry = try XCTUnwrap(page.items.first { $0.id == files.id })
+
+        XCTAssertEqual(textEntry.preview, String(text.preview.prefix(2_000)))
+        XCTAssertEqual(imageEntry.contentKind, .image)
+        XCTAssertEqual(imageEntry.imageDimensions, CGSize(width: 12, height: 34))
+        XCTAssertEqual(fileEntry.contentKind, .files)
+        XCTAssertEqual(fileEntry.preview, "clip.pdf")
+        XCTAssertEqual(fileEntry.fileURLs, [URL(fileURLWithPath: "/tmp/clip.pdf")])
+        XCTAssertEqual(fileEntry.typeMetadataSubtitle, "1 file")
+        XCTAssertEqual(
+            runtime.clipboardStore.representationPayloadDecryptCount,
+            representationDecrypts,
+            "visible pages must not decrypt clipboard_representations"
+        )
+        XCTAssertEqual(
+            runtime.clipboardStore.recordEnvelopeDecryptCount,
+            envelopeDecrypts,
+            "visible pages must stay on meta+preview when contentKind is stored"
+        )
+    }
+
     func testHTMLHistoryPageUsesPersistedPreviewInsteadOfDecodingTheBody() throws {
         let html = "<p>" + String(repeating: "Hello ", count: 400) + "</p>"
         let meta = try runtime.appendTestRecord(.html(html))

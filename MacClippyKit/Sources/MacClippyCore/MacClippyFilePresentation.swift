@@ -45,6 +45,35 @@ public enum MacClippyFilePresentation {
         return first.isEmpty ? title(fileCount: urls.count) : "\(title(fileCount: urls.count)) · \(first)"
     }
 
+    /// Machine preview so a metadata-only dock page can recover file URLs
+    /// without opening the encrypted envelope. Cards display
+    /// `displayPreview(fromStoredPreview:)`.
+    public static let storedFilePreviewPrefix = "\u{16}files\u{1f}"
+
+    public static func persistPreview(for urls: [URL]) -> String {
+        storedFilePreviewPrefix + urls.map { url in
+            url.isFileURL ? url.path : url.absoluteString
+        }.joined(separator: "\u{1e}")
+    }
+
+    public static func fileURLs(fromStoredPreview preview: String) -> [URL] {
+        guard preview.hasPrefix(storedFilePreviewPrefix) else { return [] }
+        let payload = preview.dropFirst(storedFilePreviewPrefix.count)
+        guard !payload.isEmpty else { return [] }
+        return payload.split(separator: "\u{1e}", omittingEmptySubsequences: false).compactMap { part in
+            let value = String(part)
+            if value.contains("://") {
+                return URL(string: value)
+            }
+            return URL(fileURLWithPath: value)
+        }
+    }
+
+    public static func displayPreview(fromStoredPreview preview: String) -> String {
+        let urls = fileURLs(fromStoredPreview: preview)
+        return urls.isEmpty ? preview : storePreview(for: urls)
+    }
+
     public static func displayName(for url: URL) -> String {
         let name = url.lastPathComponent
         return name.isEmpty ? url.path : name

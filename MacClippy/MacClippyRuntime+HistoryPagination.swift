@@ -234,7 +234,7 @@ extension MacClippyRuntime {
             guard !hits.isEmpty else { break }
 
             let metasByID = Dictionary(uniqueKeysWithValues: metas.map { ($0.id, $0) })
-            // Body decryption and DTO construction happen outside storeLock.
+            // History entries project from metadata and stored preview first.
             let entriesByID = try entries(for: metas, validateContentKind: true)
             for (index, hit) in hits.enumerated() {
                 guard !shouldCancel() else {

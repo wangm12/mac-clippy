@@ -223,6 +223,41 @@ final class MacClippyRecoveryTests: XCTestCase {
         let restored = try MacClippyBackup.restore(from: snapshotURL, to: restoredURL)
         XCTAssertEqual(restored.databaseRowCounts, validation.databaseRowCounts)
         XCTAssertTrue(FileManager.default.fileExists(atPath: restoredURL.appendingPathComponent("blobs/\(blobID).bin").path))
+
+        let liveRoot = root.appendingPathComponent("live", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: liveRoot.appendingPathComponent("databases", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try Data("stale".utf8).write(to: liveRoot.appendingPathComponent("databases/clipboard.sqlite"))
+        try FileManager.default.createDirectory(
+            at: liveRoot.appendingPathComponent("thumbnails", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try Data("thumb".utf8).write(to: liveRoot.appendingPathComponent("thumbnails/old.bin"))
+
+        let installed = try MacClippyBackup.installIntoLiveRoot(from: snapshotURL, liveRootURL: liveRoot)
+        XCTAssertEqual(installed.databaseRowCounts, validation.databaseRowCounts)
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: liveRoot.appendingPathComponent("databases/clipboard.sqlite").path
+            )
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: liveRoot.appendingPathComponent("blobs/\(blobID).bin").path
+            )
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: liveRoot.appendingPathComponent("thumbnails/old.bin").path
+            )
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: liveRoot.appendingPathComponent("clipboard.sqlite").path
+            )
+        )
     }
 
     func testBackupValidationRejectsManifestPathTraversal() throws {

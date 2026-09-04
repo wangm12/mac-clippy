@@ -26,11 +26,13 @@ final class MacClippyMotionTests: XCTestCase {
         XCTAssertLessThan(MacClippyMotion.panelShadowOpacityStart, MacClippyMotion.panelShadowOpacity)
     }
 
-    func testHoverDoesNotClearWhileTheMouseButtonIsDown() {
+    func testHoverLeaveAlwaysAppliesEvenWhileAButtonIsDown() {
         XCTAssertTrue(MacClippyDockHoverPolicy.shouldApplyHover(true, pressedMouseButtons: 0))
         XCTAssertTrue(MacClippyDockHoverPolicy.shouldApplyHover(true, pressedMouseButtons: 1))
         XCTAssertTrue(MacClippyDockHoverPolicy.shouldApplyHover(false, pressedMouseButtons: 0))
-        XCTAssertFalse(MacClippyDockHoverPolicy.shouldApplyHover(false, pressedMouseButtons: 1))
+        XCTAssertTrue(MacClippyDockHoverPolicy.shouldApplyHover(false, pressedMouseButtons: 1))
+        XCTAssertFalse(MacClippyDockHoverPolicy.isHovering(.ended))
+        XCTAssertTrue(MacClippyDockHoverPolicy.isHovering(.active(.zero)))
     }
 
     func testInteractiveEffectsStaySubtle() {

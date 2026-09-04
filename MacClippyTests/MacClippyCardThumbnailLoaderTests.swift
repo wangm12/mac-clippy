@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import ImageIO
 import XCTest
 
@@ -150,6 +151,66 @@ final class MacClippyCardThumbnailLoaderTests: XCTestCase {
         XCTAssertNotNil(loader.cachedImage(id: id, maxPixelSize: 32))
     }
 
+    func testDiskCacheAvoidsRedecodingAfterSessionEnd() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MacClippyThumbLoader-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let diskCache = MacClippyThumbnailDiskCache(
+            directoryURL: directory,
+            key: SymmetricKey(data: Data(repeating: 3, count: 32))
+        )
+        let id = RecordID.generate()
+        let loadCount = MacClippyLockedCounter()
+        let firstDone = expectation(description: "first decode")
+        let secondDone = expectation(description: "disk hit")
+        let loader = makeLoader(diskCache: diskCache) { _, _, _ in
+            loadCount.increment()
+            return Self.pngImage()
+        }
+
+        _ = loader.load(id: id, maxPixelSize: 480) { image in
+            XCTAssertNotNil(image)
+            firstDone.fulfill()
+        }
+        wait(for: [firstDone], timeout: 2)
+        XCTAssertEqual(loadCount.value, 1)
+
+        loader.resetForSessionEnd()
+        XCTAssertNil(loader.cachedImage(id: id, maxPixelSize: 480))
+
+        _ = loader.load(id: id, maxPixelSize: 480) { image in
+            XCTAssertNotNil(image)
+            secondDone.fulfill()
+        }
+        wait(for: [secondDone], timeout: 2)
+        XCTAssertEqual(loadCount.value, 1, "reopening the dock must reuse the persisted 480px thumb")
+        XCTAssertNotNil(loader.cachedImage(id: id, maxPixelSize: 480))
+    }
+
+    func testResetForSessionEndResumesWaitersForCancelledFlights() throws {
+        let id = RecordID.generate()
+        let started = expectation(description: "thumbnail work started")
+        let waiterDone = expectation(description: "session-end waiter resumed")
+        let gate = DispatchSemaphore(value: 0)
+        let loader = makeLoader { _, _, isCancelled in
+            started.fulfill()
+            gate.wait()
+            return isCancelled() ? nil : Self.pngImage()
+        }
+
+        _ = loader.load(id: id, maxPixelSize: 32) { image in
+            XCTAssertNil(image)
+            waiterDone.fulfill()
+        }
+        wait(for: [started], timeout: 2)
+        loader.resetForSessionEnd()
+        wait(for: [waiterDone], timeout: 2)
+        gate.signal()
+        XCTAssertNil(loader.cachedImage(id: id, maxPixelSize: 32))
+    }
+
     func testResetForSessionEndClearsCachedThumbnails() throws {
         let id = RecordID.generate()
         let finished = expectation(description: "thumbnail cached")
@@ -167,6 +228,7 @@ final class MacClippyCardThumbnailLoaderTests: XCTestCase {
     }
 
     private func makeLoader(
+        diskCache: MacClippyThumbnailDiskCache? = nil,
         loadImage: @escaping MacClippyCardThumbnailLoader.LoadImage
     ) -> MacClippyCardThumbnailLoader {
         let queue = OperationQueue()
@@ -175,7 +237,8 @@ final class MacClippyCardThumbnailLoaderTests: XCTestCase {
         return MacClippyCardThumbnailLoader(
             cache: NSCache<NSString, MacClippyCardThumbnailLoader.CacheEntry>(),
             queue: queue,
-            loadImage: loadImage
+            loadImage: loadImage,
+            diskCache: diskCache
         )
     }
 

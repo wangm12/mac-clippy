@@ -101,6 +101,7 @@ struct MacClippySnippetEntry: Identifiable, Sendable {
         normalizedSearchText = [
             String(snippet.name.prefix(Self.searchNameLimit)),
             String((snippet.trigger ?? "").prefix(Self.searchTriggerLimit)),
+            String((snippet.folder ?? "").prefix(Self.searchNameLimit)),
             String(snippet.body.prefix(Self.searchBodyLimit))
         ]
         .joined(separator: "\n")
@@ -110,6 +111,7 @@ struct MacClippySnippetEntry: Identifiable, Sendable {
     var id: RecordID { snippet.id }
     var name: String { snippet.name }
     var trigger: String? { snippet.trigger }
+    var folder: String? { snippet.folder }
     var body: String { snippet.body }
 }
 

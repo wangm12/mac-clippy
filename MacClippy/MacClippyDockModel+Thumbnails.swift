@@ -76,7 +76,8 @@ extension MacClippyDockModel {
                     maxPixelSize: maxPixelSize,
                     isCancelled: isCancelled
                 )
-            }
+            },
+            diskCache: runtime.thumbnailDiskCache
         )
     }
 

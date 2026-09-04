@@ -42,7 +42,7 @@ extension MacClippyClipboardStore {
 
             var sql = """
                 SELECT id, created, modified, device_id, lamport, kind, content_kind, preview, source_app,
-                       frequency, last_accessed, custom_label, detected_type, ocr_text
+                       source_app_name, frequency, last_accessed, custom_label, detected_type, ocr_text
                 FROM clipboard_records
             """
             if !predicates.isEmpty {
@@ -71,7 +71,7 @@ extension MacClippyClipboardStore {
         return try database.queue.read { connection in
             var sql = """
                 SELECT id, created, modified, device_id, lamport, kind, content_kind, preview, source_app,
-                       frequency, last_accessed, custom_label, detected_type, ocr_text
+                       source_app_name, frequency, last_accessed, custom_label, detected_type, ocr_text
                 FROM clipboard_records
             """
             var predicates: [String] = []
@@ -116,8 +116,17 @@ extension MacClippyClipboardStore {
             rawArguments.append(contentKind.rawValue)
         }
         for value in filter.sourceAppContains {
-            predicates.append("LOWER(source_app) LIKE LOWER(?) ESCAPE '\\'")
-            rawArguments.append(likePattern(for: value))
+            predicates.append(
+                """
+                (
+                    LOWER(IFNULL(source_app, '')) LIKE LOWER(?) ESCAPE '\\'
+                    OR LOWER(IFNULL(source_app_name, '')) LIKE LOWER(?) ESCAPE '\\'
+                )
+                """
+            )
+            let pattern = likePattern(for: value)
+            rawArguments.append(pattern)
+            rawArguments.append(pattern)
         }
         for value in filter.labelContains {
             predicates.append("LOWER(custom_label) LIKE LOWER(?) ESCAPE '\\'")

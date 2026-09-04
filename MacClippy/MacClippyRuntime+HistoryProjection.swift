@@ -95,7 +95,10 @@ extension MacClippyRuntime {
                 preview = String(meta.preview.prefix(2_000))
             }
         case .files:
-            preview = String(meta.preview.prefix(2_000))
+            preview = String(
+                MacClippyFilePresentation.displayPreview(fromStoredPreview: meta.preview)
+                    .prefix(2_000)
+            )
         }
 
         let fileURLs: [URL]

@@ -4,6 +4,23 @@ import XCTest
 @testable import MacClippy
 import MacClippyCore
 
+private final class MacClippyLockedOCRCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    func increment() {
+        lock.lock()
+        count += 1
+        lock.unlock()
+    }
+
+    var value: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+}
+
 final class MacClippyRuntimeOCRConcurrencyTests: XCTestCase {
     func testQueuedOCRCancellationDrainsPendingJobs() throws {
         let controlledRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -185,6 +202,50 @@ final class MacClippyRuntimeOCRConcurrencyTests: XCTestCase {
             try controlledRuntime.history(limit: 10, query: "searchable recognized text").map(\.id),
             [record.id]
         )
+    }
+
+    func testOCRDefersUntilIdleAndNotOnLowPower() throws {
+        let controlledRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "MacClippyOCRScheduleTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: controlledRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: controlledRoot) }
+
+        let recognized = MacClippyLockedOCRCounter()
+        let recognizer: @Sendable (Data) async throws -> String = { _ in
+            recognized.increment()
+            return "scheduled OCR"
+        }
+        let controlledRuntime = try MacClippyRuntime(
+            paths: try MacClippyPaths(rootURL: controlledRoot),
+            ocrRecognizer: recognizer
+        )
+        defer {
+            controlledRuntime.stop()
+            controlledRuntime.closeForTesting()
+        }
+
+        let record = try controlledRuntime.appendTestRecord(.text("source"))
+        controlledRuntime.start()
+        controlledRuntime.setOCRScheduleConditionsForTest(secondsSinceLastInput: 0.1, isLowPowerMode: false)
+        controlledRuntime.enqueueScheduledOCRForTest(data: Data([1, 2, 3]), recordID: record.id)
+
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertEqual(recognized.value, 0)
+        XCTAssertEqual(controlledRuntime.pendingOCRJobsForTest(), 1)
+
+        controlledRuntime.setOCRScheduleConditionsForTest(secondsSinceLastInput: 30, isLowPowerMode: true)
+        controlledRuntime.flushDeferredOCRForTest()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertEqual(recognized.value, 0)
+
+        controlledRuntime.setOCRScheduleConditionsForTest(secondsSinceLastInput: 30, isLowPowerMode: false)
+        controlledRuntime.flushDeferredOCRForTest()
+        waitUntil(timeout: 3) {
+            recognized.value == 1
+        }
+        XCTAssertEqual(recognized.value, 1)
     }
 
     private func waitUntil(timeout: TimeInterval, condition: () -> Bool) {

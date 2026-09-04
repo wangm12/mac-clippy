@@ -19,6 +19,54 @@ public extension MacClippyPasteboardObserver {
         }
     }
 
+    func ignoreNextCopy() {
+        enqueueOnLifecycleQueue { [weak self] in
+            self?.ignoreNextCopyCount += 1
+        }
+    }
+
+    /// Cancels or rearms the poll timer without stopping the observer session.
+    /// Sleep uses this so the 50ms timer does not fire while screens are off.
+    /// `lastChangeCount` is left alone so a copy that lands during sleep is
+    /// still visible on the first poll after wake. Independent of privacy pause.
+    func setPollingSuspended(_ suspended: Bool) {
+        enqueueOnLifecycleQueue { [weak self] in
+            self?.applyPollingSuspended(suspended)
+        }
+    }
+
+    func isPollingSuspendedForTesting() -> Bool {
+        var suspended = false
+        onLifecycleQueue { [weak self] in
+            suspended = self?.pollingSuspended ?? false
+        }
+        return suspended
+    }
+
+    func hasPollingTimerForTesting() -> Bool {
+        var armed = false
+        onLifecycleQueue { [weak self] in
+            armed = self?.timer != nil
+        }
+        return armed
+    }
+
+    func pollIntervalForTesting() -> TimeInterval {
+        var interval: TimeInterval = 0
+        onLifecycleQueue { [weak self] in
+            interval = self?.pollInterval ?? 0
+        }
+        return interval
+    }
+
+    /// Changes the awake poll cadence. Sleep still owns cancel/rearm; this
+    /// only reschedules the timer when polling is already running.
+    func setPollActivity(_ activity: MacClippyPasteboardPollActivity) {
+        enqueueOnLifecycleQueue { [weak self] in
+            self?.applyPollActivity(activity)
+        }
+    }
+
     func start(handler: @escaping Handler) {
         start(projectionHandler: { change, _ in handler(change) })
     }
@@ -35,12 +83,9 @@ public extension MacClippyPasteboardObserver {
             self.stopOnLifecycleQueue()
             self.projectionHandler = projectionHandler
             self.lastChangeCount = self.reader.currentChangeCount()
-
-            let timer = DispatchSource.makeTimerSource(queue: self.queue)
-            timer.schedule(deadline: .now() + self.pollInterval, repeating: self.pollInterval)
-            timer.setEventHandler { [weak self] in self?.pollOnLifecycleQueue() }
-            self.timer = timer
-            timer.resume()
+            self.pollingSuspended = false
+            self.refreshPollActivityOnLifecycleQueue()
+            self.armPollingTimerOnLifecycleQueue()
         }
     }
 
@@ -88,12 +133,64 @@ public extension MacClippyPasteboardObserver {
     }
 
     private func stopOnLifecycleQueue() {
-        timer?.setEventHandler {}
-        timer?.cancel()
-        timer = nil
+        cancelPollingTimerOnLifecycleQueue()
+        pollingSuspended = false
+        ignoreNextCopyCount = 0
         projectionHandler = nil
         retryState.clearAll()
         writeSentinel?.reset()
+    }
+
+    private func refreshPollActivityOnLifecycleQueue() {
+        let sinceChange = lastObservedChangeAt.map { now().timeIntervalSince($0) }
+        applyPollActivity(
+            MacClippyPasteboardPollPolicy.activity(
+                secondsSinceLastUserInput: secondsSinceLastUserInput(),
+                secondsSinceLastObservedChange: sinceChange
+            )
+        )
+    }
+
+    private func noteObservedChangeOnLifecycleQueue() {
+        lastObservedChangeAt = now()
+        refreshPollActivityOnLifecycleQueue()
+    }
+
+    private func applyPollActivity(_ activity: MacClippyPasteboardPollActivity) {
+        let interval = MacClippyPasteboardPollPolicy.pollInterval(for: activity)
+        let intervalChanged = pollInterval != interval
+        pollActivity = activity
+        pollInterval = interval
+        guard intervalChanged else { return }
+        guard isLifecycleStarted(), !pollingSuspended, projectionHandler != nil else { return }
+        cancelPollingTimerOnLifecycleQueue()
+        armPollingTimerOnLifecycleQueue()
+    }
+
+    private func applyPollingSuspended(_ suspended: Bool) {
+        pollingSuspended = suspended
+        guard isLifecycleStarted() else { return }
+        if suspended {
+            cancelPollingTimerOnLifecycleQueue()
+            retryState.clearAll()
+            return
+        }
+        guard timer == nil, projectionHandler != nil else { return }
+        armPollingTimerOnLifecycleQueue()
+    }
+
+    private func cancelPollingTimerOnLifecycleQueue() {
+        timer?.setEventHandler {}
+        timer?.cancel()
+        timer = nil
+    }
+
+    private func armPollingTimerOnLifecycleQueue() {
+        let timer = DispatchSource.makeTimerSource(queue: self.queue)
+        timer.schedule(deadline: .now() + self.pollInterval, repeating: self.pollInterval)
+        timer.setEventHandler { [weak self] in self?.pollOnLifecycleQueue() }
+        self.timer = timer
+        timer.resume()
     }
 
     private func transitionLifecycle(started: Bool) -> UInt64 {
@@ -126,6 +223,8 @@ public extension MacClippyPasteboardObserver {
     private func pollOnLifecycleQueue() {
         let generation = lifecycleGenerationValue()
         guard isCurrentLifecycle(generation) else { return }
+        guard !pollingSuspended else { return }
+        refreshPollActivityOnLifecycleQueue()
         let observedChangeCount = reader.currentChangeCount()
         guard !capturePaused else {
             retryState.clear(changeCount: observedChangeCount)
@@ -142,21 +241,59 @@ public extension MacClippyPasteboardObserver {
         // The sentinel consumes the token on first match so a later external
         // write is never hidden. External content (including concealed,
         // transient, custom, and unknown UTIs) is never filtered here.
-        guard !consumeInternalWrite(changeCount: observedChangeCount) else { return }
-
-        // Cross-poll retry for lazy provider data. When a new changeCount
-        // arrives with advertised-but-unavailable UTIs, withhold
-        // lastChangeCount advancement (and thus delivery) and record the
-        // pending types so subsequent polls can re-read them. After the retry
-        // budget, deliver the change with every still-unavailable advertised
-        // UTI carried as an .unavailable marker instead of dropping the type.
         if let pending = pendingRetry {
+            guard !consumeInternalWrite(changeCount: observedChangeCount) else { return }
             processPendingRetry(pending, generation: generation)
             return
         }
 
         guard lastChangeCount != observedChangeCount else { return }
+
+        if let lastChangeCount,
+           MacClippyMissedChangeCountPolicy.hasMissedGenerations(
+            after: lastChangeCount,
+            observed: observedChangeCount
+           ) {
+            processCatchUp(
+                after: lastChangeCount,
+                observed: observedChangeCount,
+                generation: generation
+            )
+            return
+        }
+
+        guard !consumeInternalWrite(changeCount: observedChangeCount) else { return }
         processFreshChange(generation: generation)
+    }
+
+    private func processCatchUp(after lastSeen: Int, observed: Int, generation: UInt64) {
+        let counts = MacClippyMissedChangeCountPolicy.catchUpChangeCounts(
+            after: lastSeen,
+            observed: observed
+        )
+        for count in counts {
+            guard isCurrentLifecycle(generation) else { return }
+            if consumeInternalWrite(changeCount: count) { continue }
+            guard let change = reader.read(changeCount: count, shouldContinue: { [weak self] in
+                self?.isCurrentLifecycle(generation) ?? false
+            }) else {
+                markGenerationConsumed(count)
+                continue
+            }
+            guard change.changeCount == count else { continue }
+            processMaterializedChange(
+                change,
+                generation: generation,
+                requireCurrentMatch: count == observed
+            )
+        }
+    }
+
+    private func markGenerationConsumed(_ changeCount: Int) {
+        retryState.clear(changeCount: changeCount)
+        if lastChangeCount.map({ changeCount > $0 }) ?? true {
+            lastChangeCount = changeCount
+        }
     }
 
     private func consumeInternalWrite(changeCount: Int) -> Bool {
@@ -211,13 +348,24 @@ public extension MacClippyPasteboardObserver {
             self?.isCurrentLifecycle(generation) ?? false
         })
         guard isCurrentLifecycle(generation) else { return }
+        processMaterializedChange(change, generation: generation, requireCurrentMatch: true)
+    }
+
+    private func processMaterializedChange(
+        _ change: PasteboardChange,
+        generation: UInt64,
+        requireCurrentMatch: Bool
+    ) {
         let changeCount = change.changeCount
-        guard lastChangeCount != changeCount,
-              reader.currentChangeCount() == changeCount else {
-            // A pasteboard write raced materialization. The next poll reads
-            // the current generation from scratch.
-            return
+        guard lastChangeCount != changeCount else { return }
+        if requireCurrentMatch {
+            guard reader.currentChangeCount() == changeCount else {
+                // A pasteboard write raced materialization. The next poll reads
+                // the current generation from scratch.
+                return
+            }
         }
+        guard isCurrentLifecycle(generation) else { return }
 
         let unavailable = MacClippyPasteboardAvailability.unavailableTypes(in: change)
         guard !unavailable.isEmpty else {
@@ -236,6 +384,10 @@ public extension MacClippyPasteboardObserver {
     private func deliver(_ change: PasteboardChange, changeCount: Int) {
         guard isLifecycleStarted() else { return }
         lastChangeCount = changeCount
+        noteObservedChangeOnLifecycleQueue()
+        let ignore = MacClippyCapturePausePolicy.consumeIgnoreNext(ignoreNextCopyCount)
+        ignoreNextCopyCount = ignore.remaining
+        guard !ignore.shouldIgnore else { return }
         // Drop any retry state for older changeCounts; they can never be
         // observed again because changeCount is monotonic per pasteboard.
         for pendingChangeCount in retryState.stalePendingChangeCounts(below: changeCount) {
@@ -265,7 +417,7 @@ public extension MacClippyPasteboardObserver {
                 category: .capture,
                 code: .missedChangeCounts,
                 operation: "pasteboard_missed_change_counts",
-                recoveryAction: "continue_with_latest_change",
+                recoveryAction: "recover_intermediate_generations",
                 impact: "pasteboard_generation_gap"
             )
         )

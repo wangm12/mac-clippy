@@ -1,10 +1,46 @@
 import Carbon.HIToolbox
 import Foundation
 
-public struct MacClippyGlobalHotKeyDescriptor: Equatable, Sendable {
-    private static let keyCodeKey = "com.macallyouneed.macclippy.hotkey.keyCode"
-    private static let modifiersKey = "com.macallyouneed.macclippy.hotkey.modifiers"
+public enum MacClippyGlobalHotKeyRole: Sendable, Equatable {
+    case clipboardDock
+    case ignoreNextCopy
 
+    public var carbonHotKeyID: UInt32 {
+        switch self {
+        case .clipboardDock: 1
+        case .ignoreNextCopy: 2
+        }
+    }
+
+    fileprivate var keyCodeKey: String {
+        switch self {
+        case .clipboardDock:
+            return "com.macallyouneed.macclippy.hotkey.keyCode"
+        case .ignoreNextCopy:
+            return "com.macallyouneed.macclippy.hotkey.ignoreNext.keyCode"
+        }
+    }
+
+    fileprivate var modifiersKey: String {
+        switch self {
+        case .clipboardDock:
+            return "com.macallyouneed.macclippy.hotkey.modifiers"
+        case .ignoreNextCopy:
+            return "com.macallyouneed.macclippy.hotkey.ignoreNext.modifiers"
+        }
+    }
+
+    fileprivate var defaultDescriptor: MacClippyGlobalHotKeyDescriptor {
+        switch self {
+        case .clipboardDock:
+            return .defaultClipboard
+        case .ignoreNextCopy:
+            return .defaultIgnoreNextCopy
+        }
+    }
+}
+
+public struct MacClippyGlobalHotKeyDescriptor: Equatable, Sendable {
     public let keyCode: UInt32
     public let modifiers: UInt32
 
@@ -18,19 +54,31 @@ public struct MacClippyGlobalHotKeyDescriptor: Equatable, Sendable {
         modifiers: UInt32(cmdKey) | UInt32(shiftKey)
     )
 
-    public static func save(_ descriptor: Self, to defaults: UserDefaults = .standard) {
-        defaults.set(Int(descriptor.keyCode), forKey: keyCodeKey)
-        defaults.set(Int(descriptor.modifiers), forKey: modifiersKey)
+    public static let defaultIgnoreNextCopy = Self(
+        keyCode: UInt32(kVK_ANSI_C),
+        modifiers: UInt32(cmdKey) | UInt32(optionKey) | UInt32(shiftKey)
+    )
+
+    public static func save(
+        _ descriptor: Self,
+        to defaults: UserDefaults = .standard,
+        role: MacClippyGlobalHotKeyRole = .clipboardDock
+    ) {
+        defaults.set(Int(descriptor.keyCode), forKey: role.keyCodeKey)
+        defaults.set(Int(descriptor.modifiers), forKey: role.modifiersKey)
     }
 
-    public static func load(from defaults: UserDefaults = .standard) -> Self {
-        guard defaults.object(forKey: keyCodeKey) != nil,
-              defaults.object(forKey: modifiersKey) != nil else {
-            return .defaultClipboard
+    public static func load(
+        from defaults: UserDefaults = .standard,
+        role: MacClippyGlobalHotKeyRole = .clipboardDock
+    ) -> Self {
+        guard defaults.object(forKey: role.keyCodeKey) != nil,
+              defaults.object(forKey: role.modifiersKey) != nil else {
+            return role.defaultDescriptor
         }
         return Self(
-            keyCode: UInt32(defaults.integer(forKey: keyCodeKey)),
-            modifiers: UInt32(defaults.integer(forKey: modifiersKey))
+            keyCode: UInt32(defaults.integer(forKey: role.keyCodeKey)),
+            modifiers: UInt32(defaults.integer(forKey: role.modifiersKey))
         )
     }
 }
@@ -54,7 +102,7 @@ public enum MacClippyGlobalHotKeyError: Error, Equatable, LocalizedError, Sendab
 
 @MainActor
 public final class MacClippyGlobalHotKey {
-    private nonisolated static let eventHotKeyID = EventHotKeyID(signature: OSType(0x4D43_4C50), id: 1)
+    private static let eventSignature = OSType(0x4D43_4C50)
     private static let eventHandler: EventHandlerUPP = { _, event, userData in
         guard let event, let userData else { return noErr }
         let hotKey = Unmanaged<MacClippyGlobalHotKey>.fromOpaque(userData).takeUnretainedValue()
@@ -62,6 +110,7 @@ public final class MacClippyGlobalHotKey {
     }
 
     private var descriptor: MacClippyGlobalHotKeyDescriptor
+    private let eventHotKeyID: EventHotKeyID
     private let callback: @MainActor @Sendable () -> Void
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandlerRef: EventHandlerRef?
@@ -72,9 +121,11 @@ public final class MacClippyGlobalHotKey {
 
     public init(
         descriptor: MacClippyGlobalHotKeyDescriptor,
+        role: MacClippyGlobalHotKeyRole = .clipboardDock,
         callback: @escaping @MainActor @Sendable () -> Void
     ) {
         self.descriptor = descriptor
+        self.eventHotKeyID = EventHotKeyID(signature: Self.eventSignature, id: role.carbonHotKeyID)
         self.callback = callback
     }
 
@@ -103,7 +154,7 @@ public final class MacClippyGlobalHotKey {
         let registrationStatus = RegisterEventHotKey(
             descriptor.keyCode,
             descriptor.modifiers,
-            Self.eventHotKeyID,
+            eventHotKeyID,
             GetApplicationEventTarget(),
             0,
             &registeredHotKey
@@ -161,10 +212,17 @@ public final class MacClippyGlobalHotKey {
             nil,
             &receivedID
         )
-        guard parameterStatus == noErr,
-              receivedID.signature == Self.eventHotKeyID.signature,
-              receivedID.id == Self.eventHotKeyID.id else {
-            return noErr
+        switch MacClippyHotKeyRegistrationPolicy.eventDisposition(
+            parameterSucceeded: parameterStatus == noErr,
+            receivedSignature: receivedID.signature,
+            receivedID: receivedID.id,
+            expectedSignature: eventHotKeyID.signature,
+            expectedID: eventHotKeyID.id
+        ) {
+        case .notHandled:
+            return OSStatus(eventNotHandledErr)
+        case .handled:
+            break
         }
 
         DispatchQueue.main.async { @MainActor [weak self] in

@@ -323,7 +323,11 @@ extension MacClippyClipboardCardLabel {
         )
         if let url = urls.first, MacClippyFilePresentation.mediaKind(for: url) == .image {
             cardNamedPreview(
-                MacClippyFileThumbnail(url: url, pointSize: pointSize).equatable(),
+                MacClippyFileThumbnail(url: url, pointSize: pointSize)
+                    .equatable()
+                    .overlay(alignment: .bottom) {
+                        ocrHitOverlay(for: item)
+                    },
                 name: MacClippyDockCardVisibleNamePolicy.text(for: item)
             )
         } else if let url = urls.first {
@@ -345,9 +349,37 @@ extension MacClippyClipboardCardLabel {
     @ViewBuilder
     func cardImageBody(_ item: MacClippyHistoryEntry) -> some View {
         cardNamedPreview(
-            MacClippyCardImageThumbnail(itemID: item.id, load: loadThumbnail).equatable(),
+            MacClippyCardImageThumbnail(itemID: item.id, load: loadThumbnail)
+                .equatable()
+                .overlay(alignment: .bottom) {
+                    ocrHitOverlay(for: item)
+                },
             name: MacClippyDockCardVisibleNamePolicy.text(for: item)
         )
+    }
+
+    @ViewBuilder
+    func ocrHitOverlay(for item: MacClippyHistoryEntry) -> some View {
+        if let snippet = MacClippySearchFilterChipPolicy.ocrHitSnippet(
+            ocrText: item.meta.ocrText,
+            terms: context.highlightTerms
+        ) {
+            highlighted(
+                snippet,
+                font: .caption.weight(.semibold)
+            )
+            .lineLimit(2)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .frame(maxWidth: .infinity)
+            .background(
+                .ultraThinMaterial,
+                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+            )
+            .padding(4)
+            .accessibilityLabel("OCR match \(snippet)")
+        }
     }
 
     @ViewBuilder

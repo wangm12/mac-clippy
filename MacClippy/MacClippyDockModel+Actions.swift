@@ -5,11 +5,15 @@ import MacClippyPlatform
 import SwiftUI
 
 extension MacClippyDockModel {
-    func activate(_ item: MacClippyHistoryEntry, completion: @escaping @MainActor @Sendable () -> Void) {
+    func activate(
+        _ item: MacClippyHistoryEntry,
+        plain: Bool? = nil,
+        completion: @escaping @MainActor @Sendable () -> Void
+    ) {
         guard let index = visibleItems.firstIndex(where: { $0.id == item.id }) else { return }
         focusedIndex = index
         guard item.isPasteable else { return }
-        select(item, completion: completion)
+        select(item, plain: plain, completion: completion)
     }
 
     func activate(_ snippet: MacClippySnippetEntry, completion: @escaping @MainActor @Sendable () -> Void) {
@@ -41,12 +45,12 @@ extension MacClippyDockModel {
         focusedIndex = index
     }
 
-    func pasteFocused(completion: @escaping @MainActor @Sendable () -> Void) {
+    func pasteFocused(plain: Bool? = nil, completion: @escaping @MainActor @Sendable () -> Void) {
         if selectedTab == .snippets {
             guard let snippet = focusedSnippet else { return }
             activate(snippet, completion: completion)
         } else if let item = focusedItem {
-            activate(item, completion: completion)
+            activate(item, plain: plain, completion: completion)
         }
     }
 
@@ -272,6 +276,7 @@ extension MacClippyDockModel {
         name: String,
         trigger: String?,
         body: String,
+        folder: String? = nil,
         onSuccess: (@MainActor @Sendable () -> Void)? = nil,
         onFailure: (@MainActor @Sendable (String) -> Void)? = nil
     ) {
@@ -281,7 +286,7 @@ extension MacClippyDockModel {
 
         workQueue.async { [weak self, runtime] in
             let result = Result {
-                try runtime.createSnippet(name: name, trigger: trigger, body: body)
+                try runtime.createSnippet(name: name, trigger: trigger, body: body, folder: folder)
             }
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.sessionGeneration == session else { return }

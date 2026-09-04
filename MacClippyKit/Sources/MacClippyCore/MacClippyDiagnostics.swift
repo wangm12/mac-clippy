@@ -35,6 +35,14 @@ public enum MacClippyErrorCode: String, Codable, Sendable, CaseIterable {
     case recoveryFailed
     case launchAtLoginUpdateFailed
     case missedChangeCounts
+    case displayConfigurationChanged
+    case dockPresented
+    case debugLoginItemRefused
+}
+
+public enum MacClippyLogSeverity: String, Sendable {
+    case notice
+    case error
 }
 
 public struct MacClippyDiagnosticsEvent: Codable, Sendable, Equatable {
@@ -169,6 +177,27 @@ public final class MacClippyDiagnosticsRecorder: @unchecked Sendable {
 public enum MacClippyLog {
     private static let logger = Logger(subsystem: "com.macallyouneed.macclippy", category: "runtime")
 
+    public static func notice(
+        category: MacClippyLogCategory,
+        code: MacClippyErrorCode,
+        operation: String,
+        durationMilliseconds: Int? = nil,
+        retryCount: Int = 0,
+        recoveryAction: String? = nil,
+        impact: String? = nil
+    ) {
+        record(
+            category: category,
+            code: code,
+            operation: operation,
+            durationMilliseconds: durationMilliseconds,
+            retryCount: retryCount,
+            recoveryAction: recoveryAction,
+            impact: impact,
+            severity: .notice
+        )
+    }
+
     public static func record(
         category: MacClippyLogCategory,
         code: MacClippyErrorCode,
@@ -177,6 +206,28 @@ public enum MacClippyLog {
         retryCount: Int = 0,
         recoveryAction: String? = nil,
         impact: String? = nil
+    ) {
+        record(
+            category: category,
+            code: code,
+            operation: operation,
+            durationMilliseconds: durationMilliseconds,
+            retryCount: retryCount,
+            recoveryAction: recoveryAction,
+            impact: impact,
+            severity: .error
+        )
+    }
+
+    public static func record(
+        category: MacClippyLogCategory,
+        code: MacClippyErrorCode,
+        operation: String,
+        durationMilliseconds: Int? = nil,
+        retryCount: Int = 0,
+        recoveryAction: String? = nil,
+        impact: String? = nil,
+        severity: MacClippyLogSeverity
     ) {
         let event = MacClippyDiagnosticsEvent(
             category: category,
@@ -188,9 +239,15 @@ public enum MacClippyLog {
             impact: impact
         )
         MacClippyDiagnosticsRecorder.shared.record(event)
+        MacClippyDiagnosticsJournal.shared.record(event)
         let duration = durationMilliseconds.map(String.init) ?? "-"
-        logger.error(
-            "category=\(category.rawValue, privacy: .public) code=\(code.rawValue, privacy: .public) operation=\(operation, privacy: .public) duration_ms=\(duration, privacy: .public) retry_count=\(retryCount, privacy: .public)"
-        )
+        let impactText = impact.map { " impact=\($0)" } ?? ""
+        let message = "category=\(category.rawValue) code=\(code.rawValue) operation=\(operation) duration_ms=\(duration) retry_count=\(retryCount)\(impactText)"
+        switch severity {
+        case .notice:
+            logger.notice("\(message, privacy: .public)")
+        case .error:
+            logger.error("\(message, privacy: .public)")
+        }
     }
 }

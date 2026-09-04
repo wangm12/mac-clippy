@@ -34,6 +34,32 @@ public struct MacClippyClipboardMetadataFilter: Sendable {
         self.modifiedBefore = modifiedBefore
         self.modifiedAfter = modifiedAfter
     }
+
+    public static func fromStructuredQuery(
+        _ query: MacClippySearchGrammar.Query,
+        contentKind: MacClippyContentKind? = nil
+    ) -> MacClippyClipboardMetadataFilter {
+        var filter = MacClippyClipboardMetadataFilter(contentKind: contentKind)
+        for clause in query.clauses {
+            switch clause {
+            case let .app(value):
+                filter.sourceAppContains.append(value)
+            case let .label(value):
+                filter.labelContains.append(value)
+            case .hasLabel:
+                filter.requiresLabel = true
+            case .hasOCR:
+                filter.requiresOCR = true
+            case let .before(date):
+                filter.modifiedBefore.append(date)
+            case let .after(date):
+                filter.modifiedAfter.append(date)
+            case .bare, .type, .url:
+                break
+            }
+        }
+        return filter
+    }
 }
 
 public struct MacClippyStoredPayloadFootprint: Sendable, Equatable {
@@ -137,6 +163,28 @@ public final class MacClippyClipboardStore {
                     SELECT DISTINCT operation_id, record_id
                     FROM clipboard_deletion_journal;
             """)
+        },
+        // Capture-time dedup looks up an identical payload by plaintext hash
+        // so a recopy can bump frequency instead of sealing another envelope.
+        MacClippyDatabaseMigration(identifier: "006-capture-content-hash") { database in
+            try database.execute(sql: """
+                ALTER TABLE clipboard_records ADD COLUMN content_hash TEXT;
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_macclippy_records_content_hash
+                    ON clipboard_records(content_hash)
+                    WHERE content_hash IS NOT NULL;
+            """)
+        },
+        // Structured `app:` and `has:ocr` filters were still scanning every
+        // meta row. `type:` already uses idx_macclippy_records_content_kind.
+        MacClippyDatabaseMigration(identifier: "007-structured-search-indexes") { database in
+            try database.execute(sql: MacClippyStructuredSearchIndexPolicy.createMissingIndexesSQL)
+        },
+        MacClippyDatabaseMigration(identifier: "008-search-and-storage-metadata") { database in
+            try database.execute(sql: """
+                ALTER TABLE clipboard_records ADD COLUMN source_app_name TEXT;
+                ALTER TABLE clipboard_records ADD COLUMN primary_blob_id TEXT;
+            """)
+            try database.execute(sql: MacClippyStructuredSearchIndexPolicy.createSourceAppNameIndexSQL)
         }
     ]
 
@@ -197,6 +245,33 @@ public final class MacClippyClipboardStore {
     let key: SymmetricKey
     private let deviceID: DeviceID
     private let inputLimits: MacClippyPasteboardInputLimits
+    private let decryptAccountingLock = NSLock()
+    private var representationPayloadDecrypts = 0
+    private var recordEnvelopeDecrypts = 0
+
+    public var representationPayloadDecryptCount: Int {
+        decryptAccountingLock.lock()
+        defer { decryptAccountingLock.unlock() }
+        return representationPayloadDecrypts
+    }
+
+    public var recordEnvelopeDecryptCount: Int {
+        decryptAccountingLock.lock()
+        defer { decryptAccountingLock.unlock() }
+        return recordEnvelopeDecrypts
+    }
+
+    func noteRepresentationPayloadDecrypt() {
+        decryptAccountingLock.lock()
+        representationPayloadDecrypts += 1
+        decryptAccountingLock.unlock()
+    }
+
+    func noteRecordEnvelopeDecrypt() {
+        decryptAccountingLock.lock()
+        recordEnvelopeDecrypts += 1
+        decryptAccountingLock.unlock()
+    }
 
     public init(
         database: MacClippyDatabase,
@@ -230,6 +305,7 @@ public final class MacClippyClipboardStore {
     public func append(
         _ record: ClipboardRecord,
         sourceAppBundleID: String? = nil,
+        sourceAppDisplayName: String? = nil,
         detectedTypeJSON: String? = nil,
         now: Date = Date()
     ) throws -> ClipboardItemMeta {
@@ -243,12 +319,13 @@ public final class MacClippyClipboardStore {
             try database.execute(sql: """
                 INSERT INTO clipboard_records
                     (id, created, modified, device_id, lamport, kind, content_kind, preview,
-                     source_app, detected_type, envelope)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     source_app, source_app_name, detected_type, envelope, primary_blob_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, arguments: [
                 id.rawValue, milliseconds, milliseconds, deviceID.rawValue, next,
                 RecordKind.clipboardItem.rawValue, record.contentKind.rawValue,
-                Self.preview(for: record), sourceAppBundleID, detectedTypeJSON, envelope.combined
+                Self.preview(for: record), sourceAppBundleID, sourceAppDisplayName, detectedTypeJSON,
+                envelope.combined, record.imageBlobID
             ])
             return UInt64(next)
         }
@@ -256,6 +333,7 @@ public final class MacClippyClipboardStore {
             id: id, created: now, modified: now, deviceID: deviceID, lamport: lamport,
             contentKind: record.contentKind,
             preview: Self.preview(for: record), sourceAppBundleID: sourceAppBundleID,
+            sourceAppDisplayName: sourceAppDisplayName,
             detectedTypeJSON: detectedTypeJSON
         )
     }
@@ -285,7 +363,9 @@ public final class MacClippyClipboardStore {
         _ record: ClipboardRecord,
         representations: [MacClippyClipboardRepresentation],
         sourceAppBundleID: String? = nil,
+        sourceAppDisplayName: String? = nil,
         detectedTypeJSON: String? = nil,
+        contentHash: String? = nil,
         spillPayload: ((Data) throws -> String)? = nil,
         deleteSpilledPayload: ((String) -> Void)? = nil,
         now: Date = Date()
@@ -294,23 +374,7 @@ public final class MacClippyClipboardStore {
         let envelope = try MacClippyCipher.seal(try encodedRecordData(record), with: key)
         let milliseconds = Self.milliseconds(now)
 
-        guard representations.count <= inputLimits.maxRepresentationsPerRecord else {
-            throw MacClippyStoreError.inputTooLarge
-        }
-        var totalRepresentationBytes = 0
-        for representation in representations {
-            guard representation.uti.utf8.count <= inputLimits.maxUTIBytes else {
-                throw MacClippyStoreError.inputTooLarge
-            }
-            guard let payloadBytes = representation.payloadBytes else { continue }
-            guard payloadBytes.count <= inputLimits.maxRepresentationBytes else {
-                throw MacClippyStoreError.inputTooLarge
-            }
-            totalRepresentationBytes += payloadBytes.count
-            guard totalRepresentationBytes <= inputLimits.maxChangeBytes else {
-                throw MacClippyStoreError.inputTooLarge
-            }
-        }
+        try validateRepresentationLimits(representations)
 
         // Spill oversized payloads up front, outside the DB transaction, so the
         // spilled blob IDs are known before we write any rows. Track every blob
@@ -351,12 +415,13 @@ public final class MacClippyClipboardStore {
                 try database.execute(sql: """
                     INSERT INTO clipboard_records
                         (id, created, modified, device_id, lamport, kind, content_kind, preview,
-                         source_app, detected_type, envelope)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         source_app, source_app_name, detected_type, envelope, content_hash, primary_blob_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, arguments: [
                     id.rawValue, milliseconds, milliseconds, deviceID.rawValue, next,
                     RecordKind.clipboardItem.rawValue, record.contentKind.rawValue,
-                    Self.preview(for: record), sourceAppBundleID, detectedTypeJSON, envelope.combined
+                    Self.preview(for: record), sourceAppBundleID, sourceAppDisplayName, detectedTypeJSON,
+                    envelope.combined, contentHash, record.imageBlobID
                 ])
 
                 for row in preparedRows {
@@ -390,6 +455,7 @@ public final class MacClippyClipboardStore {
             id: id, created: now, modified: now, deviceID: deviceID, lamport: lamport,
             contentKind: record.contentKind,
             preview: Self.preview(for: record), sourceAppBundleID: sourceAppBundleID,
+            sourceAppDisplayName: sourceAppDisplayName,
             detectedTypeJSON: detectedTypeJSON
         )
     }
@@ -503,23 +569,33 @@ public final class MacClippyClipboardStore {
         )
     }
 
-    private func encodedRecordData(_ record: ClipboardRecord) throws -> Data {
+    func encodedRecordData(_ record: ClipboardRecord) throws -> Data {
         let data = try JSONEncoder().encode(record)
         guard data.count <= inputLimits.maxRecordBytes else { throw MacClippyStoreError.inputTooLarge }
         return data
     }
 
-
-
-
-
-
-
-
-
-
-
-
+    func validateRepresentationLimits(
+        _ representations: [MacClippyClipboardRepresentation]
+    ) throws {
+        guard representations.count <= inputLimits.maxRepresentationsPerRecord else {
+            throw MacClippyStoreError.inputTooLarge
+        }
+        var totalRepresentationBytes = 0
+        for representation in representations {
+            guard representation.uti.utf8.count <= inputLimits.maxUTIBytes else {
+                throw MacClippyStoreError.inputTooLarge
+            }
+            guard let payloadBytes = representation.payloadBytes else { continue }
+            guard payloadBytes.count <= inputLimits.maxRepresentationBytes else {
+                throw MacClippyStoreError.inputTooLarge
+            }
+            totalRepresentationBytes += payloadBytes.count
+            guard totalRepresentationBytes <= inputLimits.maxChangeBytes else {
+                throw MacClippyStoreError.inputTooLarge
+            }
+        }
+    }
 
     static func milliseconds(_ date: Date) -> Int64 {
         Int64(date.timeIntervalSince1970 * 1_000)
@@ -538,7 +614,7 @@ public final class MacClippyClipboardStore {
         case .rtf: "(rich text)"
         case let .html(value): String(stripHTML(value).prefix(120))
         case let .image(_, width, height), let .encryptedImage(_, width, height): "(image \(width)x\(height))"
-        case let .files(urls): MacClippyFilePresentation.storePreview(for: urls)
+        case let .files(urls): MacClippyFilePresentation.persistPreview(for: urls)
         }
     }
 
@@ -591,6 +667,7 @@ public final class MacClippyClipboardStore {
             contentKind: contentKind,
             preview: row["preview"],
             sourceAppBundleID: row["source_app"],
+            sourceAppDisplayName: row["source_app_name"],
             frequency: Int(row["frequency"] as Int64? ?? 0),
             lastAccessed: lastAccessed.map { Date(timeIntervalSince1970: Double($0) / 1_000) },
             customLabel: row["custom_label"],

@@ -1,5 +1,7 @@
 import SwiftUI
 
+import MacClippyCore
+
 struct MacClippyDockSearchFieldWell<Content: View>: View {
     let isSearchFocused: Bool
     let highContrast: Bool
@@ -40,7 +42,9 @@ struct MacClippyDockSearchFieldWell<Content: View>: View {
                     : .clear,
                 radius: isSearchFocused ? 8 : 0
             )
-            .onHover { hovering in hoveredSearch = hovering }
+            .onContinuousHover { phase in
+                hoveredSearch = MacClippyDockHoverPolicy.isHovering(phase)
+            }
             .animation(
                 MacClippyMotion.animation(MacClippyMotion.hoverAnimation, reduceMotion: reduceMotion),
                 value: hoveredSearch
@@ -229,6 +233,17 @@ extension MacClippyDockView {
                             + "after:YYYY-MM-DD. Quote a phrase to keep it together. Bare words match any "
                             + "continuous fragment (ss finds passport)."
                     )
+                if !visibleSearchFilterChips.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 4) {
+                            ForEach(visibleSearchFilterChips) { chip in
+                                searchFilterChip(chip)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: 220)
+                    .accessibilityLabel("Search filters")
+                }
                 if !model.query.isEmpty {
                     Button {
                         model.query = ""
@@ -252,6 +267,48 @@ extension MacClippyDockView {
                 reduceMotion: reduceMotion
             )
         }
+    }
+
+    var visibleSearchFilterChips: [MacClippySearchFilterChip] {
+        if isSearchFocused {
+            return model.searchFilterChips + model.searchFilterSuggestions
+        }
+        return model.searchFilterChips
+    }
+
+    func searchFilterChip(_ chip: MacClippySearchFilterChip) -> some View {
+        Button {
+            if chip.isSuggestion {
+                model.appendSearchFilter(token: chip.token)
+            } else {
+                model.removeSearchFilter(token: chip.token)
+            }
+            isSearchFocused = true
+            onSearchModeChange(true)
+        } label: {
+            HStack(spacing: 4) {
+                Text(chip.title)
+                if !chip.isSuggestion {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8, weight: .bold))
+                }
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(
+                chip.isSuggestion ? MacClippyDockTheme.muted2Color : MacClippyDockTheme.textColor
+            )
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .background(
+            (chip.isSuggestion ? MacClippyDockTheme.lineColor : MacClippyDockTheme.accentSoftColor)
+                .opacity(chip.isSuggestion ? 0.35 : 1),
+            in: Capsule()
+        )
+        .accessibilityLabel(chip.isSuggestion ? "Add \(chip.title) filter" : "Remove \(chip.title) filter")
+        .help(chip.isSuggestion ? "Add \(chip.token)" : "Remove \(chip.token)")
     }
 }
 

@@ -191,12 +191,15 @@ final class MacClippyLiquidGlassTests: XCTestCase {
         XCTAssertTrue(filters.contains("hovered: isHovered"))
         XCTAssertTrue(filters.contains("interactiveFocusBorder"))
         XCTAssertTrue(filters.contains("animation(nil, value: isHovered)"))
-        XCTAssertTrue(filters.contains("MacClippyDockHoverPolicy.shouldApplyHover"))
+        XCTAssertTrue(filters.contains("onContinuousHover"))
+        XCTAssertTrue(filters.contains("MacClippyDockHoverPolicy.isHovering"))
         XCTAssertTrue(filters.contains("transaction.animation = nil"))
 
         let hover = try appSource(named: "MacClippyDockView.swift")
         XCTAssertTrue(hover.contains("hoverAnimation"))
         XCTAssertTrue(hover.contains("cardBorderInset"))
+        XCTAssertTrue(hover.contains("onContinuousHover"))
+        XCTAssertTrue(hover.contains("MacClippyDockHoverPolicy.isHovering"))
 
         let panel = try appSource(named: "MacClippyDockPanel.swift")
         XCTAssertTrue(panel.contains("NSGlassEffectView"))

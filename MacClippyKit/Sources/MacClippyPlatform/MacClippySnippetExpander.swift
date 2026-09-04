@@ -297,7 +297,11 @@ public final class MacClippySnippetExpander: @unchecked Sendable {
                 && modeProvider() != .disabled
         }
         guard canExpand else { return }
-        let result = injector.inject(text: plan.body) { [weak self] in
+        let body = MacClippySnippetVariablePolicy.expand(
+            plan.body,
+            context: MacClippySnippetVariableContext(clipboard: injector.currentPlainText())
+        )
+        let result = injector.inject(text: body) { [weak self] in
             guard let self else { return }
             for _ in 0 ..< plan.charactersToDelete {
                 postKey(UInt16(kVK_Delete))

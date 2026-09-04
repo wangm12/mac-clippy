@@ -11,11 +11,22 @@ private struct MacClippyStoredPayloadRow {
 
 extension MacClippyClipboardStore {
     @discardableResult
-    public func update(id: RecordID, with record: ClipboardRecord, now: Date = Date()) throws -> ClipboardItemMeta {
-        let envelope = try MacClippyCipher.seal(try JSONEncoder().encode(record), with: key)
+    public func update(
+        id: RecordID,
+        with record: ClipboardRecord,
+        representations: [MacClippyClipboardRepresentation]? = nil,
+        contentHash: String? = nil,
+        now: Date = Date()
+    ) throws -> ClipboardItemMeta {
+        let envelope = try MacClippyCipher.seal(try encodedRecordData(record), with: key)
         let milliseconds = Self.milliseconds(now)
         let primaryBytes = Self.primaryRepresentationBytes(for: record)
         let primaryUTIs = Self.primaryRepresentationUTIs(for: record)
+
+        if let representations {
+            try validateRepresentationLimits(representations)
+        }
+        let preparedRepresentations = try representations.map { try preparedRepresentationRows(from: $0) }
 
         try database.queue.write { connection in
             guard try Row.fetchOne(connection, sql: "SELECT id FROM clipboard_records WHERE id = ?", arguments: [id.rawValue]) != nil else {
@@ -23,13 +34,16 @@ extension MacClippyClipboardStore {
             }
             try connection.execute(sql: """
                 UPDATE clipboard_records
-                SET modified = ?, content_kind = ?, preview = ?, envelope = ?
+                SET modified = ?, content_kind = ?, preview = ?, envelope = ?, content_hash = ?, primary_blob_id = ?
                 WHERE id = ?
             """, arguments: [
-                milliseconds, record.contentKind.rawValue, Self.preview(for: record), envelope.combined, id.rawValue
+                milliseconds, record.contentKind.rawValue, Self.preview(for: record), envelope.combined, contentHash,
+                record.imageBlobID, id.rawValue
             ])
 
-            if let primaryBytes,
+            if let preparedRepresentations {
+                try writeRepresentationRows(preparedRepresentations, for: id, on: connection)
+            } else if let primaryBytes,
                let row = try Row.fetchOne(
                    connection,
                    sql: "SELECT uti FROM clipboard_representations WHERE record_id = ? AND uti IN (\(Array(repeating: "?", count: primaryUTIs.count).joined(separator: ","))) ORDER BY sort_order LIMIT 1",

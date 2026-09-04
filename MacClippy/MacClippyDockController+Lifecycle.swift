@@ -1,37 +1,48 @@
 import AppKit
 import Foundation
+import MacClippyCore
 import MacClippyPlatform
 import QuartzCore
 import SwiftUI
 
 extension MacClippyDockController {
-    func toggle() {
-        if isClosing {
-            // A second shortcut during the short exit animation is an explicit
-            // reopen intent. Invalidate the hide completion before rebuilding
-            // the panel so the old transaction cannot order it out afterward.
-            invalidateAnimation()
-            panel?.contentView?.layer?.removeAllAnimations()
-            panelContentView?.backdropView.layer?.removeAllAnimations()
-            panelContentView?.foregroundView.layer?.removeAllAnimations()
-            isClosing = false
+    func toggle(source: MacClippyDockToggleSource = .hotKey) {
+        switch MacClippyDockTogglePolicy.action(
+            source: source,
+            panelIsVisible: panel?.isVisible == true,
+            isClosing: isClosing
+        ) {
+        case .show:
+            if isClosing {
+                invalidateAnimation()
+                panel?.contentView?.layer?.removeAllAnimations()
+                panelContentView?.backdropView.layer?.removeAllAnimations()
+                panelContentView?.foregroundView.layer?.removeAllAnimations()
+                isClosing = false
+            }
             show()
-            return
-        }
-        // The status-item click also passes through the dock's local outside-
-        // click monitor. That monitor starts the hide animation first, so
-        // `isVisible` is already false by the time this action is delivered.
-        // Use the AppKit presentation state here so the same click cannot
-        // immediately reopen a panel that is already on screen and closing.
-        if MacClippyDockTogglePolicy.shouldHide(panelIsVisible: panel?.isVisible == true) {
+        case .hide:
             hide()
-        } else {
-            show()
+        case .ignore:
+            return
         }
     }
 
     func show() {
         guard let screen = screenContainingCursor() ?? NSScreen.main else { return }
+        let panelExisted = panel != nil
+        if let pending = pendingDisplayEvent,
+           MacClippyDisplayGenerationPolicy.shouldDiscardHiddenPanel(
+               event: pending,
+               panelExists: panelExisted,
+               isVisible: panel?.isVisible == true
+           ) {
+            discardPanelSurfaces()
+        }
+        let skipGlassMotion = MacClippyDisplayGenerationPolicy.shouldSkipGlassMotion(
+            pendingEvent: pendingDisplayEvent
+        )
+        pendingDisplayEvent = nil
         dismissPreviewImmediately()
         dismissDetailsImmediately()
         let frame = MacClippyDockFramePolicy.frame(
@@ -45,6 +56,19 @@ extension MacClippyDockController {
         // opened dock.
         model.beginSession()
         model.reload()
+        MacClippyLog.notice(
+            category: .ui,
+            code: .dockPresented,
+            operation: "dock_show",
+            impact: MacClippyDockShowDiagnostics.impact(
+                panelExisted: panelExisted,
+                isLoading: model.isLoading,
+                itemCount: model.historyItems.count,
+                screenFrame: screen.frame,
+                reduceMotion: shouldReduceMotion,
+                skipGlassMotion: skipGlassMotion
+            )
+        )
 
         let dockPanel = makeDockPanel(frame: frame)
         _ = beginAnimation(.showing)
@@ -58,7 +82,7 @@ extension MacClippyDockController {
         model.resetSearchFocus()
         startMonitors()
 
-        let reduceMotion = shouldReduceMotion
+        let reduceMotion = shouldReduceMotion || skipGlassMotion
         if reduceMotion {
             setPanelLayerState(
                 dockPanel,
@@ -191,12 +215,13 @@ extension MacClippyDockController {
     }
 
     func presentSnippetEditor() {
-        snippetEditorWindow.present { [weak self] name, trigger, body, completion in
+        snippetEditorWindow.present { [weak self] name, trigger, body, folder, completion in
             guard let self else { return }
             self.model.createSnippet(
                 name: name,
                 trigger: trigger,
                 body: body,
+                folder: folder,
                 onSuccess: { [weak self] in
                     completion(true)
                     self?.snippetEditorWindow.close()
@@ -280,6 +305,69 @@ extension MacClippyDockController {
                 }
             })
         }
+    }
+
+    func discardPanelSurfaces() {
+        invalidateAnimation()
+        panel?.contentView?.layer?.removeAllAnimations()
+        panelContentView?.backdropView.layer?.removeAllAnimations()
+        panelContentView?.foregroundView.layer?.removeAllAnimations()
+        panel?.orderOut(nil)
+        panel?.close()
+        panel = nil
+        panelContentView = nil
+        hostingView = nil
+        isClosing = false
+    }
+
+    func noteDisplayLifecycleEvent(_ event: MacClippyDisplayLifecycleEvent) {
+        pendingDisplayEvent = event
+        let panelExists = panel != nil
+        let visible = isVisible
+        if MacClippyDisplayGenerationPolicy.shouldDiscardHiddenPanel(
+            event: event,
+            panelExists: panelExists,
+            isVisible: visible
+        ) {
+            discardPanelSurfaces()
+            return
+        }
+        if MacClippyDisplayGenerationPolicy.shouldRebuildVisibleGlass(
+            event: event,
+            isVisible: visible
+        ) {
+            rebuildVisibleGlassSurfaces()
+        }
+    }
+
+    func rebuildVisibleGlassSurfaces() {
+        guard isVisible, !isClosing else { return }
+        guard let screen = screenContainingCursor() ?? NSScreen.main else { return }
+        model.prepareForSurfaceRebuild()
+        stopMonitors()
+        discardPanelSurfaces()
+        let frame = MacClippyDockFramePolicy.frame(
+            for: screen.frame,
+            hasMultipleSelection: model.hasMultipleSelection
+        )
+        let dockPanel = makeDockPanel(frame: frame)
+        dockPanel.contentView?.frame = NSRect(origin: .zero, size: frame.size)
+        dockPanel.contentView?.autoresizingMask = [.width, .height]
+        dockPanel.setFrame(frame, display: false, animate: false)
+        configurePanelLayer(dockPanel)
+        resetPanelAnimationState(dockPanel)
+        setPanelLayerState(
+            dockPanel,
+            backdropOpacity: 1,
+            foregroundOpacity: 1,
+            scale: 1,
+            shadowOpacity: MacClippyMotion.panelShadowOpacity
+        )
+        dockPanel.interceptsPickerKeys = true
+        dockPanel.makeKeyAndOrderFront(nil)
+        takeKeyboardOwnership(of: dockPanel)
+        startMonitors()
+        handleScreenParametersChanged()
     }
 
     func cleanup() {

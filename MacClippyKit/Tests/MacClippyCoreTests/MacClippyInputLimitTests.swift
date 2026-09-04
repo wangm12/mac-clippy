@@ -36,6 +36,26 @@ final class MacClippyInputLimitTests: XCTestCase {
             XCTAssertEqual(error as? MacClippyStoreError, .inputTooLarge)
         }
         XCTAssertTrue(try store.list(limit: 10).isEmpty)
+
+        let updateLimits = MacClippyPasteboardInputLimits(
+            maxRepresentationBytes: 8,
+            maxChangeBytes: 12,
+            maxRecordBytes: 40,
+            maxHistoryBytes: 64
+        )
+        let updateStore = try ClipboardStore(
+            database: MacClippyDatabase(inMemory: true),
+            deviceKey: SymmetricKey(data: Data(repeating: 1, count: 32)),
+            inputLimits: updateLimits
+        )
+        let stored = try updateStore.append(.text("ok"))
+        XCTAssertThrowsError(try updateStore.update(
+            id: stored.id,
+            with: .text(String(repeating: "x", count: 64))
+        )) { error in
+            XCTAssertEqual(error as? MacClippyStoreError, .inputTooLarge)
+        }
+        XCTAssertEqual(try updateStore.body(for: stored.id), .text("ok"))
     }
 
     func testPinboardAndSnippetStoresBoundUserAuthoredPayloads() throws {
@@ -108,6 +128,33 @@ final class MacClippyInputLimitTests: XCTestCase {
         )) { error in
             XCTAssertEqual(error as? MacClippyStoreError, .inputTooLarge)
         }
+
+        let stored = try store.append(
+            .text("bounded"),
+            representations: [
+                MacClippyClipboardRepresentation(uti: "text", payloadBytes: Data("one".utf8))
+            ]
+        )
+        XCTAssertThrowsError(try store.update(
+            id: stored.id,
+            with: .text("bounded"),
+            representations: [
+                MacClippyClipboardRepresentation(uti: "text", payloadBytes: Data("one".utf8)),
+                MacClippyClipboardRepresentation(uti: "html", payloadBytes: Data("two".utf8))
+            ]
+        )) { error in
+            XCTAssertEqual(error as? MacClippyStoreError, .inputTooLarge)
+        }
+        XCTAssertEqual(try store.representations(for: stored.id).map(\.uti), ["text"])
+        XCTAssertThrowsError(try store.replaceRepresentations(
+            for: stored.id,
+            with: [
+                MacClippyClipboardRepresentation(uti: "uti-too-long", payloadBytes: Data("one".utf8))
+            ]
+        )) { error in
+            XCTAssertEqual(error as? MacClippyStoreError, .inputTooLarge)
+        }
+        XCTAssertEqual(try store.representations(for: stored.id).map(\.uti), ["text"])
     }
 
     func testTotalRetentionCapRemovesOldestUnpinnedPayloadAndPreservesPinboardItems() throws {

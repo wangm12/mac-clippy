@@ -95,6 +95,18 @@ final class MacClippyTransformTests: XCTestCase {
         try runtime.copy(id: url.id, transform: .cleanTrackingURL)
         XCTAssertEqual(pasteboard.string(forType: .string), "https://example.com?a=1")
 
+        let titled = try runtime.appendTestRecord(.text("hello WORLD"))
+        try runtime.copy(id: titled.id, transform: .titleCase)
+        XCTAssertEqual(pasteboard.string(forType: .string), "Hello World")
+
+        let quoted = try runtime.appendTestRecord(.text("line1\nline2"))
+        try runtime.copy(id: quoted.id, transform: .markdownQuote)
+        XCTAssertEqual(pasteboard.string(forType: .string), "> line1\n> line2")
+
+        let sorted = try runtime.appendTestRecord(.text("c\na\nb"))
+        try runtime.copy(id: sorted.id, transform: .sortLines)
+        XCTAssertEqual(pasteboard.string(forType: .string), "a\nb\nc")
+
         XCTAssertEqual(postedEventCount, 0, "no transform copy may post a paste keystroke")
     }
 
@@ -339,6 +351,25 @@ final class MacClippyTransformTests: XCTestCase {
         model.workQueue.sync {}
 
         XCTAssertFalse(didClose, "stale transformed-paste completion must not close a reopened dock")
+    }
+
+    func testDragPayloadExportsClipboardTextInsteadOfTheRecordID() throws {
+        let meta = try runtime.appendTestRecord(.text("drop me into Notes"))
+
+        let text = try runtime.dragPayload(id: meta.id, representation: .plainText)
+        XCTAssertEqual(text.typeIdentifier, "public.utf8-plain-text")
+        XCTAssertEqual(String(data: text.data, encoding: .utf8), "drop me into Notes")
+
+        let record = try runtime.dragPayload(id: meta.id, representation: .recordID)
+        XCTAssertEqual(record.typeIdentifier, MacClippyCardDragPolicy.recordTypeIdentifier)
+        XCTAssertEqual(String(data: record.data, encoding: .utf8), meta.id.rawValue)
+    }
+
+    func testDragPayloadExportsImageBytesOnAPublicImageType() throws {
+        let meta = try runtime.appendTestRecord(.image(blobID: "unused", width: 1, height: 1))
+        let payload = try runtime.dragPayload(id: meta.id, representation: .image)
+        XCTAssertEqual(payload.typeIdentifier, "public.png")
+        XCTAssertTrue(payload.data.starts(with: [0x89, 0x50, 0x4E, 0x47]))
     }
 
     // MARK: - Helpers

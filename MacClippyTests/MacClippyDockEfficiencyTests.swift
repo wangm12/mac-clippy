@@ -42,6 +42,86 @@ final class MacClippyDockEfficiencyTests: XCTestCase {
     }
 
     @MainActor
+    func testQueryChangeBuildsRemovableFilterChips() {
+        let model = MacClippyDockModel(runtime: runtime)
+
+        model.query = "invoice type:image has:ocr"
+        XCTAssertEqual(model.highlightTerms, ["invoice"])
+        XCTAssertEqual(model.searchFilterChips.map(\.token), ["type:image", "has:ocr"])
+        XCTAssertFalse(model.searchFilterSuggestions.contains { $0.token == "has:ocr" })
+
+        model.removeSearchFilter(token: "type:image")
+        XCTAssertEqual(MacClippySearchGrammar.parse(model.query).clauses, [.hasOCR])
+        XCTAssertEqual(model.highlightTerms, ["invoice"])
+
+        model.appendSearchFilter(token: "type:text")
+        XCTAssertTrue(model.query.contains("type:text"))
+    }
+
+    func testStorageUsageCountsItemsAndCompressLeavesTinyImages() throws {
+        _ = try runtime.appendTestRecord(.text("hello"))
+        _ = try runtime.appendTestRecord(.image(blobID: "unused", width: 1, height: 1))
+
+        let envelopeDecrypts = runtime.clipboardStore.recordEnvelopeDecryptCount
+        let usage = try runtime.storageUsage()
+        XCTAssertEqual(usage.itemCount, 2)
+        XCTAssertGreaterThan(usage.imageBytes, 0)
+        XCTAssertGreaterThan(usage.totalBytes, 0)
+        XCTAssertEqual(usage.maxItems, MacClippyStorageCapPolicy.defaultMaxItems)
+        XCTAssertEqual(
+            runtime.clipboardStore.recordEnvelopeDecryptCount,
+            envelopeDecrypts,
+            "Settings storage scan must not open every image envelope"
+        )
+
+        let report = try runtime.compressOldImages()
+        XCTAssertEqual(report.compressedCount, 0)
+        XCTAssertEqual(report.bytesSaved, 0)
+        XCTAssertEqual(
+            MacClippyStorageDashboardPolicy.compressMessage(
+                compressedCount: report.compressedCount,
+                bytesSaved: report.bytesSaved
+            ),
+            "No old images needed compression."
+        )
+    }
+
+    @MainActor
+    func testToggleSmartListAppliesAndClearsTheSavedQuery() {
+        let model = MacClippyDockModel(runtime: runtime)
+        let urls = MacClippySmartListPolicy.catalog[0]
+        model.query = "invoice"
+        model.selectTab(.snippets)
+
+        model.toggleSmartList(urls)
+
+        XCTAssertTrue(MacClippySmartListPolicy.isActive(urls, in: model.query))
+        XCTAssertEqual(MacClippySearchGrammar.parse(model.query).bareTerms, ["invoice"])
+        XCTAssertEqual(model.selectedTab, .history)
+
+        model.toggleSmartList(urls)
+        XCTAssertFalse(MacClippySmartListPolicy.isActive(urls, in: model.query))
+        XCTAssertEqual(model.query, "invoice")
+    }
+
+    @MainActor
+    func testHideSmartListRemovesThePillAndClearsAnActiveQuery() throws {
+        let suiteName = "MacClippySmartListHide-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = MacClippyDockModel(runtime: runtime, defaults: defaults)
+        let urls = MacClippySmartListPolicy.catalog[0]
+        model.toggleSmartList(urls)
+        XCTAssertTrue(MacClippySmartListPolicy.isActive(urls, in: model.query))
+
+        model.hideSmartList(urls)
+
+        XCTAssertFalse(model.visibleSmartLists.contains(where: { $0.id == urls.id }))
+        XCTAssertFalse(MacClippySmartListPolicy.isActive(urls, in: model.query))
+        XCTAssertEqual(MacClippySmartListPolicy.hiddenIDs(from: defaults), [urls.id])
+    }
+
+    @MainActor
     func testTypingDoesNotBumpSelectAllGenerationWhenNothingIsSelected() {
         let model = MacClippyDockModel(runtime: runtime)
         let generation = model.selectAllGeneration

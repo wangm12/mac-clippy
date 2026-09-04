@@ -15,6 +15,7 @@ extension Notification.Name {
     static let macClippyHotKeyUpdateFailed = Notification.Name("macClippyHotKeyUpdateFailed")
     static let macClippyHotKeyUpdateSucceeded = Notification.Name("macClippyHotKeyUpdateSucceeded")
     static let macClippyPresentationPreferencesChanged = Notification.Name("macClippyPresentationPreferencesChanged")
+    static let macClippyIgnoreNextCopyRequested = Notification.Name("macClippyIgnoreNextCopyRequested")
 }
 
 enum MacClippyHotKeyNotificationUserInfo {
@@ -37,10 +38,14 @@ struct MacClippySettingsView: View {
     var excludedTextPatterns = ""
     @AppStorage(MacClippyRetentionPreferences.privacyPauseKey)
     var privacyPause = false
+    @AppStorage(MacClippyRetentionPreferences.pauseDurationSecondsKey)
+    var pauseDurationSeconds = MacClippyTimedPauseDuration.fiveMinutes.rawValue
     @AppStorage(MacClippyRetentionPreferences.captureAllKey)
     var captureAll = false
     @AppStorage(MacClippyRetentionPreferences.launchAtLoginKey)
     var launchAtLogin = false
+    @AppStorage(MacClippyRetentionPreferences.alwaysPastePlainTextKey)
+    var alwaysPastePlainText = false
     @AppStorage(MacClippyPresentationPreferences.hideFromMenuBarKey)
     var hideFromMenuBar = false
     @AppStorage(MacClippyPresentationPreferences.hideDockIconKey)
@@ -55,12 +60,19 @@ struct MacClippySettingsView: View {
     @State var hotKeyDescriptor = MacClippyGlobalHotKeyDescriptor.load(from: .standard)
     @State var hotKeyError: String?
     @State var storageHealth: [String: MacClippyDatabaseHealthReport] = [:]
+    @State var storageUsage: MacClippyStorageUsage?
     @State var isRepairingSearchIndex = false
     @State var isExportingDiagnostics = false
+    @State var isCreatingBackup = false
+    @State var isRestoringBackup = false
+    @State var isRestoreBackupConfirmationPresented = false
     @State var diagnosticsMessage: String?
     @State var diagnosticsMessageIsError = false
     @State var isDeleteHistoryConfirmationPresented = false
     @State var isDeletingHistory = false
+    @State var isCompressingImages = false
+    @State var imageCompressMessage: String?
+    @State var imageCompressMessageIsError = false
     @State var historyDeletionMessage: String?
     @State var historyDeletionMessageIsError = false
     @State var isPrivacyNoticePresented = false
@@ -120,6 +132,7 @@ struct MacClippySettingsView: View {
             launchAtLogin = SMAppService.mainApp.status == .enabled
             hotKeyError = UserDefaults.standard.string(forKey: "com.macallyouneed.macclippy.hotKey.registrationError")
             refreshStorageHealth()
+            refreshStorageUsage()
         }
         .onChange(of: hideFromMenuBar) { _, _ in
             notifyPresentationPreferencesChanged()
@@ -138,6 +151,18 @@ struct MacClippySettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: .macClippyHotKeyUpdateSucceeded)) { _ in
             hotKeyError = nil
             UserDefaults.standard.removeObject(forKey: "com.macallyouneed.macclippy.hotKey.registrationError")
+        }
+        .confirmationDialog(
+            "Replace local data with a backup?",
+            isPresented: $isRestoreBackupConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Choose Backup…", role: .destructive) {
+                chooseBackupToRestore()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This replaces history, pinboards, and snippets on this Mac with the chosen backup.")
         }
         .confirmationDialog(
             "Delete unpinned history?",
@@ -162,9 +187,10 @@ struct MacClippySettingsView: View {
         case .general:
             historySection.modifier(MacClippySettingsReveal(index: 0, reduceMotion: reduceMotion))
             shortcutSection.modifier(MacClippySettingsReveal(index: 1, reduceMotion: reduceMotion))
-            snippetsSection.modifier(MacClippySettingsReveal(index: 2, reduceMotion: reduceMotion))
-            startupSection.modifier(MacClippySettingsReveal(index: 3, reduceMotion: reduceMotion))
-            presentationSection.modifier(MacClippySettingsReveal(index: 4, reduceMotion: reduceMotion))
+            pasteSection.modifier(MacClippySettingsReveal(index: 2, reduceMotion: reduceMotion))
+            snippetsSection.modifier(MacClippySettingsReveal(index: 3, reduceMotion: reduceMotion))
+            startupSection.modifier(MacClippySettingsReveal(index: 4, reduceMotion: reduceMotion))
+            presentationSection.modifier(MacClippySettingsReveal(index: 5, reduceMotion: reduceMotion))
         case .privacy:
             privacySection.modifier(MacClippySettingsReveal(index: 0, reduceMotion: reduceMotion))
         case .permissions:

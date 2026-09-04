@@ -13,6 +13,7 @@ protocol MacClippyPreviewTextSelectionHost: AnyObject {
 struct MacClippyDockPreviewImageSelection: NSViewRepresentable {
     let image: CGImage?
     let ocrResult: MacClippyOCRResult?
+    var highlightTerms: [String] = []
     let onSelectionChanged: ((String?) -> Void)?
     let onCopySelection: ((String) -> Void)?
 
@@ -20,14 +21,14 @@ struct MacClippyDockPreviewImageSelection: NSViewRepresentable {
         let view = MacClippyOCRSelectionView()
         view.onSelectionChanged = onSelectionChanged
         view.onCopySelection = onCopySelection
-        view.update(image: image, result: ocrResult)
+        view.update(image: image, result: ocrResult, highlightTerms: highlightTerms)
         return view
     }
 
     func updateNSView(_ nsView: MacClippyOCRSelectionView, context: Context) {
         nsView.onSelectionChanged = onSelectionChanged
         nsView.onCopySelection = onCopySelection
-        nsView.update(image: image, result: ocrResult)
+        nsView.update(image: image, result: ocrResult, highlightTerms: highlightTerms)
     }
 }
 
@@ -126,6 +127,7 @@ final class MacClippyOCRSelectionView: NSView, MacClippyPreviewTextSelectionHost
 
     private var image: CGImage?
     private var ocrResult: MacClippyOCRResult?
+    private var highlightTerms: [String] = []
     private var selection: Selection?
     private var renderedImage: NSImage?
     var selectionLayoutCache: MacClippyOCRSelectionLayout?
@@ -176,11 +178,13 @@ final class MacClippyOCRSelectionView: NSView, MacClippyPreviewTextSelectionHost
         updateAccessibilityValue()
     }
 
-    func update(image: CGImage?, result: MacClippyOCRResult?) {
+    func update(image: CGImage?, result: MacClippyOCRResult?, highlightTerms: [String] = []) {
         let imageChanged = self.image?.width != image?.width || self.image?.height != image?.height
         let resultChanged = self.ocrResult != result
+        let termsChanged = self.highlightTerms != highlightTerms
         self.image = image
         self.ocrResult = result
+        self.highlightTerms = highlightTerms
         if imageChanged {
             renderedImage = image.map { NSImage(cgImage: $0, size: NSSize(width: $0.width, height: $0.height)) }
         }
@@ -188,7 +192,9 @@ final class MacClippyOCRSelectionView: NSView, MacClippyPreviewTextSelectionHost
             selectionLayoutCache = nil
             clearSelection()
         }
-        needsDisplay = true
+        if imageChanged || resultChanged || termsChanged {
+            needsDisplay = true
+        }
     }
 
     func copySelectedText() {
@@ -214,12 +220,16 @@ final class MacClippyOCRSelectionView: NSView, MacClippyPreviewTextSelectionHost
             respectFlipped: true,
             hints: nil
         )
-        guard let ocrResult, let selection else { return }
-        drawSelection(
-            selection,
-            result: ocrResult,
-            layout: selectionLayout(for: ocrResult, imageRect: imageRect)
-        )
+        guard let ocrResult else { return }
+        let layout = selectionLayout(for: ocrResult, imageRect: imageRect)
+        drawSearchHits(result: ocrResult, imageRect: imageRect, terms: highlightTerms)
+        if let selection {
+            drawSelection(
+                selection,
+                result: ocrResult,
+                layout: layout
+            )
+        }
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -288,7 +298,11 @@ final class MacClippyOCRSelectionView: NSView, MacClippyPreviewTextSelectionHost
         for (index, lineRect) in layout.hitLineRects.enumerated() {
             guard lineRect.contains(point) else { continue }
             let distance = abs(lineRect.midY - point.y)
-            if bestLine == nil || distance < bestLine!.distance {
+            if let current = bestLine {
+                if distance < current.distance {
+                    bestLine = (index, distance)
+                }
+            } else {
                 bestLine = (index, distance)
             }
         }

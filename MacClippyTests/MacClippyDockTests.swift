@@ -96,6 +96,41 @@ final class MacClippyDockTests: XCTestCase {
         XCTAssertFalse(MacClippyDockTogglePolicy.shouldHide(panelIsVisible: false))
     }
 
+    func testStatusItemToggleDoesNotReopenAPanelThatThisClickAlreadyHid() {
+        XCTAssertEqual(
+            MacClippyDockTogglePolicy.action(
+                source: .statusItem,
+                panelIsVisible: true,
+                isClosing: true
+            ),
+            .ignore
+        )
+        XCTAssertEqual(
+            MacClippyDockTogglePolicy.action(
+                source: .hotKey,
+                panelIsVisible: true,
+                isClosing: true
+            ),
+            .show
+        )
+        XCTAssertEqual(
+            MacClippyDockTogglePolicy.action(
+                source: .statusItem,
+                panelIsVisible: true,
+                isClosing: false
+            ),
+            .hide
+        )
+        XCTAssertEqual(
+            MacClippyDockTogglePolicy.action(
+                source: .statusItem,
+                panelIsVisible: false,
+                isClosing: false
+            ),
+            .show
+        )
+    }
+
     @MainActor
     func testPresentRenameCategoryUsesPinboardDetailsAndFreshToken() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("MacClippyDockTests-\(UUID().uuidString)", isDirectory: true)

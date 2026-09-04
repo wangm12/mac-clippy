@@ -71,6 +71,7 @@ extension MacClippyRuntime {
             self.pendingOCRBytes = 0
             self.pendingOCRJobsByGeneration[lifecycleToken.generation] = 0
             self.pendingOCRBytesByGeneration[lifecycleToken.generation] = 0
+            self.deferredOCRJobs.removeAll()
         }
         // Off-main startup reconciliation: trim orphan blobs and FTS rows left
         // behind by a crash mid-capture. Best-effort; failures are logged and
@@ -100,9 +101,18 @@ extension MacClippyRuntime {
                 self.handleDefaultsChange(for: lifecycleToken)
             }
         }
+        ocrPowerObserver = NotificationCenter.default.addObserver(
+            forName: .NSProcessInfoPowerStateDidChange,
+            object: nil,
+            queue: nil
+        ) { [weak self] _ in
+            self?.captureQueue.async { [weak self] in
+                self?.startDeferredOCRIfReady()
+            }
+        }
         if usesRuntimeExclusionRules {
             observer.updateExclusionRules(MacClippyRetentionPreferences.exclusionRules())
-            observer.setCapturePaused(UserDefaults.standard.bool(forKey: MacClippyRetentionPreferences.privacyPauseKey))
+            applyCapturePausePreference()
         }
         observer.start(projectionHandler: { [weak self] change, projection in
             // Hand the change to the capture queue so mapping, encryption, and
@@ -133,6 +143,12 @@ extension MacClippyRuntime {
         observer.stop()
         snippetExpander.stop()
         ocrQueue.cancelAllOperations()
+        cancelOCRScheduleTimer()
+        cancelCapturePauseTimer()
+        if let ocrPowerObserver {
+            NotificationCenter.default.removeObserver(ocrPowerObserver)
+            self.ocrPowerObserver = nil
+        }
         retentionTimer?.setEventHandler {}
         retentionTimer?.cancel()
         retentionTimer = nil
@@ -154,7 +170,67 @@ extension MacClippyRuntime {
             self?.pendingOCRBytes = 0
             self?.pendingOCRJobsByGeneration.removeAll()
             self?.pendingOCRBytesByGeneration.removeAll()
+            self?.deferredOCRJobs.removeAll()
         }
+    }
+
+    func noteDisplayLifecycleForCapture(_ event: MacClippyDisplayLifecycleEvent) {
+        guard let suspended = MacClippyDisplayGenerationPolicy.shouldSuspendPasteboardPolling(for: event) else {
+            return
+        }
+        observer.setPollingSuspended(suspended)
+    }
+
+    func ignoreNextCopy() {
+        observer.ignoreNextCopy()
+    }
+
+    func applyCapturePausePreference(now: Date = Date()) {
+        let defaults = UserDefaults.standard
+        let wantsPause = defaults.bool(forKey: MacClippyRetentionPreferences.privacyPauseKey)
+        let until = MacClippyRetentionPreferences.pauseUntil(from: defaults)
+        guard wantsPause else {
+            observer.setCapturePaused(false)
+            cancelCapturePauseTimer()
+            return
+        }
+        if let until {
+            guard MacClippyCapturePausePolicy.isActive(now: now, until: until) else {
+                defaults.set(false, forKey: MacClippyRetentionPreferences.privacyPauseKey)
+                defaults.removeObject(forKey: MacClippyRetentionPreferences.pauseUntilKey)
+                observer.setCapturePaused(false)
+                cancelCapturePauseTimer()
+                return
+            }
+            observer.setCapturePaused(true)
+            armCapturePauseTimer(until: until)
+            return
+        }
+        observer.setCapturePaused(true)
+        cancelCapturePauseTimer()
+    }
+
+    func armCapturePauseTimer(until: Date?) {
+        cancelCapturePauseTimer()
+        guard let until, until < Date.distantFuture else { return }
+        let delay = until.timeIntervalSinceNow
+        guard delay > 0 else {
+            applyCapturePausePreference()
+            return
+        }
+        let timer = DispatchSource.makeTimerSource(queue: captureQueue)
+        timer.schedule(deadline: .now() + delay)
+        timer.setEventHandler { [weak self] in
+            self?.applyCapturePausePreference()
+        }
+        capturePauseTimer = timer
+        timer.resume()
+    }
+
+    func cancelCapturePauseTimer() {
+        capturePauseTimer?.setEventHandler {}
+        capturePauseTimer?.cancel()
+        capturePauseTimer = nil
     }
 
     func refreshPermissionDependentFeatures() {

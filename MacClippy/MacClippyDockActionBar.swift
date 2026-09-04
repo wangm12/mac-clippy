@@ -6,18 +6,20 @@ import MacClippyCore
 import MacClippyPlatform
 
 struct MacClippyCreateSnippetEditor: View {
-    let onCreate: (String, String?, String, @escaping (Bool) -> Void) -> Void
+    let onCreate: (String, String?, String, String?, @escaping (Bool) -> Void) -> Void
     let onCancel: () -> Void
 
     private enum Field {
         case name
         case trigger
+        case folder
         case body
     }
 
     @FocusState private var focusedField: Field?
     @State private var name = ""
     @State private var trigger = ""
+    @State private var folder = ""
     @State private var snippetBody = ""
     @State private var isSubmitting = false
 
@@ -39,8 +41,18 @@ struct MacClippyCreateSnippetEditor: View {
                 TextField("Trigger (optional, e.g. ;email)", text: $trigger)
                     .textFieldStyle(.roundedBorder)
                     .focused($focusedField, equals: .trigger)
-                    .onSubmit { focusedField = .body }
+                    .onSubmit { focusedField = .folder }
                 Text("Leave blank if you only want to copy or paste it manually.")
+                    .font(.caption2)
+                    .foregroundStyle(MacClippyDockTheme.muted2Color)
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                TextField("Folder (optional, e.g. Work/Email)", text: $folder)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($focusedField, equals: .folder)
+                    .onSubmit { focusedField = .body }
+                Text("Use / to nest folders. Body can include {{date}}, {{time}}, and {{clipboard}}.")
                     .font(.caption2)
                     .foregroundStyle(MacClippyDockTheme.muted2Color)
             }
@@ -69,7 +81,7 @@ struct MacClippyCreateSnippetEditor: View {
             }
         }
         .padding(28)
-        .frame(width: 440, height: 410, alignment: .topLeading)
+        .frame(width: 440, height: 468, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { focusedField = .name }
     }
@@ -83,10 +95,12 @@ struct MacClippyCreateSnippetEditor: View {
         guard canCreate, !isSubmitting else { return }
         isSubmitting = true
         let normalizedTrigger = trigger.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedFolder = folder.trimmingCharacters(in: .whitespacesAndNewlines)
         onCreate(
             name.trimmingCharacters(in: .whitespacesAndNewlines),
             normalizedTrigger.isEmpty ? nil : normalizedTrigger,
             snippetBody,
+            normalizedFolder.isEmpty ? nil : normalizedFolder,
             { _ in
                 isSubmitting = false
             }
@@ -254,7 +268,9 @@ struct SelectionBarButton: View {
                     .stroke(selectionRingColor(isDestructive: isDestructive), lineWidth: MacClippyDockTheme.pillBorderWidth)
             }
         }
-        .onHover { hovering in isHovered = hovering }
+        .onContinuousHover { phase in
+            isHovered = MacClippyDockHoverPolicy.isHovering(phase)
+        }
         .animation(MacClippyMotion.animation(MacClippyMotion.hoverAnimation, reduceMotion: reduceMotion), value: isHovered)
     }
 
@@ -289,7 +305,9 @@ struct SelectionBarButton: View {
                 .shadow(color: isPrimary ? MacClippyDockTheme.accentColor.opacity(0.25) : .clear, radius: 8, y: 2)
         }
         .buttonStyle(.plain)
-        .onHover { hovering in isHovered = hovering }
+        .onContinuousHover { phase in
+            isHovered = MacClippyDockHoverPolicy.isHovering(phase)
+        }
         .animation(MacClippyMotion.animation(MacClippyMotion.hoverAnimation, reduceMotion: reduceMotion), value: isHovered)
     }
 

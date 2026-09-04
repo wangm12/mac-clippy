@@ -29,6 +29,24 @@ final class MacClippyFilePresentationTests: XCTestCase {
         XCTAssertEqual(MacClippyFilePresentation.storePreview(for: urls), "2 files · a.txt")
     }
 
+    func testPersistedPreviewRoundTripsFileURLsForMetadataOnlyCards() {
+        let urls = [
+            URL(fileURLWithPath: "/tmp/a.txt"),
+            URL(fileURLWithPath: "/tmp/b.txt")
+        ]
+        let stored = MacClippyFilePresentation.persistPreview(for: urls)
+        XCTAssertEqual(MacClippyFilePresentation.fileURLs(fromStoredPreview: stored), urls)
+        XCTAssertEqual(
+            MacClippyFilePresentation.displayPreview(fromStoredPreview: stored),
+            "2 files · a.txt"
+        )
+        XCTAssertEqual(
+            MacClippyFilePresentation.fileURLs(fromStoredPreview: "2 files · a.txt"),
+            [],
+            "legacy filename previews stay display-only"
+        )
+    }
+
     func testDisplayNameAndPathPreferFilenameThenPOSIXPath() {
         let url = URL(fileURLWithPath: "/Users/me/H1B/passport.pdf")
         XCTAssertEqual(MacClippyFilePresentation.displayName(for: url), "passport.pdf")

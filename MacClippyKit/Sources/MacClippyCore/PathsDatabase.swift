@@ -5,10 +5,12 @@ public struct MacClippyPaths: Sendable {
     public let rootURL: URL
     public let databasesURL: URL
     public let blobsURL: URL
+    public let thumbnailsURL: URL
     public let clipboardDatabaseURL: URL
     public let searchDatabaseURL: URL
     public let pinboardDatabaseURL: URL
     public let snippetDatabaseURL: URL
+    public let diagnosticsJournalURL: URL
 
     public init(rootURL: URL? = nil, fileManager: FileManager = .default) throws {
         let applicationSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -17,13 +19,16 @@ public struct MacClippyPaths: Sendable {
         self.rootURL = root.standardizedFileURL
         databasesURL = root.appendingPathComponent("databases", isDirectory: true)
         blobsURL = root.appendingPathComponent("blobs", isDirectory: true)
+        thumbnailsURL = root.appendingPathComponent(MacClippyThumbnailCachePolicy.directoryName, isDirectory: true)
         clipboardDatabaseURL = databasesURL.appendingPathComponent("clipboard.sqlite")
         searchDatabaseURL = databasesURL.appendingPathComponent("search.sqlite")
         pinboardDatabaseURL = databasesURL.appendingPathComponent("pinboards.sqlite")
         snippetDatabaseURL = databasesURL.appendingPathComponent("snippets.sqlite")
+        diagnosticsJournalURL = root.appendingPathComponent("diagnostics.jsonl")
         try fileManager.createDirectory(at: self.rootURL, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: databasesURL, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: blobsURL, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: thumbnailsURL, withIntermediateDirectories: true)
     }
 }
 

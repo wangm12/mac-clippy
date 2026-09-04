@@ -18,7 +18,9 @@ extension MacClippyDockModel {
         let currentHistoryGeneration = historyLoadGeneration
         let query = query
         let runtimeReference = runtime
-        isLoading = true
+        isLoading = MacClippyDockSessionOpenPolicy.shouldPublishLoading(
+            hasVisibleSnapshot: !historyItems.isEmpty
+        )
         clearHistoryError()
         clearPageError()
 

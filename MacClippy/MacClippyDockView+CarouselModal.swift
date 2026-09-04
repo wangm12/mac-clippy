@@ -195,7 +195,14 @@ extension MacClippyDockView {
                         ForEach(Array(visibleItems.enumerated()), id: \.element.id) { index, item in
                             card(item, index: index)
                                 .id(item.id)
-                                .transition(MacClippyMotion.cardListTransition(reduceMotion: reduceMotion))
+                                .transition(
+                                    MacClippyMotion.cardListTransition(
+                                        reduceMotion: !MacClippyDockSessionOpenPolicy.shouldAnimateCardList(
+                                            hasCompletedInitialPaint: model.hasCompletedInitialPaint,
+                                            reduceMotion: reduceMotion
+                                        )
+                                    )
+                                )
                                 .onAppear {
                                     model.loadMoreHistoryIfNeeded(after: item.id)
                                     model.loadMorePinboardIfNeeded(after: item.id)
@@ -233,6 +240,7 @@ extension MacClippyDockView {
             .frame(height: MacClippyDockCardMetrics.carouselHeight(for: dynamicTypeSize))
             .mask { carouselEdgeFade }
             .overlay { MacClippyDockScrollSignpostProbe().allowsHitTesting(false) }
+            .onAppear { model.noteCardListAppeared() }
         }
     }
 
@@ -298,7 +306,14 @@ extension MacClippyDockView {
                         ForEach(Array(visibleSnippets.enumerated()), id: \.element.id) { index, snippet in
                             snippetCard(snippet, index: index)
                                 .id(snippet.id)
-                                .transition(MacClippyMotion.cardListTransition(reduceMotion: reduceMotion))
+                                .transition(
+                                    MacClippyMotion.cardListTransition(
+                                        reduceMotion: !MacClippyDockSessionOpenPolicy.shouldAnimateCardList(
+                                            hasCompletedInitialPaint: model.hasCompletedInitialPaint,
+                                            reduceMotion: reduceMotion
+                                        )
+                                    )
+                                )
                         }
                     }
                 }
@@ -324,6 +339,7 @@ extension MacClippyDockView {
         .frame(height: MacClippyDockCardMetrics.carouselHeight(for: dynamicTypeSize))
         .mask { carouselEdgeFade }
         .overlay { MacClippyDockScrollSignpostProbe().allowsHitTesting(false) }
+        .onAppear { model.noteCardListAppeared() }
     }
 
     private var snippetAddCard: some View {

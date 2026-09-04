@@ -26,6 +26,22 @@ final class MacClippyRuntimeBatchTests: XCTestCase {
         }
     }
 
+    func testCreateBackupWritesAValidSnapshotOfLiveStorage() throws {
+        _ = try runtime.appendTestRecord(.text("keep-me"))
+        let snapshot = tempRoot.appendingPathComponent("snapshot", isDirectory: true)
+
+        let manifest = try runtime.createBackup(at: snapshot)
+
+        XCTAssertEqual(
+            Set(manifest.databaseNames),
+            Set(MacClippyBackupSettingsPolicy.requiredDatabaseNames)
+        )
+        let validation = try MacClippyBackup.validate(at: snapshot)
+        XCTAssertTrue(MacClippyBackupSettingsPolicy.canRestore(validation))
+        XCTAssertEqual(validation.databaseRowCounts["clipboard"], 1)
+        XCTAssertTrue(MacClippyBackupSettingsPolicy.containsManifest(at: snapshot))
+    }
+
     // MARK: - Batch delete
 
     @MainActor

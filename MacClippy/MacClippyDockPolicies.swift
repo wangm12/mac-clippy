@@ -40,10 +40,11 @@ enum MacClippyDockOutsideClickPolicy {
         panelFrame: CGRect,
         clickLocation: CGPoint,
         isInsideExcludedWindow: Bool,
+        isInsideStatusItem: Bool = false,
         ignoreUntil: Date,
         now: Date
     ) -> Bool {
-        guard !isInsideExcludedWindow else { return false }
+        guard !isInsideExcludedWindow, !isInsideStatusItem else { return false }
         return MacClippyDockLifecyclePolicy.shouldDismissForOutsideClick(
             panelFrame: panelFrame,
             clickLocation: clickLocation,
@@ -166,11 +167,19 @@ enum MacClippyDockCardBorderPolicy {
 }
 
 enum MacClippyDockHoverPolicy {
-    // AppKit sends hover-exit on mouseDown and hover-enter on mouseUp.
-    // Applying that flicker while a tag click also changes `selected`
-    // restarts the header's inherited animation and flashes the tint twice.
+    // Leave always updates hover. Swallowing mouseDown exits left pills
+    // and cards stuck in the accent tint after the pointer moved away.
     static func shouldApplyHover(_ hovering: Bool, pressedMouseButtons: Int) -> Bool {
-        hovering || pressedMouseButtons == 0
+        _ = hovering
+        _ = pressedMouseButtons
+        return true
+    }
+
+    static func isHovering(_ phase: HoverPhase) -> Bool {
+        if case .active = phase {
+            return true
+        }
+        return false
     }
 }
 

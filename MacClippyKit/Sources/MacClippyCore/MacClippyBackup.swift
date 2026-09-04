@@ -211,6 +211,61 @@ public enum MacClippyBackup {
         return try validate(at: destinationURL, fileManager: fileManager)
     }
 
+    /// Copies a validated snapshot into an existing live Application Support
+    /// root. Callers must close live database queues first. Databases move
+    /// from the snapshot root into `databases/`; `blobs/` is replaced; stale
+    /// thumbnails are cleared.
+    @discardableResult
+    public static func installIntoLiveRoot(
+        from snapshotURL: URL,
+        liveRootURL: URL,
+        fileManager: FileManager = .default
+    ) throws -> MacClippyBackupValidation {
+        let validation = try validate(at: snapshotURL, fileManager: fileManager)
+        guard MacClippyBackupSettingsPolicy.canRestore(validation) else {
+            throw MacClippyBackupError.invalidManifest
+        }
+        try fileManager.createDirectory(at: liveRootURL, withIntermediateDirectories: true)
+        for operation in MacClippyBackupSettingsPolicy.installOperations() {
+            let source = try validatedSnapshotURL(operation.sourceRelativePath, root: snapshotURL)
+            let destination = liveRootURL.appendingPathComponent(operation.destinationRelativePath)
+            switch operation.kind {
+            case .database:
+                try fileManager.createDirectory(
+                    at: destination.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try MacClippyBackupSettingsPolicy.replaceLiveItem(
+                    at: destination,
+                    withContentsOf: source,
+                    fileManager: fileManager
+                )
+                for sidecar in MacClippyBackupSettingsPolicy.sqliteSidecarRelativePaths(
+                    for: operation.destinationRelativePath
+                ) {
+                    let sidecarURL = liveRootURL.appendingPathComponent(sidecar)
+                    if fileManager.fileExists(atPath: sidecarURL.path) {
+                        try fileManager.removeItem(at: sidecarURL)
+                    }
+                }
+            case .directory:
+                try MacClippyBackupSettingsPolicy.replaceLiveItem(
+                    at: destination,
+                    withContentsOf: source,
+                    fileManager: fileManager
+                )
+            }
+        }
+        for relative in MacClippyBackupSettingsPolicy.directoriesToClearOnRestore() {
+            let url = liveRootURL.appendingPathComponent(relative, isDirectory: true)
+            if fileManager.fileExists(atPath: url.path) {
+                try fileManager.removeItem(at: url)
+            }
+            try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+        return validation
+    }
+
     private static func validateNames(_ names: [String]) throws {
         guard !names.isEmpty,
               Set(names).count == names.count,

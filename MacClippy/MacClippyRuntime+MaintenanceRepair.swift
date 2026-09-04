@@ -84,6 +84,7 @@ extension MacClippyRuntime {
                 guard shouldContinue() else { throw CancellationError() }
                 try searchStore.remove(kind: .clipboardItem, id: id)
                 try clipboardStore.delete(id: id)
+                thumbnailDiskCache.remove(id: id)
             }
             guard recordIDs.count == 256 else { return }
             offset += recordIDs.count

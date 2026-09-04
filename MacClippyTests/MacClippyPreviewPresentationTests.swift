@@ -143,7 +143,8 @@ final class MacClippyPreviewPresentationTests: XCTestCase {
 
         let chrome = try appSource(named: "MacClippyDockPreview+Chrome.swift")
         XCTAssertTrue(chrome.contains("macClippyChromeButtonStyle"))
-        XCTAssertTrue(chrome.contains("MacClippyDockHoverPolicy.shouldApplyHover"))
+        XCTAssertTrue(chrome.contains("MacClippyDockHoverPolicy.isHovering"))
+        XCTAssertTrue(chrome.contains("onContinuousHover"))
         XCTAssertTrue(chrome.contains("contentTextColor"))
         XCTAssertFalse(chrome.contains("foregroundStyle(.primary)"))
         XCTAssertFalse(chrome.contains("foregroundStyle(.secondary)"))

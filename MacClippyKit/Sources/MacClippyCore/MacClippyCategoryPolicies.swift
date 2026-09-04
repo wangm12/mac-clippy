@@ -64,6 +64,12 @@ public enum MacClippyClipboardDropPolicy {
         RecordID(rawValue: payload.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
+    public static func preferredTypeIdentifier(among typeIdentifiers: [String]) -> String? {
+        typeIdentifiers.contains(MacClippyCardDragPolicy.recordTypeIdentifier)
+            ? MacClippyCardDragPolicy.recordTypeIdentifier
+            : nil
+    }
+
     public static func decision(for payload: String, existingIDs: [RecordID]) -> MacClippyClipboardDropDecision {
         guard let recordID = recordID(from: payload) else { return .invalid }
         return existingIDs.contains(recordID) ? .duplicate : .accept

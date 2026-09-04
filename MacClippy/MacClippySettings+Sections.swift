@@ -26,12 +26,37 @@ extension MacClippySettingsView {
                 .pickerStyle(.segmented)
                 .frame(width: MacClippySettingsMetrics.historyPickerWidth)
             }
-            .macClippySettingsNote(
-                selectedHistoryCapacity == .unlimited
-                    ? "Unlimited history can use more disk space over time."
-                    : nil,
-                tone: .warning
-            )
+            if let storageUsage {
+                ForEach(
+                    MacClippyStorageDashboardPolicy.rows(from: storageUsage),
+                    id: \.kind
+                ) { row in
+                    MacClippySettingsRow(
+                        title: row.title,
+                        detail: "\(row.usedLabel) of \(row.capLabel)"
+                    ) {
+                        ProgressView(value: min(max(row.fraction, 0), 1))
+                            .frame(width: 120)
+                    }
+                }
+            }
+            MacClippySettingsRow(
+                title: "Compress old images",
+                detail: "Downscale unpinned images older than 7 days. Pinned items stay full size."
+            ) {
+                Button("Compress") { compressOldImages() }
+                    .disabled(isCompressingImages || isBackupBusy)
+            }
+            if isCompressingImages {
+                ProgressView("Compressing old images…")
+                    .controlSize(.small)
+            }
+            if let imageCompressMessage {
+                MacClippySettingsNote(
+                    text: imageCompressMessage,
+                    tone: imageCompressMessageIsError ? .danger : .info
+                )
+            }
         }
     }
 
@@ -77,6 +102,23 @@ extension MacClippySettingsView {
                 .frame(width: 190, alignment: .trailing)
             }
             .macClippySettingsNote(hotKeyError, tone: .danger)
+        }
+    }
+
+    var pasteSection: some View {
+        MacClippySettingsGroup(
+            title: "Paste",
+            subtitle: "Return pastes formatted content. Shift-Return pastes plain text."
+        ) {
+            MacClippySettingsRow(
+                title: "Always paste as plain text",
+                detail: alwaysPastePlainText
+                    ? "Return pastes unformatted text. Shift-Return restores formatting."
+                    : "Return keeps the original formatting. Shift-Return pastes plain text."
+            ) {
+                Toggle("Always paste as plain text", isOn: $alwaysPastePlainText)
+                    .labelsHidden()
+            }
         }
     }
 
@@ -159,6 +201,10 @@ extension MacClippySettingsView {
                     .onChange(of: launchAtLogin) { _, enabled in updateLaunchAtLogin(enabled) }
             }
             .macClippySettingsNote(launchAtLoginError, tone: .danger)
+            .macClippySettingsNote(
+                MacClippyLaunchAtLoginRegistration.warningMessage(),
+                tone: .warning
+            )
         }
     }
 
@@ -173,6 +219,34 @@ extension MacClippySettingsView {
             ) {
                 Toggle("Pause capture", isOn: $privacyPause)
                     .labelsHidden()
+                    .onChange(of: privacyPause) { _, enabled in
+                        persistTimedPause(enabled: enabled)
+                    }
+            }
+            MacClippySettingsRow(
+                title: "Pause duration",
+                detail: "Automatically resume capture after this interval"
+            ) {
+                Picker("Pause duration", selection: $pauseDurationSeconds) {
+                    ForEach(MacClippyTimedPauseDuration.allCases, id: \.rawValue) { duration in
+                        Text(duration.title).tag(duration.rawValue)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 160)
+                .onChange(of: pauseDurationSeconds) { _, _ in
+                    if privacyPause {
+                        persistTimedPause(enabled: true)
+                    }
+                }
+            }
+            MacClippySettingsRow(
+                title: "Ignore next copy",
+                detail: "⇧⌥⌘C skips the next clipboard change without pausing capture"
+            ) {
+                Button("Skip next copy") {
+                    NotificationCenter.default.post(name: .macClippyIgnoreNextCopyRequested, object: nil)
+                }
             }
             MacClippySettingsRow(
                 title: "Privacy & data notice",
@@ -214,11 +288,39 @@ extension MacClippySettingsView {
                         : nil,
                     tone: .warning
                 )
-                MacClippySettingsField(title: "Excluded app bundle IDs") {
-                    TextField("com.example.app, com.example.other", text: $excludedApps)
-                        .font(.system(.body, design: .monospaced))
-                        .textFieldStyle(.plain)
-                        .accessibilityLabel("Excluded app bundle IDs")
+                MacClippySettingsField(
+                    title: "Excluded apps",
+                    detail: "Choose apps to skip. Password managers stay excluded."
+                ) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(userExcludedAppRows) { row in
+                            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(row.title)
+                                    Text(row.bundleID)
+                                        .font(.caption.monospaced())
+                                        .foregroundStyle(.secondary)
+                                        .textSelection(.enabled)
+                                }
+                                Spacer(minLength: 8)
+                                Button("Remove") {
+                                    excludedApps = MacClippyExclusionAppPickerPolicy.remove(
+                                        row.bundleID,
+                                        from: excludedApps
+                                    )
+                                }
+                                .accessibilityLabel("Remove \(row.title)")
+                            }
+                        }
+                        if userExcludedAppRows.isEmpty {
+                            Text("No extra apps excluded")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                        Button("Add App…") { chooseExcludedApp() }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityLabel("Excluded apps")
                 }
                 MacClippySettingsField(
                     title: "Excluded text patterns",
@@ -272,6 +374,39 @@ extension MacClippySettingsView {
         Binding(
             get: { selectedHistoryCapacity.rawValue },
             set: { maxAgeDays = MacClippyHistoryCapacity(rawValue: $0)?.maxAgeDays ?? MacClippyRetentionPreferences.defaultMaxAgeDays }
+        )
+    }
+
+    var userExcludedAppRows: [MacClippyExcludedAppRow] {
+        MacClippyExclusionAppPickerPolicy.rows(
+            stored: excludedApps,
+            displayNames: excludedAppDisplayNames
+        ).filter(\.canRemove)
+    }
+
+    var excludedAppDisplayNames: [String: String] {
+        Dictionary(
+            uniqueKeysWithValues: MacClippyExclusionAppPickerPolicy.userBundleIDs(from: excludedApps).map {
+                ($0, excludedAppDisplayName($0))
+            }
+        )
+    }
+
+    func excludedAppDisplayName(_ bundleID: String) -> String {
+        let localizedName = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID).map {
+            FileManager.default.displayName(atPath: $0.path)
+        }
+        return MacClippyExclusionAppPickerPolicy.displayTitle(
+            bundleID: bundleID,
+            localizedName: localizedName
+        )
+    }
+
+    func persistTimedPause(enabled: Bool) {
+        let duration = MacClippyTimedPauseDuration(rawValue: pauseDurationSeconds) ?? .fiveMinutes
+        MacClippyRetentionPreferences.applyPause(
+            enabled: enabled,
+            duration: duration
         )
     }
 
@@ -419,6 +554,8 @@ struct MacClippySettingsRow<Control: View>: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             control()
+                .accessibilityLabel(title)
+                .accessibilityHint(detail ?? "")
         }
     }
 }

@@ -75,6 +75,14 @@ extension MacClippyRuntime {
         lifecycleToken: MacClippyRuntimeLifecycleToken
     ) throws {
         guard let result = try withCurrentLifecycleStoreLock(lifecycleToken, { () throws -> (ClipboardItemMeta, Data?) in
+            let contentHash = MacClippyCaptureDedupPolicy.contentHash(
+                payload: payload,
+                representations: representations
+            )
+            if let reused = try clipboardStore.touchDuplicate(contentHash: contentHash) {
+                return (reused, nil)
+            }
+
             var generatedBlobID: String?
             let record: ClipboardRecord
 
@@ -102,10 +110,12 @@ extension MacClippyRuntime {
 
             let meta: ClipboardItemMeta
             do {
-                meta = try clipboardStore.append(
+                let persistResult = try clipboardStore.appendOrReuse(
                     record,
                     representations: representations,
                     sourceAppBundleID: sourceAppBundleID,
+                    sourceAppDisplayName: MacClippySourceAppResolver.displayName(for: sourceAppBundleID),
+                    contentHash: contentHash,
                     spillPayload: { [blobStore] data in
                         // Spill oversized representation payloads to BlobStore
                         // so the side table stays small; the bytes are
@@ -133,6 +143,17 @@ extension MacClippyRuntime {
                         }
                     }
                 )
+                if persistResult.reusedExisting {
+                    if let generatedBlobID {
+                        do {
+                            try blobStore.delete(id: generatedBlobID)
+                        } catch {
+                            storageDegradedReasons.insert("orphan-blob-cleanup-failed")
+                        }
+                    }
+                    return (persistResult.meta, nil)
+                }
+                meta = persistResult.meta
             } catch {
                 if let generatedBlobID {
                     do {
@@ -179,7 +200,6 @@ extension MacClippyRuntime {
         if let imageData = result.1 {
             scheduleOCR(for: imageData, recordID: result.0.id, lifecycleToken: lifecycleToken)
         }
-
     }
 
     func enforceRetention(for lifecycleToken: MacClippyRuntimeLifecycleToken) {
@@ -230,9 +250,7 @@ extension MacClippyRuntime {
         guard isCurrentLifecycleToken(lifecycleToken) else { return }
         if usesRuntimeExclusionRules {
             observer.updateExclusionRules(MacClippyRetentionPreferences.exclusionRules())
-            observer.setCapturePaused(
-                UserDefaults.standard.bool(forKey: MacClippyRetentionPreferences.privacyPauseKey)
-            )
+            applyCapturePausePreference()
         }
 
         // Snippet event taps are AppKit resources and must be changed on the
@@ -369,6 +387,21 @@ extension MacClippyRuntime {
             }
         }
         return (result, ftsRepairSucceeded)
+    }
+
+    func createBackup(at destinationURL: URL) throws -> MacClippyBackupManifest {
+        try withStoreLock {
+            try MacClippyBackup.create(
+                sources: [
+                    MacClippyBackupSource(name: "clipboard", database: databases[0]),
+                    MacClippyBackupSource(name: "search", database: databases[1]),
+                    MacClippyBackupSource(name: "pinboards", database: databases[2]),
+                    MacClippyBackupSource(name: "snippets", database: databases[3])
+                ],
+                blobsURL: paths.blobsURL,
+                at: destinationURL
+            )
+        }
     }
 
 }

@@ -94,6 +94,9 @@ final class MacClippyCardThumbnailLoader: @unchecked Sendable {
     let cache: NSCache<NSString, CacheEntry>
     let queue: OperationQueue
     let loadImage: LoadImage
+    let diskCache: MacClippyThumbnailDiskCache?
+    let encodePNG: @Sendable (CGImage) -> Data?
+    let decodePNG: @Sendable (Data) -> CGImage?
     var afterDecode: @Sendable () -> Void = {}
     var onFinish: (@Sendable (CGImage?) -> Void)?
 
@@ -103,11 +106,17 @@ final class MacClippyCardThumbnailLoader: @unchecked Sendable {
     init(
         cache: NSCache<NSString, CacheEntry>,
         queue: OperationQueue,
-        loadImage: @escaping LoadImage
+        loadImage: @escaping LoadImage,
+        diskCache: MacClippyThumbnailDiskCache? = nil,
+        encodePNG: @escaping @Sendable (CGImage) -> Data? = { MacClippyThumbnailDownsampler.pngData(from: $0) },
+        decodePNG: @escaping @Sendable (Data) -> CGImage? = { MacClippyThumbnailDownsampler.image(fromPNG: $0) }
     ) {
         self.cache = cache
         self.queue = queue
         self.loadImage = loadImage
+        self.diskCache = diskCache
+        self.encodePNG = encodePNG
+        self.decodePNG = decodePNG
     }
 
     func cachedImage(id: RecordID, maxPixelSize: Int) -> CGImage? {
@@ -115,8 +124,24 @@ final class MacClippyCardThumbnailLoader: @unchecked Sendable {
     }
 
     func resetForSessionEnd() {
+        lock.lock()
+        let pending = Array(flights.values)
+        flights.removeAll()
+        lock.unlock()
         queue.cancelAllOperations()
         cache.removeAllObjects()
+        for flight in pending {
+            flight.accounting.markFinished()
+            let waiters = flight.waiters
+            flight.waiters = [:]
+            if Thread.isMainThread {
+                waiters.values.forEach { $0(nil) }
+            } else {
+                DispatchQueue.main.async {
+                    waiters.values.forEach { $0(nil) }
+                }
+            }
+        }
     }
 
     func image(for id: RecordID, maxPixelSize: Int = 480) async -> CGImage? {
@@ -170,10 +195,19 @@ final class MacClippyCardThumbnailLoader: @unchecked Sendable {
         let operation = flight.operation
         let loadImage = self.loadImage
         let afterDecode = self.afterDecode
+        let diskCache = self.diskCache
+        let encodePNG = self.encodePNG
+        let decodePNG = self.decodePNG
         operation.addExecutionBlock { [weak self] in
             guard let self else { return }
             guard !operation.isCancelled else {
                 self.finish(key, flight: flight, image: nil)
+                return
+            }
+            if let diskCache,
+               let png = diskCache.pngData(id: id, maxPixelSize: key.maxPixelSize),
+               let cached = decodePNG(png) {
+                self.finish(key, flight: flight, image: cached)
                 return
             }
             let isCancelled: @Sendable () -> Bool = {
@@ -181,6 +215,9 @@ final class MacClippyCardThumbnailLoader: @unchecked Sendable {
             }
             let image = loadImage(id, key.maxPixelSize, isCancelled)
             afterDecode()
+            if let image, !operation.isCancelled, let png = encodePNG(image) {
+                try? diskCache?.store(png, id: id, maxPixelSize: key.maxPixelSize)
+            }
             self.finish(key, flight: flight, image: image)
         }
         lock.unlock()

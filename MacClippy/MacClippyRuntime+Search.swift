@@ -114,29 +114,7 @@ extension MacClippyRuntime {
         for query: MacClippySearchGrammar.Query,
         contentKind: MacClippyContentKind?
     ) -> MacClippyClipboardMetadataFilter {
-        var filter = MacClippyClipboardMetadataFilter(contentKind: contentKind)
-        for clause in query.clauses {
-            switch clause {
-            case .app:
-                // Display names are resolved at predicate time and are not
-                // stored on source_app. Pushing app: into SQL would drop
-                // `app:微信` / `app:Messages` before SearchRecord can match.
-                break
-            case let .label(value):
-                filter.labelContains.append(value)
-            case .hasLabel:
-                filter.requiresLabel = true
-            case .hasOCR:
-                filter.requiresOCR = true
-            case let .before(date):
-                filter.modifiedBefore.append(date)
-            case let .after(date):
-                filter.modifiedAfter.append(date)
-            case .bare, .type, .url:
-                break
-            }
-        }
-        return filter
+        MacClippyClipboardMetadataFilter.fromStructuredQuery(query, contentKind: contentKind)
     }
 
     func listRequiresURL(for query: MacClippySearchGrammar.Query) -> Bool {

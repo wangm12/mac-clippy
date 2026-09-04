@@ -102,7 +102,7 @@ final class MacClippyCoreTests: XCTestCase {
         _ = try ClipboardStore(database: clipboardDatabase, deviceKey: testKey())
         XCTAssertEqual(
             try appliedMigrations(in: clipboardDatabase),
-            ["001-clipboard-core", "002-clipboard-representations", "003-clipboard-query-indexes", "004-deletion-journal", "005-deletion-records"]
+            ["001-clipboard-core", "002-clipboard-representations", "003-clipboard-query-indexes", "004-deletion-journal", "005-deletion-records", "006-capture-content-hash", "007-structured-search-indexes", "008-search-and-storage-metadata"]
         )
 
         let searchDatabase = try MacClippyDatabase(inMemory: true)

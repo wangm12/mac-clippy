@@ -117,9 +117,12 @@ extension MacClippyCoreTests {
         let expected: [TextTransform: String] = [
             .uppercase: "Uppercase",
             .lowercase: "Lowercase",
+            .titleCase: "Title Case",
             .trim: "Trim whitespace",
             .prettyJSON: "Pretty JSON",
-            .cleanTrackingURL: "Clean tracking URL"
+            .cleanTrackingURL: "Clean tracking URL",
+            .markdownQuote: "Markdown quote",
+            .sortLines: "Sort lines"
         ]
         for transform in TextTransform.allCases {
             let name = transform.displayName

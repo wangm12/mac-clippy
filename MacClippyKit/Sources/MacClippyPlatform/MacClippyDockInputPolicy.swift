@@ -1,4 +1,5 @@
 import AppKit
+import MacClippyCore
 
 public enum MacClippyDockInteractionMode: Equatable {
     case picker
@@ -35,7 +36,7 @@ public enum MacClippyDockKeyAction: Equatable {
     case copy
     case moveFocus(MacClippyDockSelectionDirection)
     case extendRange(MacClippyDockSelectionDirection)
-    case paste
+    case paste(plain: Bool)
     case appendSearch(String)
     case deleteSearchCharacter
     case selectAll
@@ -56,6 +57,7 @@ private struct MacClippyDockKeyDownContext {
     let detailsEditing: Bool
     let hasTextSelection: Bool
     let isLoading: Bool
+    let alwaysPastePlainText: Bool
 }
 
 public enum MacClippyDockKeyRouterPolicy {
@@ -76,7 +78,8 @@ public enum MacClippyDockKeyRouterPolicy {
         hasMultipleSelection: Bool,
         detailsEditing: Bool = false,
         hasTextSelection: Bool = false,
-        isLoading: Bool = false
+        isLoading: Bool = false,
+        alwaysPastePlainText: Bool = false
     ) -> MacClippyDockKeyAction {
         switch event {
         case let .keyUp(keyCode, _):
@@ -93,7 +96,8 @@ public enum MacClippyDockKeyRouterPolicy {
                 hasMultipleSelection: hasMultipleSelection,
                 detailsEditing: detailsEditing,
                 hasTextSelection: hasTextSelection,
-                isLoading: isLoading
+                isLoading: isLoading,
+                alwaysPastePlainText: alwaysPastePlainText
             ))
         }
     }
@@ -223,7 +227,13 @@ private extension MacClippyDockKeyRouterPolicy {
         guard context.keyCode == 36 || context.keyCode == 76 else { return nil }
         guard context.modifiers.isDisjoint(with: commandModifiers) else { return .native }
         guard !context.isRepeat else { return .consume }
-        return context.hasCardFocus ? .paste : .consume
+        guard context.hasCardFocus else { return .consume }
+        return .paste(
+            plain: MacClippyPastePlainTextPolicy.shouldPastePlain(
+                alwaysPlain: context.alwaysPastePlainText,
+                shiftHeld: context.modifiers.contains(.shift)
+            )
+        )
     }
 
     private static func detailsAction(

@@ -65,6 +65,13 @@ extension MacClippyDockView {
                 Spacer(minLength: 0)
             }
 
+            if let folder = snippet.folder, !folder.isEmpty {
+                Text(folder)
+                    .font(.caption2)
+                    .foregroundStyle(MacClippyDockTheme.mutedColor)
+                    .lineLimit(1)
+            }
+
             if let trigger = snippet.trigger, !trigger.isEmpty {
                 Text(trigger)
                     .font(.callout.monospaced())

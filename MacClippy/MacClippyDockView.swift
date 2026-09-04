@@ -54,8 +54,8 @@ struct MacClippyCardHoverModifier: ViewModifier {
             // offset from the rounded face.
             .environment(\.macClippyCardHovered, active)
             .animation(MacClippyMotion.animation(MacClippyMotion.hoverAnimation, reduceMotion: reduceMotion), value: active)
-            .onHover { hovering in
-                isHovered = enabled && hovering
+            .onContinuousHover { phase in
+                isHovered = enabled && MacClippyDockHoverPolicy.isHovering(phase)
             }
     }
 }
@@ -96,6 +96,7 @@ struct MacClippyDockView: View {
     @State var shouldRestoreSearchFocus = false
     @State var modalFocusGeneration: UInt = 0
     @State var sourcePresentationGeneration: UInt = 0
+    @State var sourceResolveCoalescer = MacClippyMainQueueCoalescer()
     @Namespace var headerGlassNamespace
 
     var reduceMotion: Bool {
@@ -213,7 +214,9 @@ struct MacClippyDockView: View {
             )
         }
         .onReceive(NotificationCenter.default.publisher(for: .macClippySourceAppPresentationDidResolve)) { _ in
-            sourcePresentationGeneration &+= 1
+            sourceResolveCoalescer.schedule {
+                sourcePresentationGeneration &+= 1
+            }
         }
         // Read the token so cards that initially rendered a source placeholder
         // are recomputed once the background LaunchServices lookup completes.

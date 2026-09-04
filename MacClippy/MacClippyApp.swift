@@ -1,5 +1,4 @@
 import AppKit
-import ServiceManagement
 import SwiftUI
 
 import MacClippyCore
@@ -24,6 +23,13 @@ enum MacClippyHotKeyRecordingPolicy {
     ) -> Bool {
         wasRegisteredBeforeRecording && didStart && !isCurrentlyRegistered
     }
+
+    static func shouldRestoreSecondaryHotKey(
+        wasRegisteredBeforeRecording: Bool,
+        didStart: Bool
+    ) -> Bool {
+        wasRegisteredBeforeRecording && didStart
+    }
 }
 
 private enum MacClippyHotKeyStatus {
@@ -38,26 +44,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var clipboardHotKey = MacClippyGlobalHotKey(
         descriptor: .load(from: .standard),
         callback: { [weak self] in
-            self?.dockController?.toggle()
+            self?.dockController?.toggle(source: .hotKey)
+        }
+    )
+    lazy var ignoreNextCopyHotKey = MacClippyGlobalHotKey(
+        descriptor: .load(from: .standard, role: .ignoreNextCopy),
+        role: .ignoreNextCopy,
+        callback: { [weak self] in
+            self?.runtime?.ignoreNextCopy()
         }
     )
     var runtime: MacClippyRuntime?
-    private var dockController: MacClippyDockController?
+    var dockController: MacClippyDockController?
     var bundledApplicationIcon: NSImage?
     private var didStart = false
     private var hotKeyDescriptorObserver: NSObjectProtocol?
     private var hotKeyRecordingObserver: NSObjectProtocol?
     private var presentationPreferencesObserver: NSObjectProtocol?
+    private var ignoreNextCopyObserver: NSObjectProtocol?
     private var isHotKeyRecording = false
     private var hotKeyWasRegisteredBeforeRecording = false
+    private var ignoreNextWasRegisteredBeforeRecording = false
     private var registeredHotKeyDescriptor = MacClippyGlobalHotKeyDescriptor.load(from: .standard)
     private var privacyAlert: NSAlert?
     var maintenanceGeneration: UInt = 0
+    let displayLifecycleCoordinator = MacClippyDisplayLifecycleCoordinator()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         observeHotKeyDescriptorChanges()
         observeHotKeyRecordingChanges()
         observePresentationPreferencesChanges()
+        observeIgnoreNextCopyRequests()
         bundledApplicationIcon = loadBundledApplicationIcon()
         if let bundledApplicationIcon {
             NSApp.applicationIconImage = bundledApplicationIcon
@@ -83,6 +100,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NotificationCenter.default.removeObserver(presentationPreferencesObserver)
             self.presentationPreferencesObserver = nil
         }
+        if let ignoreNextCopyObserver {
+            NotificationCenter.default.removeObserver(ignoreNextCopyObserver)
+            self.ignoreNextCopyObserver = nil
+        }
+        displayLifecycleCoordinator.stop()
         rollbackStartup()
         privacyAlert = nil
     }
@@ -95,6 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Settings. This gives a revoked/restored Input Monitoring grant a
         // chance to recover without requiring a full relaunch.
         clipboardHotKey.unregister()
+        ignoreNextCopyHotKey.unregister()
         do {
             try clipboardHotKey.register()
             UserDefaults.standard.removeObject(forKey: MacClippyHotKeyStatus.errorKey)
@@ -102,6 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             recordHotKeyRegistrationFailure(operation: "global_hotkey_activation_retry", error: error)
             restoreDockRecoveryPathIfNeeded()
         }
+        registerSecondaryHotKey(ignoreNextCopyHotKey, role: .ignoreNextCopy)
     }
 
     func start() throws {
@@ -122,9 +146,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.runtime = runtime
             registeredHotKeyDescriptor = .load(from: .standard)
             dockController = MacClippyDockController(runtime: runtime)
+            dockController?.statusItemScreenFrame = { [weak self] in
+                Self.statusItemScreenFrame(for: self?.statusItem?.button)
+            }
             launchAtLogin.prepare()
             do {
                 try launchAtLogin.setEnabled(UserDefaults.standard.bool(forKey: MacClippyRetentionPreferences.launchAtLoginKey))
+            } catch MacClippyLaunchAtLoginRegistration.Error.debugBuildRefused {
+                // Debug and DerivedData copies must not become a second login item.
             } catch {
                 MacClippyLog.record(
                     category: .lifecycle,
@@ -141,12 +170,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 recordHotKeyRegistrationFailure(operation: "global_hotkey_startup", error: error)
                 restoreDockRecoveryPathIfNeeded()
             }
+            registerSecondaryHotKey(ignoreNextCopyHotKey, role: .ignoreNextCopy)
             didStart = true
             // Do not enter a synchronous nested modal loop directly from
             // applicationDidFinishLaunching. The app is not fully inside its
             // normal event loop at this point, which can leave an NSAlert
             // visible but unable to dispatch button clicks.
             DispatchQueue.main.async { [weak self] in
+                self?.activateDiagnosticsJournal()
+                self?.startDisplayLifecycleMonitoring()
                 self?.presentPrivacyNoticeIfNeeded()
             }
         } catch {
@@ -157,7 +189,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func rollbackStartup() {
         maintenanceGeneration &+= 1
+        displayLifecycleCoordinator.stop()
         clipboardHotKey.unregister()
+        ignoreNextCopyHotKey.unregister()
         dockController?.cleanup()
         dockController = nil
         runtime?.stop()
@@ -274,7 +308,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard !isHotKeyRecording else { return }
             isHotKeyRecording = true
             hotKeyWasRegisteredBeforeRecording = clipboardHotKey.isRegistered
+            ignoreNextWasRegisteredBeforeRecording = ignoreNextCopyHotKey.isRegistered
             clipboardHotKey.unregister()
+            ignoreNextCopyHotKey.unregister()
             return
         }
 
@@ -283,16 +319,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             didStart: didStart,
             isCurrentlyRegistered: clipboardHotKey.isRegistered
         )
+        let shouldRestoreIgnoreNext = MacClippyHotKeyRecordingPolicy.shouldRestoreSecondaryHotKey(
+            wasRegisteredBeforeRecording: ignoreNextWasRegisteredBeforeRecording,
+            didStart: didStart
+        )
         isHotKeyRecording = false
         hotKeyWasRegisteredBeforeRecording = false
+        ignoreNextWasRegisteredBeforeRecording = false
 
-        guard shouldRestore else { return }
-        do {
-            try clipboardHotKey.register()
-            UserDefaults.standard.removeObject(forKey: MacClippyHotKeyStatus.errorKey)
-        } catch {
-            recordHotKeyRegistrationFailure(operation: "global_hotkey_recording_restore", error: error)
-            restoreDockRecoveryPathIfNeeded()
+        if shouldRestore {
+            do {
+                try clipboardHotKey.register()
+                UserDefaults.standard.removeObject(forKey: MacClippyHotKeyStatus.errorKey)
+            } catch {
+                recordHotKeyRegistrationFailure(operation: "global_hotkey_recording_restore", error: error)
+                restoreDockRecoveryPathIfNeeded()
+            }
+        }
+        if shouldRestoreIgnoreNext {
+            registerSecondaryHotKey(ignoreNextCopyHotKey, role: .ignoreNextCopy)
         }
     }
 
@@ -308,12 +353,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func observeIgnoreNextCopyRequests() {
+        ignoreNextCopyObserver = NotificationCenter.default.addObserver(
+            forName: .macClippyIgnoreNextCopyRequested,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.runtime?.ignoreNextCopy()
+            }
+        }
+    }
+
     private var shouldHideFromMenuBar: Bool {
         UserDefaults.standard.bool(forKey: MacClippyPresentationPreferences.hideFromMenuBarKey)
     }
 
     private var shouldHideDockIcon: Bool {
         UserDefaults.standard.bool(forKey: MacClippyPresentationPreferences.hideDockIconKey)
+    }
+
+    private func registerSecondaryHotKey(
+        _ hotKey: MacClippyGlobalHotKey,
+        role: MacClippyGlobalHotKeyRole
+    ) {
+        do {
+            try hotKey.register()
+        } catch {
+            let operation = MacClippyHotKeyRegistrationPolicy.registrationFailureOperation(for: role)
+            if MacClippyHotKeyRegistrationPolicy.shouldSurfaceSharedRegistrationBanner(for: role) {
+                recordHotKeyRegistrationFailure(operation: operation, error: error)
+            } else {
+                MacClippyLog.record(
+                    category: .hotkey,
+                    code: .hotkeyRegistrationFailed,
+                    operation: operation,
+                    recoveryAction: "check_input_monitoring_or_change_hotkey",
+                    impact: "ignore_next_copy_hotkey_unavailable"
+                )
+            }
+        }
     }
 
     func recordHotKeyRegistrationFailure(operation: String, error: Error? = nil) {
@@ -397,7 +476,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func ensureStatusItem() throws {
+    func ensureStatusItem() throws {
         if let button = statusItem?.button {
             configureStatusItem(button)
             return
@@ -412,14 +491,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         configureStatusItem(button)
     }
 
-    private func removeStatusItem() {
+    func removeStatusItem() {
         guard let statusItem else { return }
         NSStatusBar.system.removeStatusItem(statusItem)
         self.statusItem = nil
     }
 
     @objc func toggleDock(_ sender: Any?) {
-        dockController?.toggle()
+        dockController?.toggle(source: .statusItem)
+    }
+
+    static func statusItemScreenFrame(for button: NSStatusBarButton?) -> CGRect? {
+        guard let button, let window = button.window else { return nil }
+        return window.convertToScreen(button.convert(button.bounds, to: nil))
     }
 
 }
@@ -452,11 +536,7 @@ private final class LaunchAtLoginLifecycle {
     func setEnabled(_ enabled: Bool) throws {
         guard isReady else { throw LaunchAtLoginError.notReady }
 
-        if enabled {
-            try SMAppService.mainApp.register()
-        } else {
-            try SMAppService.mainApp.unregister()
-        }
+        try MacClippyLaunchAtLoginRegistration.setEnabled(enabled)
     }
 }
 

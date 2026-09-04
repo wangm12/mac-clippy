@@ -35,6 +35,10 @@ targets:
     sources:
       - path: MacClippy/MacClippyApp.swift
       - path: MacClippy/MacClippyAppDelegate+Maintenance.swift
+      - path: MacClippy/MacClippyAppDelegate+DisplayLifecycle.swift
+      - path: MacClippy/MacClippyDisplayLifecycleCoordinator.swift
+      - path: MacClippy/MacClippyLaunchAtLoginRegistration.swift
+      - path: MacClippy/MacClippyDockSessionOpen.swift
       - path: MacClippy/MacClippySettings.swift
       - path: MacClippy/MacClippySettingsPreferences.swift
       - path: MacClippy/MacClippySettings+Sections.swift

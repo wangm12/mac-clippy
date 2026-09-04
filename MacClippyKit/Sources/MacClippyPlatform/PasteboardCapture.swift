@@ -75,6 +75,10 @@ public protocol MacClippyPasteboardReading: AnyObject {
         unavailableTypes: [(itemIndex: Int, uti: String)],
         shouldContinue: () -> Bool
     ) -> PasteboardChange
+    /// Reads a specific pasteboard generation when the reader still has it.
+    /// System NSPasteboard only retains the current generation, so the default
+    /// returns nil for any count other than `currentChangeCount()`.
+    func read(changeCount: Int, shouldContinue: () -> Bool) -> PasteboardChange?
 }
 
 public extension MacClippyPasteboardReading {
@@ -96,6 +100,13 @@ public extension MacClippyPasteboardReading {
         shouldContinue: () -> Bool
     ) -> PasteboardChange {
         reread(change: change, unavailableTypes: unavailableTypes)
+    }
+
+    func read(changeCount: Int, shouldContinue: () -> Bool) -> PasteboardChange? {
+        guard currentChangeCount() == changeCount else { return nil }
+        let change = read(shouldContinue: shouldContinue)
+        guard change.changeCount == changeCount else { return nil }
+        return change
     }
 }
 
@@ -276,8 +287,11 @@ public final class MacClippyPasteboardObserver: @unchecked Sendable {
     let reader: PasteboardReading
     var exclusionRules: MacClippyCore.CaptureExclusionRules
     var capturePaused = false
+    var ignoreNextCopyCount = 0
+    var pollingSuspended = false
     let writeSentinel: MacClippyPasteboardWriteSentinel?
-    let pollInterval: TimeInterval
+    var pollInterval: TimeInterval
+    var pollActivity: MacClippyPasteboardPollActivity = .foreground
     let queue: DispatchQueue
     let lifecycleKey = DispatchSpecificKey<Void>()
     let retryState: MacClippyPasteboardReadRetryState
@@ -288,6 +302,9 @@ public final class MacClippyPasteboardObserver: @unchecked Sendable {
     var timer: DispatchSourceTimer?
     var projectionHandler: ProjectionHandler?
     var lastChangeCount: Int?
+    var lastObservedChangeAt: Date?
+    let secondsSinceLastUserInput: () -> TimeInterval
+    let now: () -> Date
 
     public init(
         reader: PasteboardReading = SystemPasteboardReader(),
@@ -305,7 +322,11 @@ public final class MacClippyPasteboardObserver: @unchecked Sendable {
             qos: .userInitiated
         ),
         retryState: MacClippyPasteboardReadRetryState = MacClippyPasteboardReadRetryState(),
-        diagnosticsRecorder: MacClippyDiagnosticsRecorder = .shared
+        diagnosticsRecorder: MacClippyDiagnosticsRecorder = .shared,
+        secondsSinceLastUserInput: @escaping () -> TimeInterval = {
+            MacClippyUserInputIdle.secondsSinceLastInput()
+        },
+        now: @escaping () -> Date = Date.init
     ) {
         self.reader = reader
         self.exclusionRules = exclusionRules
@@ -314,6 +335,8 @@ public final class MacClippyPasteboardObserver: @unchecked Sendable {
         self.queue = queue
         self.retryState = retryState
         self.diagnosticsRecorder = diagnosticsRecorder
+        self.secondsSinceLastUserInput = secondsSinceLastUserInput
+        self.now = now
         queue.setSpecific(key: lifecycleKey, value: ())
     }
 

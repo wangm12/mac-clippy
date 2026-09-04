@@ -13,20 +13,43 @@ enum MacClippyRetentionPreferences {
     static let excludedAppsKey = "com.macallyouneed.macclippy.capture.excludedApps"
     static let excludedTextPatternsKey = "com.macallyouneed.macclippy.capture.excludedTextPatterns"
     static let privacyPauseKey = "com.macallyouneed.macclippy.capture.privacyPause"
+    static let pauseDurationSecondsKey = "com.macallyouneed.macclippy.capture.pauseDurationSeconds"
+    static let pauseUntilKey = "com.macallyouneed.macclippy.capture.pauseUntil"
     static let launchAtLoginKey = "com.macallyouneed.macclippy.launchAtLogin"
+    static let alwaysPastePlainTextKey = "com.macallyouneed.macclippy.paste.alwaysPlainText"
 
-    static let defaultMaxItems = 10_000
+    static let defaultMaxItems = MacClippyStorageCapPolicy.defaultMaxItems
     static let defaultMaxAgeDays = 0
-    static let defaultMaxImageMegabytes = 2_048
-    static let defaultMaxHistoryMegabytes = MacClippyPasteboardInputLimits.default.maxHistoryBytes / (1_024 * 1_024)
+    static let defaultMaxImageMegabytes = MacClippyStorageCapPolicy.defaultMaxImageMegabytes
+    static let defaultMaxHistoryMegabytes = MacClippyStorageCapPolicy.defaultMaxHistoryMegabytes
 
     static func policy(from defaults: UserDefaults = .standard) -> RetentionPolicy {
-        let maxItems = defaults.object(forKey: maxItemsKey) as? Int ?? defaultMaxItems
-        let maxAgeDays = defaults.object(forKey: maxAgeDaysKey) as? Int ?? defaultMaxAgeDays
-        let maxImageMegabytes = defaults.object(forKey: maxImageMegabytesKey) as? Int ?? defaultMaxImageMegabytes
-        let maxHistoryMegabytes = defaults.object(forKey: maxHistoryMegabytesKey) as? Int ?? defaultMaxHistoryMegabytes
+        let maxItems: Int
+        let maxImageMegabytes: Int
+        let maxHistoryMegabytes: Int
+        if MacClippyStorageCapPolicy.exposesSettingsEditors {
+            maxItems = MacClippyStorageCapPolicy.enforced(
+                defaults.object(forKey: maxItemsKey) as? Int ?? defaultMaxItems,
+                default: defaultMaxItems
+            )
+            maxImageMegabytes = MacClippyStorageCapPolicy.enforced(
+                defaults.object(forKey: maxImageMegabytesKey) as? Int ?? defaultMaxImageMegabytes,
+                default: defaultMaxImageMegabytes
+            )
+            maxHistoryMegabytes = MacClippyStorageCapPolicy.enforced(
+                defaults.object(forKey: maxHistoryMegabytesKey) as? Int ?? defaultMaxHistoryMegabytes,
+                default: defaultMaxHistoryMegabytes
+            )
+        } else {
+            maxItems = defaultMaxItems
+            maxImageMegabytes = defaultMaxImageMegabytes
+            maxHistoryMegabytes = defaultMaxHistoryMegabytes
+        }
+        let maxAgeDays = MacClippyHistoryCapacity(
+            maxAgeDays: defaults.object(forKey: maxAgeDaysKey) as? Int ?? defaultMaxAgeDays
+        ).maxAgeDays
         return RetentionPolicy(
-            maxItems: maxItems > 0 ? maxItems : nil,
+            maxItems: maxItems,
             maxAge: maxAgeDays > 0 ? TimeInterval(maxAgeDays) * 86_400 : nil,
             maxImageBytes: byteLimit(forMegabytes: maxImageMegabytes),
             maxTotalBytes: byteLimit(
@@ -42,6 +65,47 @@ enum MacClippyRetentionPreferences {
         let safeMegabytes = min(megabytes, maximumBytes / bytesPerMegabyte)
         guard safeMegabytes > 0 else { return nil }
         return safeMegabytes * bytesPerMegabyte
+    }
+
+    static func pauseDuration(from defaults: UserDefaults = .standard) -> MacClippyTimedPauseDuration {
+        MacClippyTimedPauseDuration(
+            rawValue: defaults.object(forKey: pauseDurationSecondsKey) as? Int
+                ?? MacClippyTimedPauseDuration.fiveMinutes.rawValue
+        ) ?? .fiveMinutes
+    }
+
+    static func pauseUntil(from defaults: UserDefaults = .standard) -> Date? {
+        guard defaults.object(forKey: pauseUntilKey) != nil else { return nil }
+        return Date(timeIntervalSince1970: defaults.double(forKey: pauseUntilKey))
+    }
+
+    static func applyPause(
+        enabled: Bool,
+        duration: MacClippyTimedPauseDuration,
+        now: Date = Date(),
+        defaults: UserDefaults = .standard
+    ) {
+        defaults.set(enabled, forKey: privacyPauseKey)
+        defaults.set(duration.rawValue, forKey: pauseDurationSecondsKey)
+        if enabled {
+            defaults.set(
+                MacClippyCapturePausePolicy.endDate(now: now, duration: duration).timeIntervalSince1970,
+                forKey: pauseUntilKey
+            )
+        } else {
+            defaults.removeObject(forKey: pauseUntilKey)
+        }
+    }
+
+    static func alwaysPastePlainText(from defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: alwaysPastePlainTextKey)
+    }
+
+    static func shouldPastePlain(shiftHeld: Bool, defaults: UserDefaults = .standard) -> Bool {
+        MacClippyPastePlainTextPolicy.shouldPastePlain(
+            alwaysPlain: alwaysPastePlainText(from: defaults),
+            shiftHeld: shiftHeld
+        )
     }
 
     static func exclusionRules(from defaults: UserDefaults = .standard) -> CaptureExclusionRules {

@@ -7,12 +7,13 @@ import MacClippyPlatform
 extension MacClippyRuntime {
     func paste(
         id: RecordID,
+        plain: Bool = false,
         sideEffectGate: MacClippyPasteInjectionGate? = nil
     ) throws -> PasteInjectionResult {
         try measureDiagnosticMetric("paste") {
             let content = try withStoreLock {
                 let body = try clipboardStore.body(for: id)
-                return try pasteboardContent(for: body, plain: false)
+                return try pasteboardContent(for: body, plain: plain)
             }
             return injectPasteboardContent(
                 content,
@@ -29,12 +30,36 @@ extension MacClippyRuntime {
     ) throws -> PasteInjectionResult {
         try measureDiagnosticMetric("paste_snippet") {
             let body = try withStoreLock { try snippetStore.fetch(id: snippetID).body }
-            return pasteInjector.inject(text: body, gate: sideEffectGate)
+            return pasteInjector.inject(text: expandedSnippetBody(body), gate: sideEffectGate)
         }
     }
 
     func copy(id: RecordID) throws {
         try copy(id: id, plain: false)
+    }
+
+    func dragPayload(
+        id: RecordID,
+        representation: MacClippyCardDragRepresentation
+    ) throws -> MacClippyCardDragPayload {
+        if representation == .recordID {
+            return MacClippyCardDragPayload(
+                typeIdentifier: MacClippyCardDragPolicy.recordTypeIdentifier,
+                data: Data(id.rawValue.utf8)
+            )
+        }
+        let content = try withStoreLock {
+            let body = try clipboardStore.body(for: id)
+            return try pasteboardContent(for: body, plain: false)
+        }
+        guard let payload = MacClippyCardDragExportPolicy.payload(
+            for: representation,
+            recordID: id,
+            content: content
+        ) else {
+            throw MacClippyStoreError.invalidStoredRecord
+        }
+        return payload
     }
 
     func copy(
@@ -54,7 +79,14 @@ extension MacClippyRuntime {
         sideEffectGate: MacClippyPasteInjectionGate? = nil
     ) throws {
         let body = try withStoreLock { try snippetStore.fetch(id: snippetID).body }
-        try pasteInjector.prepareText(body, gate: sideEffectGate)
+        try pasteInjector.prepareText(expandedSnippetBody(body), gate: sideEffectGate)
+    }
+
+    private func expandedSnippetBody(_ body: String) -> String {
+        MacClippySnippetVariablePolicy.expand(
+            body,
+            context: MacClippySnippetVariableContext(clipboard: pasteInjector.currentPlainText())
+        )
     }
 
     /// Transformed copy/paste: read the record body under the existing store
@@ -176,6 +208,7 @@ extension MacClippyRuntime {
                     try blobStore.delete(id: blobID)
                 }
                 try clipboardStore.completeDeletion(operationID: journal.operationID)
+                thumbnailDiskCache.remove(id: id)
             } catch {
                 // A durable journal is intentionally retained when any
                 // secondary cleanup step fails. Retry it immediately once so
@@ -279,13 +312,29 @@ extension MacClippyRuntime {
             now: Date = Date()
         ) throws -> ClipboardItemMeta {
             try withStoreLock {
+                let sourceAppDisplayName = MacClippySourceAppResolver.displayName(for: sourceAppBundleID)
                 switch record {
                 case let .text(value):
-                    return try clipboardStore.append(.text(value), sourceAppBundleID: sourceAppBundleID, now: now)
+                    return try clipboardStore.append(
+                        .text(value),
+                        sourceAppBundleID: sourceAppBundleID,
+                        sourceAppDisplayName: sourceAppDisplayName,
+                        now: now
+                    )
                 case let .html(value):
-                    return try clipboardStore.append(.html(value), sourceAppBundleID: sourceAppBundleID, now: now)
+                    return try clipboardStore.append(
+                        .html(value),
+                        sourceAppBundleID: sourceAppBundleID,
+                        sourceAppDisplayName: sourceAppDisplayName,
+                        now: now
+                    )
                 case let .rtf(data):
-                    return try clipboardStore.append(.rtf(data), sourceAppBundleID: sourceAppBundleID, now: now)
+                    return try clipboardStore.append(
+                        .rtf(data),
+                        sourceAppBundleID: sourceAppBundleID,
+                        sourceAppDisplayName: sourceAppDisplayName,
+                        now: now
+                    )
                 case let .image(_, width, height), let .encryptedImage(_, width, height):
                     // Write a 1x1 PNG blob so the image record has a real blob id
                     // that BlobStore.read can resolve during preview/multi-paste.
@@ -297,9 +346,19 @@ extension MacClippyRuntime {
                         0x42, 0x60, 0x82
                     ])
                     let blobID = try blobStore.write(png)
-                    return try clipboardStore.append(.image(blobID: blobID, width: width, height: height), sourceAppBundleID: sourceAppBundleID, now: now)
+                    return try clipboardStore.append(
+                        .image(blobID: blobID, width: width, height: height),
+                        sourceAppBundleID: sourceAppBundleID,
+                        sourceAppDisplayName: sourceAppDisplayName,
+                        now: now
+                    )
                 case let .files(urls):
-                    return try clipboardStore.append(.files(urls), sourceAppBundleID: sourceAppBundleID, now: now)
+                    return try clipboardStore.append(
+                        .files(urls),
+                        sourceAppBundleID: sourceAppBundleID,
+                        sourceAppDisplayName: sourceAppDisplayName,
+                        now: now
+                    )
                 }
             }
         }
@@ -356,7 +415,34 @@ extension MacClippyRuntime {
         /// The helper is intentionally unavailable to Release builds.
         func scheduleOCRForTest(data: Data, recordID: RecordID) {
             captureQueue.sync {
+                guard let lifecycleToken = activeLifecycleToken() else { return }
+                scheduleOCR(
+                    for: data,
+                    recordID: recordID,
+                    lifecycleToken: lifecycleToken,
+                    forceStart: true
+                )
+            }
+        }
+
+        func setOCRScheduleConditionsForTest(
+            secondsSinceLastInput: TimeInterval,
+            isLowPowerMode: Bool
+        ) {
+            ocrScheduleConditionsProvider = {
+                (secondsSinceLastInput, isLowPowerMode)
+            }
+        }
+
+        func enqueueScheduledOCRForTest(data: Data, recordID: RecordID) {
+            captureQueue.sync {
                 scheduleOCR(for: data, recordID: recordID)
+            }
+        }
+
+        func flushDeferredOCRForTest() {
+            captureQueue.sync {
+                startDeferredOCRIfReady()
             }
         }
 

@@ -341,12 +341,13 @@ extension MacClippyDockModel {
         beginUserOperation()
         invalidateAllSelectionScope()
         sessionGeneration &+= 1
-        isSessionActive = true
         nameOperationGeneration &+= 1
         isSelecting = false
         query = ""
+        isSessionActive = true
         focusedIndex = 0
         selection = MacClippyDockSelectionState()
+        hasCompletedInitialPaint = false
     }
 
     func endSession() {

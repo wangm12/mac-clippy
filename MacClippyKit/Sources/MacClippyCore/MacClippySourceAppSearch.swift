@@ -28,4 +28,13 @@ public enum MacClippySourceAppSearch {
         append(displayName)
         return segments
     }
+
+    public static func preferredDisplayName(stored: String?, resolved: String?) -> String? {
+        let trimmed = stored?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmed.isEmpty, trimmed.caseInsensitiveCompare(unknownDisplayName) != .orderedSame {
+            return trimmed
+        }
+        let resolvedTrimmed = resolved?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return resolvedTrimmed.isEmpty ? nil : resolvedTrimmed
+    }
 }

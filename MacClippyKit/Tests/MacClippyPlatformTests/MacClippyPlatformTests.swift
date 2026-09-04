@@ -195,6 +195,23 @@ final class MacClippyPlatformTests: XCTestCase {
         )
     }
 
+    func testDefaultIgnoreNextCopyHotKeyIsShiftOptionCommandC() {
+        XCTAssertEqual(
+            MacClippyGlobalHotKeyDescriptor.defaultIgnoreNextCopy,
+            MacClippyGlobalHotKeyDescriptor(
+                keyCode: UInt32(kVK_ANSI_C),
+                modifiers: UInt32(cmdKey) | UInt32(optionKey) | UInt32(shiftKey)
+            )
+        )
+        let suiteName = "MacClippyIgnoreNextHotKey-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        XCTAssertEqual(
+            MacClippyGlobalHotKeyDescriptor.load(from: defaults, role: .ignoreNextCopy),
+            .defaultIgnoreNextCopy
+        )
+    }
+
     func testGlobalHotKeyDescriptorRoundTripsThroughIsolatedUserDefaults() {
         let suiteName = "MacClippyPlatformTests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!

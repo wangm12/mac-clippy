@@ -39,7 +39,9 @@ final class MacClippyRuntime: @unchecked Sendable {
     let pinboardStore: PinboardStore
     let snippetStore: SnippetStore
     let databases: [MacClippyDatabase]
+    let paths: MacClippyPaths
     let blobStore: BlobStore
+    let thumbnailDiskCache: MacClippyThumbnailDiskCache
     let observer: PasteboardObserver
     let snippetExpander: MacClippySnippetExpander
     let snippetLookupSnapshot: MacClippySnippetLookupSnapshot
@@ -78,7 +80,7 @@ final class MacClippyRuntime: @unchecked Sendable {
         let queue = OperationQueue()
         queue.name = "com.macallyouneed.macclippy.ocr"
         queue.qualityOfService = .utility
-        queue.maxConcurrentOperationCount = 2
+        queue.maxConcurrentOperationCount = MacClippyOCRSchedulePolicy.maxConcurrentRecognizers
         return queue
     }()
     var pendingOCRJobs = 0
@@ -88,11 +90,24 @@ final class MacClippyRuntime: @unchecked Sendable {
     // runtime's active counter.
     var pendingOCRJobsByGeneration: [UInt64: Int] = [:]
     var pendingOCRBytesByGeneration: [UInt64: Int] = [:]
-    let maxPendingOCRJobs = 8
+    let maxPendingOCRJobs = MacClippyOCRSchedulePolicy.maxPendingJobs
     // OCR is enrichment work. Bound retained source images by bytes as well
     // as operation count so a burst of large screenshots cannot keep close to
     // a gigabyte of Data alive while Vision waits for a worker.
-    let maxPendingOCRBytes = 64 * 1024 * 1024
+    let maxPendingOCRBytes = MacClippyOCRSchedulePolicy.maxPendingBytes
+    var deferredOCRJobs: [MacClippyDeferredOCRJob] = []
+    var ocrScheduleTimer: DispatchSourceTimer?
+    var ocrPowerObserver: NSObjectProtocol?
+    var capturePauseTimer: DispatchSourceTimer?
+    var ocrScheduleConditionsProvider: @Sendable () -> (
+        secondsSinceLastInput: TimeInterval,
+        isLowPowerMode: Bool
+    ) = {
+        (
+            MacClippyUserInputIdle.secondsSinceLastInput(),
+            ProcessInfo.processInfo.isLowPowerModeEnabled
+        )
+    }
     var retentionTimer: DispatchSourceTimer?
     // UserDefaults.didChangeNotification does not identify the changed key.
     // Keep the comparison on captureQueue and coalesce only actual retention
@@ -146,6 +161,7 @@ final class MacClippyRuntime: @unchecked Sendable {
         }
     ) throws {
         let resolvedPaths = try paths ?? MacClippyPaths()
+        self.paths = resolvedPaths
         let storageURLs = [
             resolvedPaths.clipboardDatabaseURL,
             resolvedPaths.searchDatabaseURL,
@@ -174,6 +190,10 @@ final class MacClippyRuntime: @unchecked Sendable {
         self.snippetLookupSnapshot = snippetLookupSnapshot
         snippetLookupSnapshot.replace(with: try snippetStore.list())
         blobStore = try BlobStore(rootURL: resolvedPaths.blobsURL, key: key)
+        thumbnailDiskCache = MacClippyThumbnailDiskCache(
+            directoryURL: resolvedPaths.thumbnailsURL,
+            key: key
+        )
 
         usesRuntimeExclusionRules = observer == nil
         if let observer {

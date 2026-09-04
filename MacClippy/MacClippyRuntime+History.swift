@@ -25,14 +25,41 @@ extension MacClippyRuntime {
     }
 
     func metadataOnlyHistoryEntry(for meta: ClipboardItemMeta) -> MacClippyHistoryEntry? {
-        guard let contentKind = meta.contentKind,
-              contentKind == .text || contentKind == .html || contentKind == .rtf else {
+        guard MacClippyDockPageLoadPolicy.canProjectFromMetadata(contentKind: meta.contentKind),
+              let contentKind = meta.contentKind else {
             return nil
+        }
+        let fileURLs = contentKind == .files
+            ? MacClippyDockPageLoadPolicy.fileURLs(fromPreview: meta.preview)
+            : []
+        let preview: String
+        if contentKind == .image,
+           let ocrText = meta.ocrText?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !ocrText.isEmpty {
+            preview = ocrText.count > Self.cardPreviewCharacterLimit
+                ? String(ocrText.prefix(Self.cardPreviewCharacterLimit)) + " …"
+                : ocrText
+        } else if contentKind == .files {
+            preview = String(
+                MacClippyFilePresentation.displayPreview(fromStoredPreview: meta.preview)
+                    .prefix(Self.cardPreviewCharacterLimit)
+            )
+        } else {
+            preview = String(meta.preview.prefix(Self.cardPreviewCharacterLimit))
+        }
+        let imageDimensions: CGSize?
+        if contentKind == .image,
+           let size = MacClippyDockPageLoadPolicy.imagePixelSize(fromPreview: meta.preview) {
+            imageDimensions = CGSize(width: size.width, height: size.height)
+        } else {
+            imageDimensions = nil
         }
         return MacClippyHistoryEntry(
             meta: meta,
             contentKind: contentKind,
-            preview: String(meta.preview.prefix(Self.cardPreviewCharacterLimit))
+            preview: preview,
+            fileURLs: fileURLs,
+            imageDimensions: imageDimensions
         )
     }
 
@@ -50,7 +77,12 @@ extension MacClippyRuntime {
         }
     }
 
-    func createSnippet(name: String, trigger: String?, body: String) throws -> MacClippySnippetEntry {
+    func createSnippet(
+        name: String,
+        trigger: String?,
+        body: String,
+        folder: String? = nil
+    ) throws -> MacClippySnippetEntry {
         try withStoreLock {
             let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !normalizedName.isEmpty else {
@@ -69,7 +101,8 @@ extension MacClippyRuntime {
             let snippet = try snippetStore.create(
                 name: normalizedName,
                 body: body,
-                trigger: normalizedTrigger
+                trigger: normalizedTrigger,
+                folder: folder
             )
             let snippets = try snippetStore.list()
             snippetLookupSnapshot.replace(with: snippets)

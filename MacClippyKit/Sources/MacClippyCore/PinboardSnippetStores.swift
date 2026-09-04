@@ -232,8 +232,18 @@ public final class MacClippySnippetStore {
     }
 
     @discardableResult
-    public func create(name: String, body: String, trigger: String? = nil) throws -> Snippet {
-        let snippet = Snippet(name: name, body: body, trigger: trigger)
+    public func create(
+        name: String,
+        body: String,
+        trigger: String? = nil,
+        folder: String? = nil
+    ) throws -> Snippet {
+        let snippet = Snippet(
+            name: name,
+            body: body,
+            trigger: trigger,
+            folder: MacClippySnippetFolderPolicy.normalized(folder)
+        )
         try persist(snippet)
         return snippet
     }
@@ -326,7 +336,8 @@ public final class MacClippySnippetStore {
     private func validate(_ snippet: Snippet) throws {
         guard snippet.name.utf8.count <= MacClippyCollectionLimits.maxNameUTF8Bytes,
               snippet.body.utf8.count <= MacClippyCollectionLimits.maxSnippetBodyUTF8Bytes,
-              (snippet.trigger?.utf8.count ?? 0) <= MacClippyCollectionLimits.maxSnippetTriggerUTF8Bytes else {
+              (snippet.trigger?.utf8.count ?? 0) <= MacClippyCollectionLimits.maxSnippetTriggerUTF8Bytes,
+              (snippet.folder?.utf8.count ?? 0) <= MacClippyCollectionLimits.maxNameUTF8Bytes else {
             throw MacClippyStoreError.inputTooLarge
         }
     }

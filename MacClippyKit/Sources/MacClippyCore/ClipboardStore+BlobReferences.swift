@@ -73,6 +73,72 @@ extension MacClippyClipboardStore {
         return ids
     }
 
+    /// Image blob IDs from unencrypted columns / representation rows.
+    /// Settings storage must not open every image envelope.
+    public func imageBlobIDs() throws -> Set<String> {
+        try backfillMissingPrimaryImageBlobIDs()
+        return try database.queue.read { connection in
+            let primary = try String.fetchAll(
+                connection,
+                sql: """
+                    SELECT primary_blob_id FROM clipboard_records
+                    WHERE content_kind = ?
+                      AND primary_blob_id IS NOT NULL
+                      AND trim(primary_blob_id) != ''
+                    """,
+                arguments: [MacClippyContentKind.image.rawValue]
+            )
+            let representations = try String.fetchAll(
+                connection,
+                sql: """
+                    SELECT DISTINCT r.blob_id
+                    FROM clipboard_representations r
+                    JOIN clipboard_records c ON c.id = r.record_id
+                    WHERE c.content_kind = ?
+                      AND r.blob_id IS NOT NULL
+                      AND trim(r.blob_id) != ''
+                    """,
+                arguments: [MacClippyContentKind.image.rawValue]
+            )
+            return Set(primary + representations)
+        }
+    }
+
+    func backfillMissingPrimaryImageBlobIDs() throws {
+        let rawIDs = try database.queue.read { connection in
+            try String.fetchAll(
+                connection,
+                sql: """
+                    SELECT id FROM clipboard_records
+                    WHERE content_kind = ?
+                      AND (primary_blob_id IS NULL OR trim(primary_blob_id) = '')
+                    """,
+                arguments: [MacClippyContentKind.image.rawValue]
+            )
+        }
+        guard !rawIDs.isEmpty else { return }
+
+        var updates: [(recordID: String, blobID: String)] = []
+        for rawID in rawIDs {
+            guard let id = RecordID(rawValue: rawID),
+                  let blobID = try? body(for: id).imageBlobID,
+                  !blobID.isEmpty else {
+                continue
+            }
+            updates.append((rawID, blobID))
+        }
+        guard !updates.isEmpty else { return }
+
+        try database.queue.write { connection in
+            for update in updates {
+                try connection.execute(
+                    sql: "UPDATE clipboard_records SET primary_blob_id = ? WHERE id = ?",
+                    arguments: [update.blobID, update.recordID]
+                )
+            }
+        }
+    }
+
     /// Returns the candidate blobs that are no longer referenced by any
     /// surviving record. Unlike `referencedBlobIDs`, this scan keeps only the
     /// caller's candidate set in memory; deletion and retention must not
@@ -204,6 +270,7 @@ extension MacClippyClipboardStore {
                         throw MacClippyStoreError.invalidStoredRecord
                     }
                     do {
+                        noteRepresentationPayloadDecrypt()
                         let decryptedPayload = try MacClippyCipher.open(
                             MacClippyEnvelope(combined: payload),
                             with: key
@@ -241,14 +308,31 @@ extension MacClippyClipboardStore {
         for id: RecordID,
         with representations: [MacClippyClipboardRepresentation]
     ) throws {
+        try validateRepresentationLimits(representations)
+        let preparedRows = try preparedRepresentationRows(from: representations)
+        try database.queue.write { connection in
+            guard try Row.fetchOne(
+                connection,
+                sql: "SELECT 1 FROM clipboard_records WHERE id = ?",
+                arguments: [id.rawValue]
+            ) != nil else {
+                throw MacClippyStoreError.recordNotFound
+            }
+            try writeRepresentationRows(preparedRows, for: id, on: connection)
+        }
+    }
+
+    func preparedRepresentationRows(
+        from representations: [MacClippyClipboardRepresentation]
+    ) throws -> [(
+        sortOrder: Int,
+        uti: String,
+        payload: Data?,
+        blobID: String?,
+        state: MacClippyClipboardRepresentationPayloadState
+    )] {
         var seenUTIs = Set<String>()
-        let preparedRows = try representations.enumerated().map { index, representation -> (
-            sortOrder: Int,
-            uti: String,
-            payload: Data?,
-            blobID: String?,
-            state: MacClippyClipboardRepresentationPayloadState
-        ) in
+        return try representations.enumerated().map { index, representation in
             guard !representation.uti.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   seenUTIs.insert(representation.uti).inserted else {
                 throw MacClippyStoreError.invalidStoredRecord
@@ -280,36 +364,39 @@ extension MacClippyClipboardStore {
                 return (index, representation.uti, nil, nil, representation.payloadState)
             }
         }
+    }
 
-        try database.queue.write { connection in
-            guard try Row.fetchOne(
-                connection,
-                sql: "SELECT 1 FROM clipboard_records WHERE id = ?",
-                arguments: [id.rawValue]
-            ) != nil else {
-                throw MacClippyStoreError.recordNotFound
-            }
+    func writeRepresentationRows(
+        _ preparedRows: [(
+            sortOrder: Int,
+            uti: String,
+            payload: Data?,
+            blobID: String?,
+            state: MacClippyClipboardRepresentationPayloadState
+        )],
+        for id: RecordID,
+        on connection: Database
+    ) throws {
+        try connection.execute(
+            sql: "DELETE FROM clipboard_representations WHERE record_id = ?",
+            arguments: [id.rawValue]
+        )
+        for row in preparedRows {
             try connection.execute(
-                sql: "DELETE FROM clipboard_representations WHERE record_id = ?",
-                arguments: [id.rawValue]
+                sql: """
+                    INSERT INTO clipboard_representations
+                        (record_id, sort_order, uti, payload, blob_id, payload_state)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                arguments: [
+                    id.rawValue,
+                    row.sortOrder,
+                    row.uti,
+                    row.payload,
+                    row.blobID,
+                    row.state.rawValue
+                ]
             )
-            for row in preparedRows {
-                try connection.execute(
-                    sql: """
-                        INSERT INTO clipboard_representations
-                            (record_id, sort_order, uti, payload, blob_id, payload_state)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    arguments: [
-                        id.rawValue,
-                        row.sortOrder,
-                        row.uti,
-                        row.payload,
-                        row.blobID,
-                        row.state.rawValue
-                    ]
-                )
-            }
         }
     }
 

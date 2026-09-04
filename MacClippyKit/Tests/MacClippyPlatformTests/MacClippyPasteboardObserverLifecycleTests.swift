@@ -215,4 +215,153 @@ final class PasteboardObserverLifecycleTests: XCTestCase {
             "production default queue must not be the main queue"
         )
     }
+
+    func testSleepSuspendsThePollingTimerWithoutAdvancingLastChangeCount() {
+        let reader = SteppingTestPasteboardReader(
+            initial: PasteboardChange(changeCount: 1, items: [
+                PasteboardItem(types: ["public.utf8-plain-text"], representations: [
+                    "public.utf8-plain-text": Data("seed".utf8)
+                ])
+            ])
+        )
+        let observer = PasteboardObserver(reader: reader, pollInterval: 1)
+        var delivered: [Int] = []
+        observer.start { delivered.append($0.changeCount) }
+        observer.poll()
+        XCTAssertTrue(observer.hasPollingTimerForTesting())
+        XCTAssertFalse(observer.isPollingSuspendedForTesting())
+
+        observer.setPollingSuspended(true)
+        XCTAssertTrue(observer.isPollingSuspendedForTesting())
+        XCTAssertFalse(
+            observer.hasPollingTimerForTesting(),
+            "sleep must cancel the 50ms timer instead of leaving it to spin"
+        )
+
+        reader.change = PasteboardChange(
+            changeCount: 2,
+            items: [PasteboardItem(types: ["public.utf8-plain-text"], representations: [
+                "public.utf8-plain-text": Data("during-sleep".utf8)
+            ])]
+        )
+        observer.poll()
+        XCTAssertTrue(
+            delivered.isEmpty,
+            "a manual poll during sleep must not deliver or eat the generation"
+        )
+
+        observer.setPollingSuspended(false)
+        XCTAssertFalse(observer.isPollingSuspendedForTesting())
+        XCTAssertTrue(observer.hasPollingTimerForTesting())
+        observer.poll()
+        XCTAssertEqual(delivered, [2], "wake must resume polling and see the slept-through change")
+
+        observer.stop()
+    }
+
+    func testBackgroundActivitySlowsThePollingIntervalWithoutAdvancingLastChangeCount() {
+        let reader = SteppingTestPasteboardReader(
+            initial: PasteboardChange(changeCount: 1, items: [
+                PasteboardItem(types: ["public.utf8-plain-text"], representations: [
+                    "public.utf8-plain-text": Data("seed".utf8)
+                ])
+            ])
+        )
+        let observer = PasteboardObserver(
+            reader: reader,
+            pollInterval: 0.05,
+            secondsSinceLastUserInput: { 1 }
+        )
+        var delivered: [Int] = []
+        observer.start { delivered.append($0.changeCount) }
+        observer.poll()
+        XCTAssertEqual(
+            observer.pollIntervalForTesting(),
+            MacClippyPasteboardPollPolicy.pollInterval(for: .foreground),
+            accuracy: 0.000_001
+        )
+
+        observer.setPollActivity(.background)
+        XCTAssertEqual(
+            observer.pollIntervalForTesting(),
+            MacClippyPasteboardPollPolicy.pollInterval(for: .background),
+            accuracy: 0.000_001
+        )
+        XCTAssertTrue(observer.hasPollingTimerForTesting())
+
+        reader.change = PasteboardChange(
+            changeCount: 2,
+            items: [PasteboardItem(types: ["public.utf8-plain-text"], representations: [
+                "public.utf8-plain-text": Data("after-background".utf8)
+            ])]
+        )
+        observer.poll()
+        XCTAssertEqual(delivered, [2], "changing the awake poll interval must not swallow a generation")
+        observer.stop()
+    }
+
+    func testSleepKeepsTheTimerCancelledWhenPollActivityChanges() {
+        let reader = SteppingTestPasteboardReader(
+            initial: PasteboardChange(changeCount: 1, items: [
+                PasteboardItem(types: ["public.utf8-plain-text"], representations: [
+                    "public.utf8-plain-text": Data("seed".utf8)
+                ])
+            ])
+        )
+        let observer = PasteboardObserver(reader: reader, pollInterval: 0.05)
+        observer.start { _ in }
+        observer.poll()
+        observer.setPollingSuspended(true)
+        observer.setPollActivity(.background)
+
+        XCTAssertTrue(observer.isPollingSuspendedForTesting())
+        XCTAssertFalse(
+            observer.hasPollingTimerForTesting(),
+            "sleep must keep the timer cancelled even if app activity changes"
+        )
+        XCTAssertEqual(
+            observer.pollIntervalForTesting(),
+            MacClippyPasteboardPollPolicy.pollInterval(for: .background),
+            accuracy: 0.000_001
+        )
+        observer.stop()
+    }
+
+    func testIdleSessionUsesSlowPollUntilACopyStartsABurst() {
+        let secondsSinceLastUserInput: TimeInterval = 120
+        let reader = SteppingTestPasteboardReader(
+            initial: PasteboardChange(changeCount: 1, items: [
+                PasteboardItem(types: ["public.utf8-plain-text"], representations: [
+                    "public.utf8-plain-text": Data("seed".utf8)
+                ])
+            ])
+        )
+        let observer = PasteboardObserver(
+            reader: reader,
+            pollInterval: 0.05,
+            secondsSinceLastUserInput: { secondsSinceLastUserInput }
+        )
+        observer.start { _ in }
+        observer.poll()
+        XCTAssertEqual(
+            observer.pollIntervalForTesting(),
+            MacClippyPasteboardPollPolicy.pollInterval(for: .background),
+            accuracy: 0.000_001
+        )
+
+        reader.change = PasteboardChange(
+            changeCount: 2,
+            items: [PasteboardItem(types: ["public.utf8-plain-text"], representations: [
+                "public.utf8-plain-text": Data("burst".utf8)
+            ])]
+        )
+        observer.poll()
+        XCTAssertEqual(
+            observer.pollIntervalForTesting(),
+            MacClippyPasteboardPollPolicy.pollInterval(for: .foreground),
+            accuracy: 0.000_001,
+            "a just-seen copy must keep the fast poll even while the user looks idle"
+        )
+        observer.stop()
+    }
 }

@@ -46,6 +46,39 @@ public struct MacClippyCaptureProjection: Equatable, Sendable {
     }
 }
 
+public extension MacClippyCaptureDedupPolicy {
+    static func contentHash(
+        payload: MacClippyCapturePayload?,
+        representations: [MacClippyClipboardRepresentation]
+    ) -> String {
+        let primary: MacClippyCaptureDedupPrimary
+        switch payload {
+        case let .text(value):
+            primary = .text(value)
+        case let .rtf(data):
+            primary = .rtf(data)
+        case let .html(value):
+            primary = .html(value)
+        case let .image(data, width, height):
+            primary = .image(data, width: width, height: height)
+        case let .files(urls):
+            primary = .files(urls.map(\.path))
+        case .none:
+            primary = .none
+        }
+        return contentHash(
+            primary: primary,
+            representations: representations.map { representation in
+                MacClippyCaptureDedupRepresentation(
+                    uti: representation.uti,
+                    payloadState: representation.payloadState.rawValue,
+                    payloadBytes: representation.payloadBytes
+                )
+            }
+        )
+    }
+}
+
 public enum MacClippyCaptureMapper {
     private static let pngType = NSPasteboard.PasteboardType.png.rawValue
     private static let tiffType = NSPasteboard.PasteboardType.tiff.rawValue

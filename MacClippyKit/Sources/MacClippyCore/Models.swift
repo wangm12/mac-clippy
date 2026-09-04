@@ -128,6 +128,7 @@ public struct MacClippyClipboardItemMeta: Codable, Equatable, Sendable {
     public let contentKind: MacClippyContentKind?
     public let preview: String
     public let sourceAppBundleID: String?
+    public let sourceAppDisplayName: String?
     public let frequency: Int
     public let lastAccessed: Date?
     public let customLabel: String?
@@ -144,6 +145,7 @@ public struct MacClippyClipboardItemMeta: Codable, Equatable, Sendable {
         contentKind: MacClippyContentKind? = nil,
         preview: String,
         sourceAppBundleID: String? = nil,
+        sourceAppDisplayName: String? = nil,
         frequency: Int = 0,
         lastAccessed: Date? = nil,
         customLabel: String? = nil,
@@ -159,6 +161,7 @@ public struct MacClippyClipboardItemMeta: Codable, Equatable, Sendable {
         self.contentKind = contentKind
         self.preview = preview
         self.sourceAppBundleID = sourceAppBundleID
+        self.sourceAppDisplayName = sourceAppDisplayName
         self.frequency = frequency
         self.lastAccessed = lastAccessed
         self.customLabel = customLabel
@@ -206,25 +209,37 @@ public struct MacClippySnippet: Codable, Equatable, Sendable {
     public var trigger: String?
     public var name: String
     public var body: String
+    public var folder: String?
     public var modified: Date
     public var deviceID: DeviceID?
     public var lamport: UInt64
 
-    public init(name: String, body: String, trigger: String? = nil) {
+    public init(name: String, body: String, trigger: String? = nil, folder: String? = nil) {
         id = .generate()
         self.trigger = trigger
         self.name = name
         self.body = body
+        self.folder = folder
         modified = Date()
         deviceID = nil
         lamport = 0
     }
 
-    public init(id: RecordID, name: String, body: String, trigger: String? = nil, modified: Date = Date(), deviceID: DeviceID? = nil, lamport: UInt64 = 0) {
+    public init(
+        id: RecordID,
+        name: String,
+        body: String,
+        trigger: String? = nil,
+        folder: String? = nil,
+        modified: Date = Date(),
+        deviceID: DeviceID? = nil,
+        lamport: UInt64 = 0
+    ) {
         self.id = id
         self.trigger = trigger
         self.name = name
         self.body = body
+        self.folder = folder
         self.modified = modified
         self.deviceID = deviceID
         self.lamport = lamport

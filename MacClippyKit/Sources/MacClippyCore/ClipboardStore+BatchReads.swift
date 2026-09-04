@@ -92,7 +92,7 @@ extension MacClippyClipboardStore {
             let rows = try database.queue.read { connection in
                 try Row.fetchAll(connection, sql: """
                     SELECT id, created, modified, device_id, lamport, kind, content_kind, preview, source_app,
-                           frequency, last_accessed, custom_label, detected_type, ocr_text
+                           source_app_name, frequency, last_accessed, custom_label, detected_type, ocr_text
                     FROM clipboard_records WHERE id IN (\(placeholders))
                 """, arguments: StatementArguments(batch.map(\.rawValue)))
             }
@@ -110,6 +110,7 @@ extension MacClippyClipboardStore {
             guard let value = row["envelope"] as Data? else { throw MacClippyStoreError.invalidStoredRecord }
             return value
         }
+        noteRecordEnvelopeDecrypt()
         return try JSONDecoder().decode(ClipboardRecord.self, from: MacClippyCipher.open(MacClippyEnvelope(combined: data), with: key))
     }
 
@@ -147,6 +148,7 @@ extension MacClippyClipboardStore {
             guard let id = RecordID(rawValue: rawID) else {
                 throw MacClippyStoreError.invalidStoredRecord
             }
+            noteRecordEnvelopeDecrypt()
             values[id] = try JSONDecoder().decode(
                 ClipboardRecord.self,
                 from: MacClippyCipher.open(MacClippyEnvelope(combined: envelope), with: key)

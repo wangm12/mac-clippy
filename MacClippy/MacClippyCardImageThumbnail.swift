@@ -41,6 +41,7 @@ struct MacClippyCardImageThumbnail: View, Equatable {
         }
         .task(id: itemID) {
             image = nil
+            guard MacClippyThumbnailCachePolicy.shouldDecode(isCardVisible: true) else { return }
             let loaded = await load(itemID)
             guard !Task.isCancelled else { return }
             image = loaded

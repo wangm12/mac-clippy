@@ -72,9 +72,35 @@ final class MacClippyDockInteractionPolicyTests: XCTestCase {
     }
 
     func testReturnPastesInPickerAndPreview() {
-        XCTAssertEqual(action(mode: .picker, keyCode: 36, hasCardFocus: true), .paste)
-        XCTAssertEqual(action(mode: .preview, keyCode: 36, hasCardFocus: true), .paste)
+        XCTAssertEqual(action(mode: .picker, keyCode: 36, hasCardFocus: true), .paste(plain: false))
+        XCTAssertEqual(action(mode: .preview, keyCode: 36, hasCardFocus: true), .paste(plain: false))
         XCTAssertEqual(action(mode: .picker, keyCode: 36, hasCardFocus: false), .consume)
+    }
+
+    func testShiftReturnPastesPlainAndInvertsWhenAlwaysPlainIsOn() {
+        XCTAssertEqual(
+            action(mode: .picker, keyCode: 36, modifiers: .shift, hasCardFocus: true),
+            .paste(plain: true)
+        )
+        XCTAssertEqual(
+            action(
+                mode: .picker,
+                keyCode: 36,
+                hasCardFocus: true,
+                alwaysPastePlainText: true
+            ),
+            .paste(plain: true)
+        )
+        XCTAssertEqual(
+            action(
+                mode: .picker,
+                keyCode: 36,
+                modifiers: .shift,
+                hasCardFocus: true,
+                alwaysPastePlainText: true
+            ),
+            .paste(plain: false)
+        )
     }
 
     func testCommandCCopiesFromPreviewAndDetails() {
@@ -185,7 +211,7 @@ final class MacClippyDockInteractionPolicyTests: XCTestCase {
         XCTAssertEqual(action(mode: .picker, keyCode: 9, modifiers: [.command, .option]), .showDetails)
         XCTAssertEqual(action(mode: .preview, keyCode: 9, modifiers: [.command, .option]), .showDetails)
         XCTAssertEqual(action(mode: .details, keyCode: 9, modifiers: [.command, .option]), .hideDetails)
-        XCTAssertEqual(action(mode: .details, keyCode: 36, hasCardFocus: true), .paste)
+        XCTAssertEqual(action(mode: .details, keyCode: 36, hasCardFocus: true), .paste(plain: false))
         XCTAssertEqual(action(mode: .details, keyCode: 49, hasCardFocus: true), .showPreview)
         XCTAssertEqual(action(mode: .details, keyCode: 123, hasCardFocus: true), .moveFocus(.left))
         XCTAssertEqual(action(mode: .details, keyCode: 124, hasCardFocus: true), .moveFocus(.right))
@@ -231,7 +257,8 @@ final class MacClippyDockInteractionPolicyTests: XCTestCase {
         hasMultipleSelection: Bool = false,
         isRepeat: Bool = false,
         detailsEditing: Bool = false,
-        hasTextSelection: Bool = false
+        hasTextSelection: Bool = false,
+        alwaysPastePlainText: Bool = false
     ) -> MacClippyDockKeyAction {
         MacClippyDockKeyRouterPolicy.action(
             for: .keyDown(
@@ -244,7 +271,8 @@ final class MacClippyDockInteractionPolicyTests: XCTestCase {
             hasCardFocus: hasCardFocus,
             hasMultipleSelection: hasMultipleSelection,
             detailsEditing: detailsEditing,
-            hasTextSelection: hasTextSelection
+            hasTextSelection: hasTextSelection,
+            alwaysPastePlainText: alwaysPastePlainText
         )
     }
 

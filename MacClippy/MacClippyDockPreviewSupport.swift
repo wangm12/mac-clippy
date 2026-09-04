@@ -75,6 +75,9 @@ enum MacClippyOCRSelectionAppearance {
     static let characterStrokeOpacity: CGFloat = 0.92
     static let fallbackLineFillOpacity: CGFloat = 0.08
     static let fallbackLineStrokeOpacity: CGFloat = 0.88
+    static let searchHitColor = NSColor.systemYellow
+    static let searchHitFillOpacity: CGFloat = 0.28
+    static let searchHitStrokeOpacity: CGFloat = 0.85
 
     static func characterHighlightRect(_ rect: NSRect) -> NSRect {
         guard rect.width > 2, rect.height > 2 else { return rect }
@@ -159,6 +162,7 @@ struct MacClippyDockPreviewImage: View {
     let id: RecordID
     let data: Data
     let storedOCRText: String?
+    var highlightTerms: [String] = []
     let recognizeOCRLayout: (@Sendable (CGImage) async throws -> MacClippyOCRResult)?
     let onOCRResult: ((MacClippyOCRResult?) -> Void)?
     let onSelectionChanged: ((String?) -> Void)?
@@ -200,6 +204,7 @@ struct MacClippyDockPreviewImage: View {
                     MacClippyDockPreviewImageSelection(
                         image: image,
                         ocrResult: ocrResult,
+                        highlightTerms: highlightTerms,
                         onSelectionChanged: { value in
                             selectedText = value
                             onSelectionChanged?(value)
@@ -257,12 +262,27 @@ struct MacClippyDockPreviewImage: View {
             }
 
             if ocrFailed, let storedOCRText, !storedOCRText.isEmpty {
-                MacClippyDockPreviewTextView(
-                    text: storedOCRText,
-                    monospaced: false,
-                    foregroundColor: .labelColor
-                )
-                .frame(maxHeight: 120)
+                Group {
+                    if let snippet = MacClippySearchFilterChipPolicy.ocrHitSnippet(
+                        ocrText: storedOCRText,
+                        terms: highlightTerms
+                    ) {
+                        MacClippyDockCardHighlight.text(
+                            snippet,
+                            font: .body,
+                            color: MacClippyDockTheme.contentTextColor,
+                            terms: highlightTerms
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: 120, alignment: .topLeading)
+                    } else {
+                        MacClippyDockPreviewTextView(
+                            text: storedOCRText,
+                            monospaced: false,
+                            foregroundColor: .labelColor
+                        )
+                        .frame(maxHeight: 120)
+                    }
+                }
                 .overlay(alignment: .topLeading) {
                     Text("Recognized Text")
                         .font(.caption.weight(.semibold))

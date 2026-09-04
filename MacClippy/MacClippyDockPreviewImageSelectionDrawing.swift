@@ -2,6 +2,29 @@ import AppKit
 import MacClippyPlatform
 
 extension MacClippyOCRSelectionView {
+    func drawSearchHits(
+        result: MacClippyOCRResult,
+        imageRect: NSRect,
+        terms: [String]
+    ) {
+        let boxes = MacClippyOCRSearchHighlightPolicy.highlightedBoxes(in: result, terms: terms)
+        for box in boxes {
+            let mapped = MacClippyPreviewImageGeometry.map(box, into: imageRect)
+            guard mapped.width > 0, mapped.height > 0 else { continue }
+            let highlightRect = MacClippyOCRSelectionAppearance.characterHighlightRect(mapped)
+            let path = selectionPath(for: highlightRect, radius: 2.5)
+            MacClippyOCRSelectionAppearance.searchHitColor
+                .withAlphaComponent(MacClippyOCRSelectionAppearance.searchHitFillOpacity)
+                .setFill()
+            path.fill()
+            MacClippyOCRSelectionAppearance.searchHitColor
+                .withAlphaComponent(MacClippyOCRSelectionAppearance.searchHitStrokeOpacity)
+                .setStroke()
+            path.lineWidth = 1
+            path.stroke()
+        }
+    }
+
     func drawSelection(
         _ selection: Selection,
         result: MacClippyOCRResult,

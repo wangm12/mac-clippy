@@ -80,6 +80,7 @@ struct MacClippyDockPreviewView: View {
     let recognizeOCRLayout: (@Sendable (CGImage) async throws -> MacClippyOCRResult)?
     let onCopyText: ((String) -> Void)?
     let onDismiss: (() -> Void)?
+    let highlightTerms: [String]
 
     @State private var imageOCRText: String?
     @State private var selectedImageText: String?
@@ -94,7 +95,8 @@ struct MacClippyDockPreviewView: View {
         onCopy: (() -> Void)? = nil,
         recognizeOCRLayout: (@Sendable (CGImage) async throws -> MacClippyOCRResult)? = nil,
         onCopyText: ((String) -> Void)? = nil,
-        onDismiss: (() -> Void)? = nil
+        onDismiss: (() -> Void)? = nil,
+        highlightTerms: [String] = []
     ) {
         self.content = content
         self.metadata = metadata
@@ -104,6 +106,7 @@ struct MacClippyDockPreviewView: View {
         self.recognizeOCRLayout = recognizeOCRLayout
         self.onCopyText = onCopyText
         self.onDismiss = onDismiss
+        self.highlightTerms = highlightTerms
         contentIdentity = content.identity
         _imageOCRText = State(initialValue: nil)
         _selectedImageText = State(initialValue: nil)
@@ -297,6 +300,7 @@ struct MacClippyDockPreviewView: View {
                 id: id,
                 data: data,
                 storedOCRText: metadata.ocrText,
+                highlightTerms: highlightTerms,
                 recognizeOCRLayout: recognizeOCRLayout,
                 onOCRResult: { result in
                     imageOCRText = result?.fullText

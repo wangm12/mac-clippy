@@ -1,6 +1,13 @@
 import Foundation
 
 import MacClippyCore
+import MacClippyPlatform
+
+struct MacClippyDeferredOCRJob {
+    let data: Data
+    let recordID: RecordID
+    let lifecycleToken: MacClippyRuntimeLifecycleToken
+}
 
 // OperationQueue understands asynchronous Operation subclasses, so the queue
 // can enforce its concurrency limit without blocking a worker on an async OCR
@@ -114,7 +121,8 @@ extension MacClippyRuntime {
     func scheduleOCR(
         for data: Data,
         recordID: RecordID,
-        lifecycleToken: MacClippyRuntimeLifecycleToken
+        lifecycleToken: MacClippyRuntimeLifecycleToken,
+        forceStart: Bool = false
     ) {
         guard isCurrentLifecycleToken(lifecycleToken) else { return }
         guard pendingOCRJobs < maxPendingOCRJobs else {
@@ -143,6 +151,72 @@ extension MacClippyRuntime {
         pendingOCRBytes += data.count
         pendingOCRJobsByGeneration[lifecycleToken.generation, default: 0] += 1
         pendingOCRBytesByGeneration[lifecycleToken.generation, default: 0] += data.count
+        if forceStart || shouldStartOCRNow() {
+            enqueueOCROperation(
+                data: data,
+                recordID: recordID,
+                lifecycleToken: lifecycleToken
+            )
+        } else {
+            deferredOCRJobs.append(
+                MacClippyDeferredOCRJob(
+                    data: data,
+                    recordID: recordID,
+                    lifecycleToken: lifecycleToken
+                )
+            )
+            armOCRScheduleTimerIfNeeded()
+        }
+    }
+
+    func shouldStartOCRNow() -> Bool {
+        let conditions = ocrScheduleConditionsProvider()
+        return MacClippyOCRSchedulePolicy.shouldStartRecognition(
+            secondsSinceLastInput: conditions.secondsSinceLastInput,
+            isLowPowerMode: conditions.isLowPowerMode
+        )
+    }
+
+    func startDeferredOCRIfReady() {
+        guard shouldStartOCRNow() else { return }
+        let jobs = deferredOCRJobs
+        deferredOCRJobs.removeAll()
+        if jobs.isEmpty {
+            cancelOCRScheduleTimer()
+            return
+        }
+        cancelOCRScheduleTimer()
+        for job in jobs {
+            enqueueOCROperation(
+                data: job.data,
+                recordID: job.recordID,
+                lifecycleToken: job.lifecycleToken
+            )
+        }
+    }
+
+    func armOCRScheduleTimerIfNeeded() {
+        guard ocrScheduleTimer == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: captureQueue)
+        timer.schedule(deadline: .now() + 1, repeating: 1)
+        timer.setEventHandler { [weak self] in
+            self?.startDeferredOCRIfReady()
+        }
+        ocrScheduleTimer = timer
+        timer.resume()
+    }
+
+    func cancelOCRScheduleTimer() {
+        ocrScheduleTimer?.setEventHandler {}
+        ocrScheduleTimer?.cancel()
+        ocrScheduleTimer = nil
+    }
+
+    private func enqueueOCROperation(
+        data: Data,
+        recordID: RecordID,
+        lifecycleToken: MacClippyRuntimeLifecycleToken
+    ) {
         let dataByteCount = data.count
         let operation = MacClippyAsyncOperation(
             body: { [weak self] in

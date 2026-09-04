@@ -188,15 +188,7 @@ extension MacClippyDockView {
             itemContextMenu(item)
         }
         .onDrag {
-            let provider = NSItemProvider()
-            provider.registerDataRepresentation(
-                forTypeIdentifier: UTType.utf8PlainText.identifier,
-                visibility: .all
-            ) { completion in
-                completion(item.id.rawValue.data(using: .utf8), nil)
-                return nil
-            }
-            return provider
+            cardDragProvider(for: item)
         } preview: {
             Text(item.preview.isEmpty ? "Clipboard item" : item.preview)
                 .font(.caption)
@@ -209,6 +201,88 @@ extension MacClippyDockView {
                     in: RoundedRectangle(cornerRadius: 8, style: .continuous)
                 )
                 .opacity(0.72)
+        }
+    }
+
+    func cardDragProvider(for item: MacClippyHistoryEntry) -> NSItemProvider {
+        let provider = NSItemProvider()
+        for representation in MacClippyCardDragPolicy.representations(for: item.contentKind) {
+            registerCardDragRepresentation(
+                representation,
+                item: item,
+                on: provider
+            )
+        }
+        return provider
+    }
+
+    private func registerCardDragRepresentation(
+        _ representation: MacClippyCardDragRepresentation,
+        item: MacClippyHistoryEntry,
+        on provider: NSItemProvider
+    ) {
+        if representation == .fileURL {
+            registerCardDragFileURLs(item.fileURLs, recordID: item.id, on: provider)
+            return
+        }
+
+        let typeIdentifiers: [String]
+        if representation == .image {
+            typeIdentifiers = ["public.png", "public.tiff"]
+        } else {
+            typeIdentifiers = [MacClippyCardDragPolicy.typeIdentifier(for: representation)]
+        }
+
+        let runtime = model.runtime
+        for typeIdentifier in typeIdentifiers {
+            provider.registerDataRepresentation(
+                forTypeIdentifier: typeIdentifier,
+                visibility: .all
+            ) { completion in
+                do {
+                    let payload = try runtime.dragPayload(id: item.id, representation: representation)
+                    guard payload.typeIdentifier == typeIdentifier else {
+                        completion(nil, nil)
+                        return nil
+                    }
+                    completion(payload.data, nil)
+                } catch {
+                    completion(nil, error)
+                }
+                return nil
+            }
+        }
+    }
+
+    private func registerCardDragFileURLs(
+        _ urls: [URL],
+        recordID: RecordID,
+        on provider: NSItemProvider
+    ) {
+        for url in urls {
+            let typeIdentifier = UTType(filenameExtension: url.pathExtension)?.identifier
+                ?? UTType.data.identifier
+            provider.registerFileRepresentation(
+                forTypeIdentifier: typeIdentifier,
+                fileOptions: [],
+                visibility: .all
+            ) { completion in
+                completion(url, false, nil)
+                return nil
+            }
+        }
+        let runtime = model.runtime
+        provider.registerDataRepresentation(
+            forTypeIdentifier: MacClippyCardDragPolicy.typeIdentifier(for: .fileURL),
+            visibility: .all
+        ) { completion in
+            do {
+                let payload = try runtime.dragPayload(id: recordID, representation: .fileURL)
+                completion(payload.data, nil)
+            } catch {
+                completion(nil, error)
+            }
+            return nil
         }
     }
 

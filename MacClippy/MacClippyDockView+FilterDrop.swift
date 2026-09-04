@@ -42,12 +42,8 @@ struct MacClippyDockChromeIconButton: View {
         )
         .contentShape(Capsule())
         .animation(nil, value: isHovered)
-        .onHover { hovering in
-            guard MacClippyDockHoverPolicy.shouldApplyHover(
-                hovering,
-                pressedMouseButtons: NSEvent.pressedMouseButtons
-            ) else { return }
-            isHovered = hovering
+        .onContinuousHover { phase in
+            isHovered = MacClippyDockHoverPolicy.isHovering(phase)
         }
         .accessibilityLabel(accessibilityLabel)
         .accessibilityIdentifier(accessibilityIdentifier)
@@ -122,12 +118,8 @@ struct MacClippyDockFilterPill: View {
                 transaction.animation = nil
             }
         }
-        .onHover { hovering in
-            guard MacClippyDockHoverPolicy.shouldApplyHover(
-                hovering,
-                pressedMouseButtons: NSEvent.pressedMouseButtons
-            ) else { return }
-            isHovered = hovering
+        .onContinuousHover { phase in
+            isHovered = MacClippyDockHoverPolicy.isHovering(phase)
         }
     }
 }
@@ -143,6 +135,19 @@ extension MacClippyDockView {
                     ) {
                         model.selectTab(.history)
                     }
+                    ForEach(model.visibleSmartLists) { list in
+                        filterPill(
+                            title: list.title,
+                            selected: MacClippySmartListPolicy.isActive(list, in: model.query)
+                        ) {
+                            model.toggleSmartList(list)
+                        }
+                        .contextMenu {
+                            Button("Delete", role: .destructive) {
+                                model.hideSmartList(list)
+                            }
+                        }
+                    }
                     ForEach(model.pinboards) { pinboard in
                         filterPill(
                             title: pinboard.name,
@@ -155,7 +160,7 @@ extension MacClippyDockView {
                         }
                         .contextMenu { pinboardContextMenu(pinboard) }
                         .onDrop(
-                            of: [UTType.utf8PlainText, UTType.text],
+                            of: [clipboardRecordDragType],
                             isTargeted: Binding(
                                 get: { dropTargetPinboardID == pinboard.id },
                                 set: { isTargeted in
@@ -181,7 +186,7 @@ extension MacClippyDockView {
                         model.selectTab(.snippets)
                     }
                     .onDrop(
-                        of: [UTType.utf8PlainText, UTType.text],
+                        of: [clipboardRecordDragType],
                         isTargeted: Binding(
                             get: { dropTargetSnippets },
                             set: { isTargeted in
@@ -255,12 +260,16 @@ extension MacClippyDockView {
         )
     }
 
+    var clipboardRecordDragType: UTType {
+        UTType(exportedAs: MacClippyCardDragPolicy.recordTypeIdentifier)
+    }
+
     func handleDrop(_ providers: [NSItemProvider], on pinboard: MacClippyPinboardEntry) -> Bool {
         let expectedSession = model.currentSessionGeneration
-        let typeIdentifier = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.utf8PlainText.identifier) }) != nil
-            ? UTType.utf8PlainText.identifier
-            : UTType.text.identifier
-        guard let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(typeIdentifier) }) else {
+        guard let typeIdentifier = MacClippyClipboardDropPolicy.preferredTypeIdentifier(
+            among: providers.flatMap(\.registeredTypeIdentifiers)
+        ),
+        let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(typeIdentifier) }) else {
             return false
         }
         provider.loadDataRepresentation(forTypeIdentifier: typeIdentifier) { data, _ in
@@ -288,10 +297,10 @@ extension MacClippyDockView {
 
     func handleSnippetDrop(_ providers: [NSItemProvider]) -> Bool {
         let expectedSession = model.currentSessionGeneration
-        let typeIdentifier = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.utf8PlainText.identifier) }) != nil
-            ? UTType.utf8PlainText.identifier
-            : UTType.text.identifier
-        guard let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(typeIdentifier) }) else {
+        guard let typeIdentifier = MacClippyClipboardDropPolicy.preferredTypeIdentifier(
+            among: providers.flatMap(\.registeredTypeIdentifiers)
+        ),
+        let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(typeIdentifier) }) else {
             return false
         }
 
