@@ -31,6 +31,10 @@ jobs:
           test -f .swiftlint-baseline.yml
           test -x scripts/lint.sh
           test -x scripts/verify-dmg.sh
+          test -f scripts/pinned-tool-versions.sh
+          test -x scripts/install-pinned-tools.sh
+          test -x scripts/install-pinned-tools-test.sh
+          test -x scripts/verify-tool-versions.sh
           test -x scripts/select-codesign-identity.sh
           test -x scripts/select-codesign-identity-test.sh
           test -x scripts/make-signing-cert.sh
@@ -43,11 +47,12 @@ jobs:
           sw_vers
           xcodebuild -version
           swift --version
+      - name: Install pinned tools tests
+        run: ./scripts/install-pinned-tools-test.sh
+      # Homebrew floats these formulae (2.46.0 / 0.65.0 on macos-26). Pin
+      # GitHub release zips so xcodegen generate matches the committed project.
       - name: Install pinned build tools
-        run: |
-          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
-          brew list swiftlint >/dev/null 2>&1 || brew install swiftlint
-          ./scripts/verify-tool-versions.sh
+        run: ./scripts/install-pinned-tools.sh
       - name: Generate project
         run: xcodegen generate
       - name: Verify generated project is committed

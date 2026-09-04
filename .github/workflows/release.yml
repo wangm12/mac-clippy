@@ -30,10 +30,9 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      # Same pinned XcodeGen as CI. Do not brew install: runners float past 2.45.4.
       - name: Install pinned build tools
-        run: |
-          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
-          ./scripts/verify-tool-versions.sh
+        run: ./scripts/install-pinned-tools.sh
       - name: Import stable signing certificate
         env:
           MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}

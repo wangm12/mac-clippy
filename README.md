@@ -207,7 +207,7 @@ Requirements:
 
 - macOS 14 or later
 - Xcode 26 or later
-- XcodeGen (`brew install xcodegen`)
+- XcodeGen 2.45.4 and SwiftLint 0.63.2 (`./scripts/install-pinned-tools.sh`)
 
 Run these commands from the repository root:
 

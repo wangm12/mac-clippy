@@ -2,8 +2,12 @@
 
 set -euo pipefail
 
-expected_xcodegen="${MACCLIPPY_XCODEGEN_VERSION:-2.45.4}"
-expected_swiftlint="${MACCLIPPY_SWIFTLINT_VERSION:-0.63.2}"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/pinned-tool-versions.sh
+source "${script_dir}/pinned-tool-versions.sh"
+
+expected_xcodegen="${MACCLIPPY_XCODEGEN_VERSION}"
+expected_swiftlint="${MACCLIPPY_SWIFTLINT_VERSION}"
 
 if ! command -v xcodegen >/dev/null 2>&1; then
     echo "error: xcodegen is required" >&2

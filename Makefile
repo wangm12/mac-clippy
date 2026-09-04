@@ -29,6 +29,7 @@ build: generate
 	xcodebuild $(XCODEBUILD_FLAGS) build
 
 test: generate
+	./scripts/install-pinned-tools-test.sh
 	./scripts/select-codesign-identity-test.sh
 	swift test --package-path "$(PACKAGE_DIR)"
 	xcodebuild $(XCODEBUILD_FLAGS) test
@@ -55,6 +56,7 @@ lint:
 	./scripts/lint.sh
 
 ci-fast: generate lint
+	./scripts/install-pinned-tools-test.sh
 	./scripts/select-codesign-identity-test.sh
 	swift test --package-path "$(PACKAGE_DIR)"
 	xcodebuild $(XCODEBUILD_FLAGS) build
