@@ -17,6 +17,7 @@ struct MacClippyClipboardCardLabel: View, Equatable {
     nonisolated let snapshot: MacClippyClipboardCardSnapshot
     let context: MacClippyClipboardCardContext
     let loadThumbnail: @MainActor @Sendable (RecordID) async -> CGImage?
+    let cachedThumbnail: @MainActor @Sendable (RecordID) -> CGImage?
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
@@ -26,11 +27,13 @@ struct MacClippyClipboardCardLabel: View, Equatable {
 
     init(
         context: MacClippyClipboardCardContext,
-        loadThumbnail: @escaping @MainActor @Sendable (RecordID) async -> CGImage?
+        loadThumbnail: @escaping @MainActor @Sendable (RecordID) async -> CGImage?,
+        cachedThumbnail: @escaping @MainActor @Sendable (RecordID) -> CGImage? = { _ in nil }
     ) {
         snapshot = context.snapshot
         self.context = context
         self.loadThumbnail = loadThumbnail
+        self.cachedThumbnail = cachedThumbnail
     }
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
@@ -197,10 +200,7 @@ struct MacClippyClipboardCardLabel: View, Equatable {
     private var sourceBadgeIcon: some View {
         Group {
             if let icon = context.source.icon {
-                Image(nsImage: icon)
-                    .resizable()
-                    .interpolation(.high)
-                    .scaledToFit()
+                sourceBadgeImage(icon)
             } else {
                 Image(systemName: "app.dashed")
                     .font(.body.weight(.semibold))
@@ -212,6 +212,21 @@ struct MacClippyClipboardCardLabel: View, Equatable {
             height: MacClippyDockCardMetrics.sourceBadgeSize
         )
         .shadow(color: .black.opacity(0.18), radius: 8, y: 3)
+    }
+
+    @ViewBuilder
+    private func sourceBadgeImage(_ icon: NSImage) -> some View {
+        if let cgImage = MacClippySourceAppIcon.cgImage(icon) {
+            Image(decorative: cgImage, scale: MacClippySourceAppIcon.rasterScale, orientation: .up)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+        } else {
+            Image(nsImage: icon)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+        }
     }
 
     @ViewBuilder
@@ -349,7 +364,11 @@ extension MacClippyClipboardCardLabel {
     @ViewBuilder
     func cardImageBody(_ item: MacClippyHistoryEntry) -> some View {
         cardNamedPreview(
-            MacClippyCardImageThumbnail(itemID: item.id, load: loadThumbnail)
+            MacClippyCardImageThumbnail(
+                itemID: item.id,
+                load: loadThumbnail,
+                cached: cachedThumbnail
+            )
                 .equatable()
                 .overlay(alignment: .bottom) {
                     ocrHitOverlay(for: item)

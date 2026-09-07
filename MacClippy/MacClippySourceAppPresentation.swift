@@ -285,12 +285,17 @@ enum MacClippySourceAppResolver {
 }
 
 enum MacClippySourceAppIcon {
+    static let rasterScale: CGFloat = 2
+
     // Tahoe app icons have Default / Dark / Clear / Tinted variants.
     // The dock panel is darkAqua, so a raw NSWorkspace icon flattens to
-    // the dark glass tile. Draw the Default (aqua) representation at the
-    // badge point size so Safari/Chrome stay recognizable corner badges.
+    // the dark glass tile. Bake the Default (aqua) representation into a
+    // bitmap once so hover invalidation cannot pick another variant.
     static func prepared(_ icon: NSImage, pointSize: CGFloat) -> NSImage {
         let canvas = NSSize(width: pointSize, height: pointSize)
+        if let cgImage = rasterized(icon, pointSize: pointSize) {
+            return NSImage(cgImage: cgImage, size: canvas)
+        }
         let source = (icon.copy() as? NSImage) ?? icon
         source.size = canvas
         return NSImage(size: canvas, flipped: false) { rect in
@@ -299,6 +304,51 @@ enum MacClippySourceAppIcon {
             }
             return true
         }
+    }
+
+    static func rasterized(
+        _ icon: NSImage,
+        pointSize: CGFloat,
+        scale: CGFloat = rasterScale
+    ) -> CGImage? {
+        let pixel = max(1, Int((pointSize * scale).rounded()))
+        let canvas = NSSize(width: pointSize, height: pointSize)
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: pixel,
+            pixelsHigh: pixel,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 32
+        ) else {
+            return nil
+        }
+        rep.size = canvas
+
+        let source = (icon.copy() as? NSImage) ?? icon
+        source.size = canvas
+
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        NSAppearance(named: .aqua)?.performAsCurrentDrawingAppearance {
+            source.draw(
+                in: NSRect(origin: .zero, size: canvas),
+                from: .zero,
+                operation: .sourceOver,
+                fraction: 1
+            )
+        }
+        return rep.cgImage
+    }
+
+    static func cgImage(_ icon: NSImage) -> CGImage? {
+        var rect = NSRect(origin: .zero, size: icon.size)
+        return icon.cgImage(forProposedRect: &rect, context: nil, hints: nil)
     }
 }
 

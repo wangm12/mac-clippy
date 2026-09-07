@@ -463,3 +463,77 @@ enum MacClippyDockPinResolver {
         return .pin(boardName: defaultBoard.name)
     }
 }
+
+enum MacClippyThumbnailRetainPolicy {
+    static func shouldClearDisplayedImage(
+        displayedIdentity: String?,
+        loadingIdentity: String
+    ) -> Bool {
+        displayedIdentity != loadingIdentity
+    }
+}
+
+/// Prefer the loaded pixels only while they still belong to the current
+/// identity. A remount or URL change must not paint the previous file.
+enum MacClippyThumbnailDisplayPolicy {
+    static func displayed<Image>(
+        loadedIdentity: String?,
+        currentIdentity: String,
+        image: Image?,
+        cached: Image?
+    ) -> Image? {
+        if loadedIdentity == currentIdentity {
+            return image ?? cached
+        }
+        return cached
+    }
+}
+
+/// Source-app icons resolve off the main thread. A global generation bump
+/// remounts every card, which is what makes Finder file cards flash while
+/// Chrome URL cards stay still. Per-bundle counters keep Chrome resolve from
+/// remounting Finder, and a second resolve still remounts that bundle after
+/// NSCache eviction.
+struct MacClippySourceResolveBatch: Equatable {
+    var generations: [String: UInt] = [:]
+    var pending: Set<String> = []
+
+    mutating func enqueue(_ bundleID: String) {
+        pending.insert(bundleID)
+    }
+
+    mutating func flush() {
+        generations = MacClippySourceCardRefreshPolicy.incrementing(
+            generations,
+            resolvedBundleIDs: pending
+        )
+        pending = []
+    }
+}
+
+enum MacClippySourceCardRefreshPolicy {
+    static func snapshotGeneration(
+        cardBundleID: String?,
+        generations: [String: UInt]
+    ) -> UInt {
+        guard let cardBundleID else { return 0 }
+        return generations[cardBundleID] ?? 0
+    }
+
+    static func incrementing(
+        _ generations: [String: UInt],
+        resolvedBundleIDs: Set<String>
+    ) -> [String: UInt] {
+        var next = generations
+        for bundleID in resolvedBundleIDs {
+            next[bundleID, default: 0] &+= 1
+        }
+        return next
+    }
+
+    static func resolvedBundleID(from object: Any?) -> String? {
+        guard let bundleID = object as? String else { return nil }
+        let trimmed = bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}

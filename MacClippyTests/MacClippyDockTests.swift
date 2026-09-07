@@ -429,6 +429,30 @@ final class MacClippyDockTests: XCTestCase {
             pointSize: CGSize(width: 16, height: 16)
         )
         XCTAssertNotNil(loaded)
+        XCTAssertNotNil(
+            MacClippyFileThumbnailLoader.cachedImage(
+                for: url,
+                pointSize: CGSize(width: 16, height: 16)
+            )
+        )
+    }
+
+    func testFileThumbnailTaskKeepsPixelsOnSameIdentity() throws {
+        let files = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("MacClippy/MacClippyFileThumbnailLoader.swift"),
+            encoding: .utf8
+        )
+        guard let start = files.range(of: "struct MacClippyFileThumbnail"),
+              let end = files.range(of: "enum MacClippyFileByteCount") else {
+            return XCTFail("MacClippyFileThumbnail is missing")
+        }
+        let thumbnail = String(files[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(thumbnail.contains("MacClippyThumbnailDisplayPolicy.displayed"))
+        XCTAssertTrue(thumbnail.contains("MacClippyFileThumbnailLoader.cacheKey"))
+        XCTAssertFalse(thumbnail.contains("image = nil\n            let loaded"))
     }
 
     func testSystemQuickLookArrowSwitchReloadsWithoutStealingKeyboard() {

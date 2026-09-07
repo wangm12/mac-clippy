@@ -156,15 +156,28 @@ struct MacClippyDockPreviewView: View {
         }
     }
 
+    @ViewBuilder
+    private func previewSourceBadge(_ icon: NSImage) -> some View {
+        let prepared = MacClippySourceAppIcon.prepared(icon, pointSize: 26)
+        if let cgImage = MacClippySourceAppIcon.cgImage(prepared) {
+            Image(decorative: cgImage, scale: MacClippySourceAppIcon.rasterScale, orientation: .up)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+        } else {
+            Image(nsImage: prepared)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+        }
+    }
+
     // QuickLook-style header: app icon + name + relative time on the left,
     // ⌘C Copy and Esc ✕ on the right, plus the prev/next chevrons.
     private var previewHeader: some View {
         HStack(spacing: 10) {
             if let icon = metadata.sourceIcon {
-                Image(nsImage: MacClippySourceAppIcon.prepared(icon, pointSize: 26))
-                    .resizable()
-                    .interpolation(.high)
-                    .scaledToFit()
+                previewSourceBadge(icon)
                     .padding(2)
                     .frame(width: 26, height: 26)
                     .background(Color(nsColor: metadata.sourceAccent).opacity(0.24), in: RoundedRectangle(cornerRadius: 7, style: .continuous))

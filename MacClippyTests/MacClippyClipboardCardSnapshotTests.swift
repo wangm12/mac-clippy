@@ -61,6 +61,62 @@ final class MacClippyClipboardCardSnapshotTests: XCTestCase {
     }
 
     @MainActor
+    func testUnrelatedSourceResolveDoesNotInvalidateFileCardSnapshot() throws {
+        let finderItem = try historyEntry(preview: "clip.mp4")
+        var batch = MacClippySourceResolveBatch()
+        let finderBefore = cardContext(
+            item: finderItem,
+            terms: [],
+            selected: false,
+            generation: MacClippySourceCardRefreshPolicy.snapshotGeneration(
+                cardBundleID: "com.apple.finder",
+                generations: batch.generations
+            )
+        )
+
+        batch.enqueue("com.google.Chrome")
+        batch.flush()
+        let finderAfterChrome = cardContext(
+            item: finderItem,
+            terms: [],
+            selected: false,
+            generation: MacClippySourceCardRefreshPolicy.snapshotGeneration(
+                cardBundleID: "com.apple.finder",
+                generations: batch.generations
+            )
+        )
+        XCTAssertEqual(finderBefore, finderAfterChrome)
+        XCTAssertEqual(finderBefore.snapshot.sourcePresentationGeneration, 0)
+
+        batch.enqueue("com.google.Chrome")
+        batch.flush()
+        let finderAfterChromeAgain = cardContext(
+            item: finderItem,
+            terms: [],
+            selected: false,
+            generation: MacClippySourceCardRefreshPolicy.snapshotGeneration(
+                cardBundleID: "com.apple.finder",
+                generations: batch.generations
+            )
+        )
+        XCTAssertEqual(finderBefore, finderAfterChromeAgain)
+
+        batch.enqueue("com.apple.finder")
+        batch.flush()
+        let finderAfterOwnResolve = cardContext(
+            item: finderItem,
+            terms: [],
+            selected: false,
+            generation: MacClippySourceCardRefreshPolicy.snapshotGeneration(
+                cardBundleID: "com.apple.finder",
+                generations: batch.generations
+            )
+        )
+        XCTAssertNotEqual(finderBefore, finderAfterOwnResolve)
+        XCTAssertEqual(finderAfterOwnResolve.snapshot.sourcePresentationGeneration, 1)
+    }
+
+    @MainActor
     func testClipboardCardCaptionOmitsQuickPasteBadge() throws {
         let futureModified = Date().addingTimeInterval(3600)
         let item = try historyEntry(preview: "clip text", modified: futureModified)

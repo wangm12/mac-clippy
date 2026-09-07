@@ -10,16 +10,36 @@ struct MacClippyCardImageThumbnail: View, Equatable {
     nonisolated let itemID: RecordID
     let load: @MainActor @Sendable (RecordID) async -> CGImage?
 
+    let cached: @MainActor @Sendable (RecordID) -> CGImage?
     @State private var image: CGImage?
+    @State private var loadedIdentity: String?
+
+    init(
+        itemID: RecordID,
+        load: @escaping @MainActor @Sendable (RecordID) async -> CGImage?,
+        cached: @escaping @MainActor @Sendable (RecordID) -> CGImage? = { _ in nil }
+    ) {
+        self.itemID = itemID
+        self.load = load
+        self.cached = cached
+    }
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.itemID == rhs.itemID
     }
 
+    private var identity: String { itemID.rawValue }
+
     var body: some View {
+        let displayed = MacClippyThumbnailDisplayPolicy.displayed(
+            loadedIdentity: loadedIdentity,
+            currentIdentity: identity,
+            image: image,
+            cached: cached(itemID)
+        )
         Group {
-            if let image {
-                Image(decorative: image, scale: 1, orientation: .up)
+            if let displayed {
+                Image(decorative: displayed, scale: 1, orientation: .up)
                     .resizable()
                     .interpolation(.high)
                     .scaledToFit()
@@ -40,7 +60,13 @@ struct MacClippyCardImageThumbnail: View, Equatable {
             }
         }
         .task(id: itemID) {
-            image = nil
+            if MacClippyThumbnailRetainPolicy.shouldClearDisplayedImage(
+                displayedIdentity: loadedIdentity,
+                loadingIdentity: identity
+            ) {
+                image = nil
+            }
+            loadedIdentity = identity
             guard MacClippyThumbnailCachePolicy.shouldDecode(isCardVisible: true) else { return }
             let loaded = await load(itemID)
             guard !Task.isCancelled else { return }

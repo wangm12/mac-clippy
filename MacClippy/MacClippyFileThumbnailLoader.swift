@@ -17,6 +17,14 @@ enum MacClippyFileThumbnailLoader {
     private static let cache = MacClippyFileThumbnailCache()
     private static let flights = MacClippyFileThumbnailFlights()
 
+    static func cacheKey(url: URL, pointSize: CGSize) -> String {
+        "\(url.path)|\(Int(pointSize.width.rounded()))x\(Int(pointSize.height.rounded()))"
+    }
+
+    static func cachedImage(for url: URL, pointSize: CGSize) -> CGImage? {
+        cache.object(for: cacheKey(url: url, pointSize: pointSize))
+    }
+
     static func image(for url: URL, pointSize: CGSize) async -> CGImage? {
         let key = cacheKey(url: url, pointSize: pointSize)
         if let cached = cache.object(for: key) {
@@ -29,10 +37,6 @@ enum MacClippyFileThumbnailLoader {
             cache.setObject(image, for: key)
         }
         return Task.isCancelled ? nil : image
-    }
-
-    private static func cacheKey(url: URL, pointSize: CGSize) -> String {
-        "\(url.path)|\(Int(pointSize.width.rounded()))x\(Int(pointSize.height.rounded()))"
     }
 
     private static func render(url: URL, pointSize: CGSize) async -> CGImage? {
@@ -59,12 +63,10 @@ enum MacClippyFileThumbnailLoader {
 
     private static func workspaceIcon(for url: URL, pointSize: CGSize) -> CGImage? {
         let icon = NSWorkspace.shared.icon(forFile: url.path)
-        icon.size = pointSize
-        guard let data = icon.tiffRepresentation,
-              let source = CGImageSourceCreateWithData(data as CFData, nil) else {
-            return nil
-        }
-        return CGImageSourceCreateImageAtIndex(source, 0, nil)
+        return MacClippySourceAppIcon.rasterized(
+            icon,
+            pointSize: max(pointSize.width, pointSize.height)
+        )
     }
 }
 
@@ -133,15 +135,26 @@ struct MacClippyFileThumbnail: View, Equatable {
     let pointSize: CGSize
 
     @State private var image: CGImage?
+    @State private var loadedIdentity: String?
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.url == rhs.url && lhs.pointSize == rhs.pointSize
     }
 
+    private var identity: String {
+        MacClippyFileThumbnailLoader.cacheKey(url: url, pointSize: pointSize)
+    }
+
     var body: some View {
+        let displayed = MacClippyThumbnailDisplayPolicy.displayed(
+            loadedIdentity: loadedIdentity,
+            currentIdentity: identity,
+            image: image,
+            cached: MacClippyFileThumbnailLoader.cachedImage(for: url, pointSize: pointSize)
+        )
         Group {
-            if let image {
-                Image(decorative: image, scale: 1, orientation: .up)
+            if let displayed {
+                Image(decorative: displayed, scale: 1, orientation: .up)
                     .resizable()
                     .interpolation(.high)
                     .scaledToFit()
@@ -159,8 +172,14 @@ struct MacClippyFileThumbnail: View, Equatable {
                     }
             }
         }
-        .task(id: "\(url.path)|\(Int(pointSize.width))x\(Int(pointSize.height))") {
-            image = nil
+        .task(id: identity) {
+            if MacClippyThumbnailRetainPolicy.shouldClearDisplayedImage(
+                displayedIdentity: loadedIdentity,
+                loadingIdentity: identity
+            ) {
+                image = nil
+            }
+            loadedIdentity = identity
             let loaded = await MacClippyFileThumbnailLoader.image(for: url, pointSize: pointSize)
             guard !Task.isCancelled else { return }
             image = loaded

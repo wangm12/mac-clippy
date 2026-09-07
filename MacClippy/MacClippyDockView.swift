@@ -95,7 +95,7 @@ struct MacClippyDockView: View {
     @State var actionBarAppeared = false
     @State var shouldRestoreSearchFocus = false
     @State var modalFocusGeneration: UInt = 0
-    @State var sourcePresentationGeneration: UInt = 0
+    @State var sourceResolveBatch = MacClippySourceResolveBatch()
     @State var sourceResolveCoalescer = MacClippyMainQueueCoalescer()
     @Namespace var headerGlassNamespace
 
@@ -213,14 +213,22 @@ struct MacClippyDockView: View {
                 userInfo: [.announcement: errorMessage]
             )
         }
-        .onReceive(NotificationCenter.default.publisher(for: .macClippySourceAppPresentationDidResolve)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .macClippySourceAppPresentationDidResolve)) { notification in
+            guard let bundleID = MacClippySourceCardRefreshPolicy.resolvedBundleID(
+                from: notification.object
+            ) else { return }
+            var pending = sourceResolveBatch
+            pending.enqueue(bundleID)
+            sourceResolveBatch = pending
             sourceResolveCoalescer.schedule {
-                sourcePresentationGeneration &+= 1
+                var flushed = sourceResolveBatch
+                flushed.flush()
+                sourceResolveBatch = flushed
             }
         }
-        // Read the token so cards that initially rendered a source placeholder
-        // are recomputed once the background LaunchServices lookup completes.
-        .animation(nil, value: sourcePresentationGeneration)
+        // Only cards for the resolved bundle recompute. A global generation
+        // remounted file thumbnails and flashed just those cards.
+        .animation(nil, value: sourceResolveBatch.generations)
         .onChange(of: accessibilityReduceMotion) { _, value in onReduceMotionChange(value) }
         .onChange(of: model.isLoading) { wasLoading, isLoading in
             guard wasLoading, !isLoading else { return }

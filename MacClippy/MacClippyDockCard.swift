@@ -150,7 +150,10 @@ extension MacClippyDockView {
             categories: categories,
             highlightTerms: model.highlightTerms,
             isPreviewVisible: model.isPreviewVisible,
-            sourcePresentationGeneration: sourcePresentationGeneration,
+            sourcePresentationGeneration: MacClippySourceCardRefreshPolicy.snapshotGeneration(
+                cardBundleID: item.meta.sourceAppBundleID,
+                generations: sourceResolveBatch.generations
+            ),
             showsCategoryIndicator: MacClippyDockCardCategoryPolicy.shouldShowIndicator(
                 categories: categories,
                 selectedTab: model.selectedTab
@@ -176,6 +179,9 @@ extension MacClippyDockView {
                 loadThumbnail: { [weak model] id in
                     guard let model else { return nil }
                     return await model.loadImageThumbnail(for: id)
+                },
+                cachedThumbnail: { [weak model] id in
+                    model?.thumbnailLoader.cachedImage(id: id, maxPixelSize: 480)
                 }
             )
             .equatable()

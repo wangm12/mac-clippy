@@ -23,4 +23,28 @@ final class MacClippyThumbnailCachePolicyTests: XCTestCase {
             MacClippyThumbnailCachePolicy.fileName(recordID: id, maxPixelSize: 32)
         )
     }
+
+    func testTaskRestartKeepsPixelsWhenIdentityIsUnchanged() {
+        XCTAssertFalse(
+            MacClippyThumbnailCachePolicy.shouldClearDisplayedImage(
+                displayedIdentity: "file:///tmp/clip.mp4|96x96",
+                loadingIdentity: "file:///tmp/clip.mp4|96x96"
+            )
+        )
+    }
+
+    func testIdentityChangeClearsDisplayedImage() {
+        XCTAssertTrue(
+            MacClippyThumbnailCachePolicy.shouldClearDisplayedImage(
+                displayedIdentity: "file:///tmp/a.mp4|96x96",
+                loadingIdentity: "file:///tmp/b.mp4|96x96"
+            )
+        )
+        XCTAssertTrue(
+            MacClippyThumbnailCachePolicy.shouldClearDisplayedImage(
+                displayedIdentity: nil,
+                loadingIdentity: "file:///tmp/b.mp4|96x96"
+            )
+        )
+    }
 }
