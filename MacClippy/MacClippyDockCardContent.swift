@@ -107,6 +107,7 @@ extension MacClippyDockView {
 private struct MacClippySnippetHoverChrome: ViewModifier {
     let isFocused: Bool
     @Environment(\.macClippyCardHovered) private var isHovered
+    @Environment(\.macClippyCarouselScrolling) private var isCarouselScrolling
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
     func body(content: Content) -> some View {
@@ -116,18 +117,26 @@ private struct MacClippySnippetHoverChrome: ViewModifier {
                 color: .black.opacity(
                     MacClippyDockCardHoverChrome.shadowOpacity(
                         elevated: isFocused,
-                        hovered: isHovered
+                        hovered: isHovered,
+                        isScrolling: isCarouselScrolling
                     )
                 ),
                 radius: MacClippyDockCardHoverChrome.shadowRadius(
                     elevated: isFocused,
-                    hovered: isHovered
+                    hovered: isHovered,
+                    isScrolling: isCarouselScrolling
                 ),
                 y: MacClippyDockCardHoverChrome.shadowY(
                     elevated: isFocused,
-                    hovered: isHovered
+                    hovered: isHovered,
+                    isScrolling: isCarouselScrolling
                 )
             )
-            .scaleEffect(reduceMotion ? 1 : (isHovered ? MacClippyMotion.hoverScale : 1))
+            .scaleEffect(
+                MacClippyDockCardHoverChrome.allowsHoverScale(
+                    isScrolling: isCarouselScrolling,
+                    reduceMotion: reduceMotion
+                ) && isHovered ? MacClippyMotion.hoverScale : 1
+            )
     }
 }

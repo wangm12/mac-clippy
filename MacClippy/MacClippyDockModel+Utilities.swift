@@ -28,7 +28,7 @@ extension MacClippyDockModel {
             let result = Result {
                 try runtimeReference.paste(id: item.id, plain: pastePlain, sideEffectGate: sideEffectGate)
             }
-            DispatchQueue.main.async { [weak self] in
+            MacClippyMainHop.async { [weak self] in
                 guard let self,
                       self.sessionGeneration == session,
                       self.operationGeneration == operation else { return }
@@ -61,7 +61,7 @@ extension MacClippyDockModel {
             let result = Result {
                 try runtimeReference.paste(snippetID: snippet.id, sideEffectGate: sideEffectGate)
             }
-            DispatchQueue.main.async { [weak self] in
+            MacClippyMainHop.async { [weak self] in
                 guard let self,
                       self.sessionGeneration == session,
                       self.operationGeneration == operation else { return }
@@ -89,13 +89,13 @@ extension MacClippyDockModel {
     }
 
     func filter(_ items: [MacClippyHistoryEntry], by query: String) -> [MacClippyHistoryEntry] {
+        #if DEBUG
+        visibleItemsFilterCount += 1
+        #endif
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedQuery.isEmpty, selectedTab != .history else { return items }
-        // P2b: apply the structured search grammar to pinboard-tab filtering
-        // so a query like type:image or name:work narrows a pinboard the
-        // same way it narrows history. The history tab is unaffected here
-        // because its results already come from runtime.history (which
-        // applies the same grammar), so the dock never re-filters history.
+        guard !normalizedQuery.isEmpty else { return items }
+        // Apply the structured search grammar locally so a typed query still
+        // narrows the last snapshot while a history reload is in flight.
         let parsed = MacClippySearchGrammar.parse(normalizedQuery)
         // No structured clauses: preserve the existing local substring filter
         // on the raw query so bare-term pinboard search behavior is
@@ -118,7 +118,7 @@ extension MacClippyDockModel {
                 sourceAppBundleID: entry.meta.sourceAppBundleID,
                 sourceAppDisplayName: MacClippySourceAppSearch.preferredDisplayName(
                     stored: entry.meta.sourceAppDisplayName,
-                    resolved: MacClippySourceAppResolver.displayName(
+                    resolved: MacClippySourceAppResolver.cachedDisplayName(
                         for: entry.meta.sourceAppBundleID
                     )
                 ),
@@ -154,7 +154,7 @@ extension MacClippyDockModel {
                     throw MacClippyDockOperationError.returnedFailure
                 }
             }
-            DispatchQueue.main.async { [weak self] in
+            MacClippyMainHop.async { [weak self] in
                 guard let self,
                       self.sessionGeneration == session,
                       self.operationGeneration == userOperation else { return }
@@ -181,7 +181,7 @@ extension MacClippyDockModel {
         sideEffectGate = gate
         workQueue.async { [weak self, gate] in
             let result = Result { try operation(gate) }
-            DispatchQueue.main.async { [weak self] in
+            MacClippyMainHop.async { [weak self] in
                 guard let self,
                       self.sessionGeneration == session,
                       self.operationGeneration == userOperation else { return }

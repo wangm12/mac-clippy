@@ -1,4 +1,5 @@
 import AppKit
+import MacClippyPlatform
 import QuickLookUI
 import SwiftUI
 
@@ -59,7 +60,9 @@ final class MacClippyDockHostingView: NSHostingView<MacClippyDockView> {
 
     override func layout() {
         super.layout()
-        makeTransparent()
+        if layer == nil || layer?.isOpaque != false {
+            makeTransparent()
+        }
     }
 
     private func makeTransparent() {
@@ -237,6 +240,9 @@ final class MacClippyDockPanel: NSPanel {
     var interceptsPickerKeys = false
     var onPickerKey: ((NSEvent) -> Bool)?
     weak var systemQuickLookHost: MacClippySystemQuickLookHosting?
+    /// AppKit resets floating panels to `.floating` on key/focus. Restore
+    /// the controller's intended level, including a fullscreen IME yield.
+    var pinnedOverlayLevel: NSWindow.Level = .mainMenu
 
     init(contentRect: NSRect) {
         super.init(
@@ -263,12 +269,46 @@ final class MacClippyDockPanel: NSPanel {
         isFloatingPanel = true
         hidesOnDeactivate = false
         becomesKeyOnlyIfNeeded = false
-        // The main-menu level is above full-screen app content while remaining
-        // a normal interactive overlay; screenSaver-level windows are reserved
-        // for system-style overlays and can produce surprising compositing.
+        // The main-menu level stays above the system Dock and full-screen
+        // app content. Search focus and IME composition must not change it
+        // (Maccy / PasteClip keep one stable level). The floating-panel bit
+        // never changes.
         level = .mainMenu
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         isReleasedWhenClosed = false
+        animationBehavior = .none
+    }
+
+    override func becomeKey() {
+        super.becomeKey()
+        pinStableOverlayLevel()
+    }
+
+    override func makeKeyAndOrderFront(_ sender: Any?) {
+        super.makeKeyAndOrderFront(sender)
+        pinStableOverlayLevel()
+    }
+
+    @discardableResult
+    override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
+        let result = super.makeFirstResponder(responder)
+        if responder is NSTextView || responder is NSTextField {
+            pinStableOverlayLevel()
+        }
+        return result
+    }
+
+    private func pinStableOverlayLevel() {
+        guard MacClippyDockInputMethodPolicy.shouldReassertOverlayAfterBecomingKey() else { return }
+        let floating = MacClippyDockInputMethodPolicy.usesFloatingPanel(
+            allowsInputMethodCandidates: false
+        )
+        if isFloatingPanel != floating {
+            isFloatingPanel = floating
+        }
+        if level != pinnedOverlayLevel {
+            level = pinnedOverlayLevel
+        }
     }
 
     override func sendEvent(_ event: NSEvent) {
@@ -326,6 +366,7 @@ final class MacClippyPreviewPanel: NSPanel {
         // this panel's frame so a chevron tap never races the dismissal.
         ignoresMouseEvents = false
         isReleasedWhenClosed = false
+        animationBehavior = .none
     }
 
     // Preview is display-only for keyboard ownership. The Dock panel remains
@@ -373,6 +414,7 @@ final class MacClippyToastPanel: NSPanel {
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         ignoresMouseEvents = true
         isReleasedWhenClosed = false
+        animationBehavior = .none
     }
 
     override var canBecomeKey: Bool { false }

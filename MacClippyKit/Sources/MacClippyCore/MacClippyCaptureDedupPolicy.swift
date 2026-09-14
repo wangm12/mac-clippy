@@ -51,6 +51,24 @@ public enum MacClippyCaptureDedupPolicy {
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
+    /// AES-GCM combined box is nonce (12) + ciphertext + tag (16).
+    public static let minimumSealedEnvelopeByteCount = 28
+
+    /// Hash match plus intact metadata is enough to bump frequency. Tiny or
+    /// incomplete rows still open the envelope so a corrupt duplicate can
+    /// insert a fresh row — `Data([1,2,3])` stays on the decrypt path.
+    public static func canSkipEnvelopeOpen(
+        recordID: String?,
+        contentKind: String?,
+        preview: String?,
+        envelopeByteCount: Int
+    ) -> Bool {
+        guard let recordID, RecordID(rawValue: recordID) != nil else { return false }
+        guard let contentKind, MacClippyContentKind(rawValue: contentKind) != nil else { return false }
+        guard let preview, !preview.isEmpty else { return false }
+        return envelopeByteCount >= minimumSealedEnvelopeByteCount
+    }
+
     private static func append(_ hasher: inout SHA256, _ primary: MacClippyCaptureDedupPrimary) {
         switch primary {
         case let .text(value):

@@ -221,19 +221,16 @@ final class MacClippySettingsTests: XCTestCase {
     }
 
     func testHotKeyRecordingNotificationUsesActiveState() {
-        let activeExpectation = expectation(description: "recording starts")
-        let inactiveExpectation = expectation(description: "recording stops")
         let states = MacClippyBooleanStateBox()
         let observer = NotificationCenter.default.addObserver(
             forName: .macClippyHotKeyRecordingChanged,
             object: nil,
-            queue: .main
+            queue: nil
         ) { notification in
             guard let isActive = notification.userInfo?[MacClippyHotKeyNotificationUserInfo.isActive] as? Bool else {
                 return
             }
             states.append(isActive)
-            isActive ? activeExpectation.fulfill() : inactiveExpectation.fulfill()
         }
         defer { NotificationCenter.default.removeObserver(observer) }
 
@@ -248,7 +245,6 @@ final class MacClippySettingsTests: XCTestCase {
             userInfo: [MacClippyHotKeyNotificationUserInfo.isActive: false]
         )
 
-        wait(for: [activeExpectation, inactiveExpectation], timeout: 1)
         XCTAssertEqual(states.snapshot, [true, false])
     }
 

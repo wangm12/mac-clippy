@@ -80,7 +80,7 @@ extension MacClippyDockModel {
                     pageToken: pageToken
                 )
             }
-            DispatchQueue.main.async { [weak self] in
+            MacClippyMainHop.async { [weak self] in
                 guard let self else { return }
                 guard self.sessionGeneration == session,
                       self.pinboardLoadGeneration == loadGeneration else { return }
@@ -330,6 +330,7 @@ extension MacClippyDockModel {
     @discardableResult
     func beginUserOperation() -> UInt {
         cancelQueuedPaste()
+        queuePasteProgress = nil
         sideEffectGate?.close()
         sideEffectGate = nil
         operationGeneration &+= 1
@@ -343,6 +344,10 @@ extension MacClippyDockModel {
         sessionGeneration &+= 1
         nameOperationGeneration &+= 1
         isSelecting = false
+        allowsEmptySearchFieldOverwrite = MacClippyDockSearchQueryWritePolicy.allowsEmptyOverwrite(
+            currently: allowsEmptySearchFieldOverwrite,
+            after: .sessionBegan
+        )
         query = ""
         isSessionActive = true
         focusedIndex = 0
@@ -350,7 +355,7 @@ extension MacClippyDockModel {
         hasCompletedInitialPaint = false
     }
 
-    func endSession() {
+    func endSession(resetCaches: Bool = true) {
         beginUserOperation()
         invalidateAllSelectionScope()
         historyLoadWorkItem?.cancel()
@@ -363,6 +368,14 @@ extension MacClippyDockModel {
         nameOperationGeneration &+= 1
         isSelecting = false
         clearActionFeedback()
+        if resetCaches {
+            resetSessionThumbnailCaches()
+        }
+    }
+
+    func resetSessionThumbnailCaches() {
         thumbnailLoader.resetForSessionEnd()
+        MacClippyFileThumbnailLoader.resetForSessionEnd()
+        MacClippyFileIconLoader.resetForSessionEnd()
     }
 }

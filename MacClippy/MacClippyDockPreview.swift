@@ -123,6 +123,11 @@ struct MacClippyDockPreviewView: View {
 
             contentView
                 .id(contentIdentity)
+                .transition(MacClippyMotion.contentTransition(reduceMotion: reduceMotion))
+                .animation(
+                    MacClippyMotion.animation(MacClippyMotion.contentAnimation, reduceMotion: reduceMotion),
+                    value: contentIdentity
+                )
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .padding(.horizontal, 18)
                 .padding(.vertical, 14)

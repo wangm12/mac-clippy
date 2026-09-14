@@ -39,6 +39,7 @@ targets:
       - path: MacClippy/MacClippyDisplayLifecycleCoordinator.swift
       - path: MacClippy/MacClippyLaunchAtLoginRegistration.swift
       - path: MacClippy/MacClippyDockSessionOpen.swift
+      - path: MacClippy/MacClippyMainHop.swift
       - path: MacClippy/MacClippySettings.swift
       - path: MacClippy/MacClippySettingsPreferences.swift
       - path: MacClippy/MacClippySettings+Sections.swift
@@ -92,6 +93,8 @@ targets:
       - path: MacClippy/MacClippyDockModel+Utilities.swift
       - path: MacClippy/MacClippyDockView.swift
       - path: MacClippy/MacClippyDockView+HeaderSearch.swift
+      - path: MacClippy/MacClippySearchFieldCaretAnchor.swift
+      - path: MacClippy/MacClippyAppKitSearchField.swift
       - path: MacClippy/MacClippyDockView+FilterDrop.swift
       - path: MacClippy/MacClippyDockView+CarouselModal.swift
       - path: MacClippy/MacClippyDockCard.swift

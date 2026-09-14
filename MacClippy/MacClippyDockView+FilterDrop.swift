@@ -79,7 +79,7 @@ struct MacClippyDockFilterPill: View {
                         .frame(width: 7, height: 7)
                 }
                 Text(title)
-                    .font(.body.weight(selected ? .bold : .semibold))
+                    .font(.body.weight(.semibold))
                     .lineLimit(1)
             }
             .foregroundStyle(
@@ -131,9 +131,9 @@ extension MacClippyDockView {
                 HStack(spacing: 6) {
                     filterPill(
                         title: "All",
-                        selected: model.selectedTab == .history
+                        selected: model.isAllFilterSelected
                     ) {
-                        model.selectTab(.history)
+                        model.selectAllFilter()
                     }
                     ForEach(model.visibleSmartLists) { list in
                         filterPill(
@@ -183,7 +183,7 @@ extension MacClippyDockView {
                         isDropTarget: dropTargetSnippets,
                         isDropConfirmed: dropConfirmedSnippets
                     ) {
-                        model.selectTab(.snippets)
+                        model.selectSnippetsFilter()
                     }
                     .onDrop(
                         of: [clipboardRecordDragType],

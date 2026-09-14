@@ -14,6 +14,14 @@ private struct MacClippyHistoryPageRequest: Sendable {
 enum MacClippyDockHistoryPaginationPolicy {
     static let pageSize = 16
     static let prefetchThreshold = 4
+
+    static func recencyKey(for item: MacClippyHistoryEntry) -> MacClippyHistoryRecencyKey {
+        MacClippyHistoryRecencyKey(
+            modified: item.meta.modified,
+            lamport: item.meta.lamport,
+            id: item.id.rawValue
+        )
+    }
 }
 
 extension MacClippyDockModel {
@@ -87,7 +95,7 @@ extension MacClippyDockModel {
                 )
             }
             guard !request.cancellationToken.isCancelled else { return }
-            DispatchQueue.main.async { [weak self] in
+            MacClippyMainHop.async { [weak self] in
                 self?.applyHistoryPageResult(
                     result,
                     request: request
@@ -114,7 +122,22 @@ extension MacClippyDockModel {
             let existingIDs = Set(historyItems.map(\.id))
             let additions = page.items.filter { !existingIDs.contains($0.id) }
             if !additions.isEmpty {
-                historyItems = MacClippyHistoryRecencyOrder.sorted(historyItems + additions)
+                if MacClippyHistoryPageMergePolicy.shouldAppendOlderPage(
+                    existingOldest: historyItems.last.map {
+                        MacClippyDockHistoryPaginationPolicy.recencyKey(for: $0)
+                    },
+                    additionsNewest: additions
+                        .map { MacClippyDockHistoryPaginationPolicy.recencyKey(for: $0) }
+                        .reduce(nil) { best, key in
+                            guard let best else { return key }
+                            return MacClippyHistoryPageMergePolicy.isMoreRecent(key, than: best)
+                                ? key : best
+                        }
+                ) {
+                    historyItems.append(contentsOf: additions)
+                } else {
+                    historyItems = MacClippyHistoryRecencyOrder.sorted(historyItems + additions)
+                }
                 rebindSelection()
                 recomputeDedupRuns()
             }

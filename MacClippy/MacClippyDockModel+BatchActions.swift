@@ -31,7 +31,7 @@ extension MacClippyDockModel {
             let result = Result {
                 try runtime.pasteOrdered(ids: orderedIDs, sideEffectGate: sideEffectGate)
             }
-            DispatchQueue.main.async { [weak self] in
+            MacClippyMainHop.async { [weak self] in
                 guard let self,
                       self.sessionGeneration == session,
                       self.operationGeneration == opGeneration else { return }
@@ -94,7 +94,7 @@ extension MacClippyDockModel {
             let resolution = Result {
                 try runtime.copyOrdered(ids: orderedIDs, sideEffectGate: sideEffectGate)
             }
-            DispatchQueue.main.async { [weak self] in
+            MacClippyMainHop.async { [weak self] in
                 guard let self,
                       self.sessionGeneration == session,
                       self.operationGeneration == opGeneration else { return }

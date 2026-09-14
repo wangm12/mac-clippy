@@ -151,8 +151,14 @@ final class MacClippyDockModel: ObservableObject {
     // Toggled by the controller when the preview shows/hides.
     @Published var isPreviewVisible = false
     @Published var actionFeedback: MacClippyDockActionFeedback?
+    @Published var queuePasteProgress: (done: Int, total: Int)?
     @Published var modal: MacClippyDockModal?
     @Published var searchFocusRequest = 0
+    @Published var searchQueryProgrammaticWriteToken = 0
+    // Picker-mode typing writes `query` before the search field becomes first
+    // responder. Stay false until a real key / non-empty field edit or an
+    // explicit clear so a remounted AppKit field cannot wipe that character.
+    var allowsEmptySearchFieldOverwrite = false
     @Published var searchFocusReset = 0
     /// P1 multi-select state. The selection is active only on the history and
     /// pinboard tabs (clipboard records); the snippets tab keeps the existing
@@ -167,6 +173,28 @@ final class MacClippyDockModel: ObservableObject {
 
     var visibleSmartLists: [MacClippySmartList] {
         MacClippySmartListPolicy.visibleCatalog(hiddenIDs: hiddenSmartListIDs)
+    }
+
+    var isAllFilterSelected: Bool {
+        MacClippySmartListPolicy.isAllSelected(
+            isHistoryTab: selectedTab == .history,
+            query: query
+        )
+    }
+
+    var visibleSmartListTokens: Set<String> {
+        MacClippySmartListPolicy.visibleListTokens(hiddenIDs: hiddenSmartListIDs)
+    }
+
+    var filterSurfaceID: String {
+        MacClippyDockFilterSurfacePolicy.id(tab: selectedTab, query: query)
+    }
+
+    var displayedSearchText: String {
+        MacClippyDockSearchQueryWritePolicy.displayedSearchText(
+            committedQuery: query,
+            excludingTokens: visibleSmartListTokens
+        )
     }
     let workQueue = DispatchQueue(label: "com.macallyouneed.macclippy.dock", qos: .userInitiated)
     let reloadQueue = DispatchQueue(label: "com.macallyouneed.macclippy.reload", qos: .userInitiated)
@@ -193,6 +221,10 @@ final class MacClippyDockModel: ObservableObject {
     var historyLoadCancellationToken: MacClippyCancellationToken?
     var historyChangeObserver: MacClippyNotificationToken?
     var isSessionActive = false
+    #if DEBUG
+    var visibleItemsFilterCount = 0
+    #endif
+    var visibleItemsFilterCache: VisibleItemsFilterCache?
     @Published var pinboardSearchItems: [MacClippyHistoryEntry] = []
     @Published var pinboardSearchIsLoading = false
     @Published var pinboardSearchError: String?
@@ -237,6 +269,14 @@ final class MacClippyDockModel: ObservableObject {
         let pinboards: [MacClippyPinboardEntry]?
     }
 
+    struct VisibleItemsFilterCache {
+        var query: String
+        var historyQuery: String
+        var isLoading: Bool
+        var itemIDs: [RecordID]
+        var result: [MacClippyHistoryEntry]
+    }
+
     init(runtime: MacClippyRuntime, defaults: UserDefaults = .standard) {
         self.runtime = runtime
         self.defaults = defaults
@@ -247,8 +287,16 @@ final class MacClippyDockModel: ObservableObject {
             object: runtime,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.handleExternalHistoryChange()
+            if Thread.isMainThread {
+                MainActor.assumeIsolated {
+                    self?.handleExternalHistoryChange()
+                }
+            } else {
+                MacClippyMainHop.async {
+                    MainActor.assumeIsolated {
+                        self?.handleExternalHistoryChange()
+                    }
+                }
             }
         }
         historyChangeObserver = MacClippyNotificationToken(observer)
@@ -287,10 +335,45 @@ final class MacClippyDockModel: ObservableObject {
     }
 
     func toggleSmartList(_ list: MacClippySmartList) {
-        query = MacClippySmartListPolicy.apply(list, to: query)
-        if MacClippySmartListPolicy.isActive(list, in: query), selectedTab == .snippets {
+        applyEmptyOverwriteEvent(.programmaticQueryWrite)
+        if MacClippySmartListPolicy.isActive(list, in: query), selectedTab == .history {
+            query = ""
+        } else {
+            query = list.query
+        }
+        searchQueryProgrammaticWriteToken += 1
+        if selectedTab != .history {
             selectTab(.history)
         }
+    }
+
+    func selectAllFilter() {
+        applyEmptyOverwriteEvent(.explicitClear)
+        let shouldReloadHistory = MacClippyDockSessionOpenPolicy.shouldReloadHistoryForAllFilter(
+            historyQuery: historyQuery,
+            query: ""
+        )
+        query = ""
+        searchQueryProgrammaticWriteToken += 1
+        if selectedTab != .history {
+            selectTab(.history)
+        }
+        if shouldReloadHistory, selectedTab == .history {
+            reload(includeStaticData: false)
+        }
+    }
+
+    func selectSnippetsFilter() {
+        applyEmptyOverwriteEvent(.explicitClear)
+        // Switch the tab before clearing History filters. Clearing `query`
+        // first leaves one History frame on an empty type:image snapshot
+        // ("No matches") and that hard-cut is the Snippets flash.
+        if selectedTab != .snippets {
+            selectTab(.snippets)
+        }
+        query = ""
+        searchQueryProgrammaticWriteToken += 1
+        scheduleSnippetFilter()
     }
 
     func hideSmartList(_ list: MacClippySmartList) {

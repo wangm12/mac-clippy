@@ -4,6 +4,9 @@ import Foundation
 /// seeing K can process K+1…N instead of only the latest generation.
 public enum MacClippyMissedChangeCountPolicy {
     public static let defaultCatchUpLimit = 32
+    /// NSPasteboard only exposes the current generation. Intermediate
+    /// changeCounts cannot be recovered; diagnostics must not claim otherwise.
+    public static let recoveryAction = "document_unrecoverable_generations"
 
     public static func hasMissedGenerations(after lastSeen: Int, observed: Int) -> Bool {
         observed > lastSeen + 1

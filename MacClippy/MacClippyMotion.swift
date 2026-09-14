@@ -45,10 +45,12 @@ enum MacClippyMotion {
     static let panelShadowRadius: CGFloat = 24
     static let panelShadowYOffset: CGFloat = -10
     static let contentOffset: CGFloat = 8
+    static let filterSurfaceDuration: TimeInterval = 0.16
 
     static let entranceAnimation = Animation.timingCurve(0.22, 1, 0.36, 1, duration: entranceDuration)
     static let exitAnimation = Animation.timingCurve(0.64, 0, 0.78, 0, duration: exitDuration)
     static let contentAnimation = Animation.timingCurve(0.65, 0, 0.35, 1, duration: contentDuration)
+    static let filterSurfaceAnimation = Animation.timingCurve(0.22, 1, 0.36, 1, duration: filterSurfaceDuration)
     static let focusAnimation = Animation.timingCurve(0.65, 0, 0.35, 1, duration: focusDuration)
     static let actionFeedbackAnimation = Animation.timingCurve(0.22, 1, 0.36, 1, duration: actionFeedbackDuration)
     static let settingsRevealAnimation = Animation.timingCurve(0.22, 1, 0.36, 1, duration: settingsRevealDuration)
@@ -109,15 +111,19 @@ enum MacClippyMotion {
         reduceMotion ? .identity : .move(edge: .top).combined(with: .opacity)
     }
 
-    // Animated List-style card updates: content changes enter with a small
-    // horizontal nudge and leave with a short fade. The offset is deliberately
-    // smaller than the panel transition so list updates stay subordinate to
-    // the user's search and copy actions.
+    // In-list search updates fade. Tag switches use `filterSurfaceTransition`
+    // on the clipped well instead of moving each card.
     static func cardListTransition(reduceMotion: Bool) -> AnyTransition {
+        fadeTransition(reduceMotion: reduceMotion)
+    }
+
+    /// Incoming filter pages enter from the right; the outgoing page leaves
+    /// to the left. Reduce Motion keeps the swap instant.
+    static func filterSurfaceTransition(reduceMotion: Bool) -> AnyTransition {
         guard !reduceMotion else { return .identity }
         return .asymmetric(
-            insertion: .opacity.combined(with: .offset(x: contentOffset)),
-            removal: .opacity.combined(with: .scale(scale: 0.98))
+            insertion: .move(edge: .trailing).combined(with: .opacity),
+            removal: .move(edge: .leading).combined(with: .opacity)
         )
     }
 

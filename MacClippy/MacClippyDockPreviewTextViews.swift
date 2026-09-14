@@ -69,6 +69,14 @@ struct MacClippyDockPreviewTextView: NSViewRepresentable {
 struct MacClippyDockPreviewAttributedTextView: NSViewRepresentable {
     let attributedText: NSAttributedString
 
+    final class Coordinator {
+        var contentIdentity = 0
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
     func makeNSView(context: Context) -> NSScrollView {
         let textView = NSTextView(frame: .zero)
         textView.isEditable = false
@@ -101,9 +109,10 @@ struct MacClippyDockPreviewAttributedTextView: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? NSTextView else { return }
-        if textView.attributedString() != attributedText {
-            update(textView, with: attributedText)
-        }
+        let identity = attributedText.length &+ attributedText.string.hashValue
+        guard context.coordinator.contentIdentity != identity else { return }
+        context.coordinator.contentIdentity = identity
+        update(textView, with: attributedText)
     }
 
     private func update(_ textView: NSTextView, with attributedText: NSAttributedString) {

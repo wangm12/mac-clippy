@@ -31,7 +31,7 @@ struct MacClippyDockPreviewFileIcon: View {
     }
 }
 
-private enum MacClippyFileIconLoader {
+enum MacClippyFileIconLoader {
     fileprivate static let cache = MacClippyFileIconCache()
     fileprivate static let queue = DispatchQueue(
         label: "com.macallyouneed.macclippy.file-icon-resolution",
@@ -44,6 +44,10 @@ private enum MacClippyFileIconLoader {
     // created by multiple SwiftUI tasks at once, while the cache and request
     // registry have no actor affinity.
     nonisolated(unsafe) private static var inFlight: [String: MacClippyFileIconInFlight] = [:]
+
+    static func resetForSessionEnd() {
+        cache.removeAllObjects()
+    }
 
     static func image(for url: URL) async -> CGImage? {
         let path = url.path
@@ -130,6 +134,10 @@ private final class MacClippyFileIconCache: @unchecked Sendable {
     func setObject(_ image: CGImage, forKey key: String) {
         let cost = max(1, image.bytesPerRow * image.height)
         storage.setObject(image, forKey: key as NSString, cost: cost)
+    }
+
+    func removeAllObjects() {
+        storage.removeAllObjects()
     }
 }
 

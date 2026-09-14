@@ -169,7 +169,9 @@ extension View {
     // plus a tinted recipe each flashed the chip on click.
     @ViewBuilder
     func macClippyFilterChipStyle(selected: Bool, hovered: Bool = false, tint: Color) -> some View {
-        let wash = tint.opacity(selected ? 0.22 : (hovered ? 0.12 : 0))
+        let wash = tint.opacity(
+            MacClippyDockFilterPillWashPolicy.opacity(selected: selected, hovered: hovered)
+        )
         if #available(macOS 26, *) {
             self
                 .buttonStyle(.plain)

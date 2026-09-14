@@ -3,6 +3,11 @@ import Foundation
 public enum MacClippyThumbnailCachePolicy {
     public static let defaultMaxPixelSize = 480
     public static let directoryName = "thumbnails"
+    public static let diskByteLimit = 128 * 1_024 * 1_024
+
+    public static func shouldEvictOldestDiskEntries(currentBytes: Int, limit: Int) -> Bool {
+        currentBytes > max(limit, 0)
+    }
 
     public static func shouldDecode(isCardVisible: Bool) -> Bool {
         isCardVisible

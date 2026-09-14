@@ -36,14 +36,20 @@ extension MacClippyDockModel {
         clearActionError()
 
         workQueue.async { [weak self, runtime, cancellationToken, sideEffectGate] in
+            let model = self
             let result = Result {
                 try runtime.pasteQueued(
                     ids: orderedIDs,
                     shouldCancel: { cancellationToken.isCancelled },
-                    sideEffectGate: sideEffectGate
+                    sideEffectGate: sideEffectGate,
+                    onProgress: { done, total in
+                        MacClippyMainHop.async {
+                            model?.queuePasteProgress = (done, total)
+                        }
+                    }
                 )
             }
-            DispatchQueue.main.async { [weak self] in
+            MacClippyMainHop.async { [weak self] in
                 self?.finishQueuedPaste(
                     result: result,
                     session: session,
@@ -62,6 +68,7 @@ extension MacClippyDockModel {
         cancellationToken: MacClippyCancellationToken,
         completion: @escaping @MainActor @Sendable () -> Void
     ) {
+        queuePasteProgress = nil
         guard sessionGeneration == session else { return }
         if queuePasteCancellationToken === cancellationToken {
             queuePasteCancellationToken = nil
@@ -121,7 +128,7 @@ extension MacClippyDockModel {
 
         workQueue.async { [weak self, runtime] in
             let result = Result { try runtime.delete(ids: orderedIDs) }
-            DispatchQueue.main.async { [weak self] in
+            MacClippyMainHop.async { [weak self] in
                 guard let self,
                       self.sessionGeneration == session,
                       self.operationGeneration == opGeneration else { return }
@@ -168,7 +175,7 @@ extension MacClippyDockModel {
 
         workQueue.async { [weak self, runtime] in
             let result = Result { try runtime.pin(recordIDs: orderedIDs, to: target.id) }
-            DispatchQueue.main.async { [weak self] in
+            MacClippyMainHop.async { [weak self] in
                 guard let self,
                       self.sessionGeneration == session,
                       self.operationGeneration == opGeneration else { return }

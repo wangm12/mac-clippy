@@ -55,17 +55,26 @@ extension MacClippyClipboardStore {
                 return nil
             }
             let id = existing["id"] as String
-            guard let envelope = existing["envelope"] as Data?,
-                  RecordID(rawValue: id) != nil,
-                  (try? JSONDecoder().decode(
-                    ClipboardRecord.self,
-                    from: MacClippyCipher.open(MacClippyEnvelope(combined: envelope), with: key)
-                  )) != nil else {
-                try connection.execute(
-                    sql: "UPDATE clipboard_records SET content_hash = NULL WHERE id = ?",
-                    arguments: [id]
-                )
-                return nil
+            let envelope = existing["envelope"] as Data?
+            let canSkipOpen = MacClippyCaptureDedupPolicy.canSkipEnvelopeOpen(
+                recordID: id,
+                contentKind: existing["content_kind"] as String?,
+                preview: existing["preview"] as String?,
+                envelopeByteCount: envelope?.count ?? 0
+            )
+            if !canSkipOpen {
+                guard let envelope,
+                      RecordID(rawValue: id) != nil,
+                      (try? JSONDecoder().decode(
+                        ClipboardRecord.self,
+                        from: MacClippyCipher.open(MacClippyEnvelope(combined: envelope), with: key)
+                      )) != nil else {
+                    try connection.execute(
+                        sql: "UPDATE clipboard_records SET content_hash = NULL WHERE id = ?",
+                        arguments: [id]
+                    )
+                    return nil
+                }
             }
             try connection.execute(
                 sql: """

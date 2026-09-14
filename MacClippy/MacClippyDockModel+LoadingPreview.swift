@@ -26,8 +26,11 @@ private func macClippyLoadDockSnapshot(
 
 extension MacClippyDockModel {
     func handleExternalHistoryChange() {
-        guard isSessionActive, selectedTab == .history else { return }
-        reload(includeStaticData: false)
+        guard MacClippyDockHistoryRefreshPolicy.shouldReloadForExternalHistoryChange(
+            isSessionActive: isSessionActive,
+            isHistoryTab: selectedTab == .history
+        ) else { return }
+        scheduleReload()
     }
 
     var visibleItems: [MacClippyHistoryEntry] {
@@ -36,7 +39,23 @@ extension MacClippyDockModel {
             if historyQuery == query, !isLoading {
                 return historyItems
             }
-            return filter(historyItems, by: query)
+            let itemIDs = historyItems.map(\.id)
+            if let cache = visibleItemsFilterCache,
+               cache.query == query,
+               cache.historyQuery == historyQuery,
+               cache.isLoading == isLoading,
+               cache.itemIDs == itemIDs {
+                return cache.result
+            }
+            let result = filter(historyItems, by: query)
+            visibleItemsFilterCache = VisibleItemsFilterCache(
+                query: query,
+                historyQuery: historyQuery,
+                isLoading: isLoading,
+                itemIDs: itemIDs,
+                result: result
+            )
+            return result
         case .snippets: return []
         case let .pinboard(id):
             return MacClippyDockPinboardVisibleItems.resolve(
@@ -79,13 +98,13 @@ extension MacClippyDockModel {
         let workItem = DispatchWorkItem { [weak self, source, parsed] in
             let filtered: [MacClippySnippetEntry]
             if parsed.bareTerms.isEmpty {
-                filtered = parsed.hasStructuredClauses ? [] : source
+                filtered = source
             } else {
                 filtered = source.filter { snippet in
                     MacClippySearchQuery.allTerms(parsed.bareTerms, appearIn: [snippet.normalizedSearchText])
                 }
             }
-            DispatchQueue.main.async { [weak self] in
+            MacClippyMainHop.async { [weak self] in
                 guard let self, self.snippetFilterRequestID == requestID else { return }
                 self.filteredSnippets = filtered
             }
@@ -101,7 +120,8 @@ extension MacClippyDockModel {
 
     var focusedItem: MacClippyHistoryEntry? {
         guard selectedTab != .snippets else { return nil }
-        return visibleItems.indices.contains(focusedIndex) ? visibleItems[focusedIndex] : nil
+        let items = visibleItems
+        return items.indices.contains(focusedIndex) ? items[focusedIndex] : nil
     }
 
     var focusedSnippet: MacClippySnippetEntry? {
@@ -185,7 +205,7 @@ extension MacClippyDockModel {
                 cancellationToken: cancellationToken
             )
             guard !cancellationToken.isCancelled else { return }
-            DispatchQueue.main.async { [weak self] in
+            MacClippyMainHop.async { [weak self] in
                 guard let self,
                       !cancellationToken.isCancelled,
                       self.requestID == currentRequestID,
@@ -257,10 +277,27 @@ extension MacClippyDockModel {
         // still searchable without reloading every static surface.
         guard selectedTab == .history || isPinboardTab else { return }
         let signpostID = MacClippyPerformance.begin("search_keystroke")
+        let runReload: () -> Void = { [weak self] in
+            defer { MacClippyPerformance.end("search_keystroke", id: signpostID) }
+            guard let self else { return }
+            if self.isPinboardTab {
+                self.schedulePinboardSearch()
+            } else {
+                self.reload(includeStaticData: false)
+            }
+        }
+        // XCTest captures main hops and must not start a MainActor Task —
+        // that task never runs while tests avoid the AppKit run loop.
+        if MacClippyMainHop.isCapturingForTesting {
+            runReload()
+            return
+        }
         reloadTask = Task { @MainActor [weak self] in
             defer { MacClippyPerformance.end("search_keystroke", id: signpostID) }
             do {
-                try await Task.sleep(nanoseconds: 120_000_000)
+                try await Task.sleep(
+                    nanoseconds: MacClippyDockHistoryRefreshPolicy.externalChangeDebounceNanoseconds
+                )
             } catch {
                 return
             }
@@ -280,10 +317,38 @@ extension MacClippyDockModel {
 
     func requestSearchFocus() {
         searchFocusRequest &+= 1
+        applyEmptyOverwriteEvent(.programmaticQueryWrite)
     }
 
     func resetSearchFocus() {
         searchFocusReset &+= 1
+    }
+
+    func markSearchFieldEditable() {
+        applyEmptyOverwriteEvent(.userKeyEvent)
+    }
+
+    func noteSearchFieldUserKeyEvent() {
+        applyEmptyOverwriteEvent(.userKeyEvent)
+    }
+
+    func commitSearchFieldText(_ incoming: String, hasMarkedText: Bool = false) {
+        let current = query
+        query = MacClippyDockSearchQueryWritePolicy.committedQuery(
+            current: current,
+            incoming: incoming,
+            allowEmptyOverwrite: allowsEmptySearchFieldOverwrite,
+            hasMarkedText: hasMarkedText,
+            preservedTokens: visibleSmartListTokens
+        )
+        if !incoming.isEmpty, incoming != current {
+            applyEmptyOverwriteEvent(.nonEmptyFieldCommit)
+        }
+    }
+
+    func clearSearchQuery() {
+        applyEmptyOverwriteEvent(.explicitClear)
+        query = ""
     }
 
     func setErrorForDetails(_ message: String) {
@@ -291,12 +356,21 @@ extension MacClippyDockModel {
     }
 
     func appendSearchText(_ text: String) {
+        applyEmptyOverwriteEvent(.programmaticQueryWrite)
         query.append(text)
     }
 
     func deleteSearchCharacter() {
         guard !query.isEmpty else { return }
+        applyEmptyOverwriteEvent(.explicitClear)
         query.removeLast()
+    }
+
+    func applyEmptyOverwriteEvent(_ event: MacClippyDockSearchEmptyOverwriteEvent) {
+        allowsEmptySearchFieldOverwrite = MacClippyDockSearchQueryWritePolicy.allowsEmptyOverwrite(
+            currently: allowsEmptySearchFieldOverwrite,
+            after: event
+        )
     }
 
     func loadPreview(
@@ -319,7 +393,7 @@ extension MacClippyDockModel {
                 }
             }
             guard !cancellationToken.isCancelled else { return }
-            DispatchQueue.main.async {
+            MacClippyMainHop.async {
                 guard !cancellationToken.isCancelled else { return }
                 completion(result)
             }
@@ -340,7 +414,7 @@ extension MacClippyDockModel {
         workQueue.async { [runtimeReference, cancellationToken] in
             guard !cancellationToken.isCancelled else { return }
             let result = Result { try runtimeReference.details(id: id) }
-            DispatchQueue.main.async { [weak self] in
+            MacClippyMainHop.async { [weak self] in
                 guard let self,
                       !cancellationToken.isCancelled,
                       self.sessionGeneration == session else { return }
@@ -358,7 +432,7 @@ extension MacClippyDockModel {
         let session = sessionGeneration
         workQueue.async { [weak self, runtimeReference] in
             let result = Result { _ = try runtimeReference.edit(id: id, text: text) }
-            DispatchQueue.main.async { [weak self] in
+            MacClippyMainHop.async { [weak self] in
                 guard let self, self.sessionGeneration == session else { return }
                 completion(result.map { _ in () })
                 if case .success = result {
@@ -377,7 +451,7 @@ extension MacClippyDockModel {
         let session = sessionGeneration
         workQueue.async { [weak self, runtimeReference] in
             let result = Result { _ = try runtimeReference.setCustomLabel(id: id, label: name) }
-            DispatchQueue.main.async { [weak self] in
+            MacClippyMainHop.async { [weak self] in
                 guard let self, self.sessionGeneration == session else { return }
                 completion(result.map { _ in () })
                 if case .success = result {

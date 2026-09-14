@@ -156,6 +156,16 @@ enum MacClippySourceAppResolver {
     /// Resolves the localized app name on the calling thread and caches it.
     /// Search must not use `presentation(for:)`, which returns
     /// "Unknown source" until the async icon path finishes.
+    /// Cache-only lookup so SwiftUI `body` / local filters never rasterize
+    /// an app icon on the main thread. Misses stay nil until the async path
+    /// publishes `.macClippySourceAppPresentationDidResolve`.
+    static func cachedDisplayName(for bundleIdentifier: String?) -> String? {
+        guard let bundleIdentifier, !bundleIdentifier.isEmpty else { return nil }
+        let key = bundleIdentifier as NSString
+        guard let cached = cache.object(for: key) else { return nil }
+        return usableDisplayName(cached.presentation.displayName)
+    }
+
     static func displayName(for bundleIdentifier: String?) -> String? {
         guard let bundleIdentifier, !bundleIdentifier.isEmpty else { return nil }
         #if DEBUG

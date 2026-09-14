@@ -38,4 +38,25 @@ final class MacClippyThumbnailDiskCacheTests: XCTestCase {
         cache.remove(id: id, maxPixelSize: 480)
         XCTAssertNil(cache.pngData(id: id, maxPixelSize: 480))
     }
+
+    func testStoreEvictsOldestFilesOnceTheByteLimitIsExceeded() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MacClippyThumbsCap-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let cache = MacClippyThumbnailDiskCache(
+            directoryURL: directory,
+            key: SymmetricKey(data: Data(repeating: 3, count: 32)),
+            byteLimit: 80
+        )
+        let first = RecordID.generate()
+        let second = RecordID.generate()
+        try cache.store(Data(repeating: 1, count: 40), id: first, maxPixelSize: 480)
+        try cache.store(Data(repeating: 2, count: 40), id: second, maxPixelSize: 480)
+        let remaining = (try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil))
+            .filter { $0.pathExtension == "thumb" }
+        XCTAssertLessThanOrEqual(remaining.count, 2)
+        XCTAssertNotNil(cache.pngData(id: second, maxPixelSize: 480))
+    }
 }

@@ -47,4 +47,20 @@ final class MacClippyThumbnailCachePolicyTests: XCTestCase {
             )
         )
     }
+
+    func testDiskCacheEvictsOnlyAfterTheByteLimit() {
+        XCTAssertEqual(MacClippyThumbnailCachePolicy.diskByteLimit, 128 * 1_024 * 1_024)
+        XCTAssertTrue(
+            MacClippyThumbnailCachePolicy.shouldEvictOldestDiskEntries(
+                currentBytes: 128 * 1_024 * 1_024 + 1,
+                limit: MacClippyThumbnailCachePolicy.diskByteLimit
+            )
+        )
+        XCTAssertFalse(
+            MacClippyThumbnailCachePolicy.shouldEvictOldestDiskEntries(
+                currentBytes: 64 * 1_024 * 1_024,
+                limit: MacClippyThumbnailCachePolicy.diskByteLimit
+            )
+        )
+    }
 }

@@ -80,6 +80,59 @@ final class MacClippySmartListPolicyTests: XCTestCase {
         )
     }
 
+    func testHasActiveListFollowsCatalogQueries() {
+        XCTAssertFalse(MacClippySmartListPolicy.hasActiveList(in: "invoice"))
+        XCTAssertTrue(MacClippySmartListPolicy.hasActiveList(in: "type:url"))
+        XCTAssertTrue(MacClippySmartListPolicy.hasActiveList(in: "notes type:image"))
+        XCTAssertFalse(MacClippySmartListPolicy.hasActiveList(in: "has:ocr"))
+    }
+
+    func testAllIsSelectedOnlyOnHistoryWithoutASmartList() {
+        XCTAssertTrue(MacClippySmartListPolicy.isAllSelected(isHistoryTab: true, query: ""))
+        XCTAssertTrue(MacClippySmartListPolicy.isAllSelected(isHistoryTab: true, query: "invoice"))
+        XCTAssertFalse(MacClippySmartListPolicy.isAllSelected(isHistoryTab: true, query: "type:url"))
+        XCTAssertFalse(MacClippySmartListPolicy.isAllSelected(isHistoryTab: true, query: "notes type:image"))
+        XCTAssertFalse(MacClippySmartListPolicy.isAllSelected(isHistoryTab: false, query: ""))
+    }
+
+    func testClearingRemovesOnlySmartListClauses() {
+        XCTAssertEqual(
+            MacClippySearchGrammar.parse(
+                MacClippySmartListPolicy.clearing("invoice type:url has:ocr")
+            ).bareTerms,
+            ["invoice"]
+        )
+        XCTAssertEqual(
+            MacClippySearchGrammar.parse(
+                MacClippySmartListPolicy.clearing("invoice type:url has:ocr")
+            ).clauses,
+            [.hasOCR]
+        )
+        XCTAssertEqual(MacClippySmartListPolicy.clearing("type:image"), "")
+    }
+
+    func testFieldResidueDetectsTypedAndStrippedListQueries() {
+        XCTAssertTrue(MacClippySmartListPolicy.isFieldResidue("type:url"))
+        XCTAssertTrue(MacClippySmartListPolicy.isFieldResidue("type:image"))
+        XCTAssertTrue(MacClippySmartListPolicy.isFieldResidue("typeimage"))
+        XCTAssertTrue(MacClippySmartListPolicy.isFieldResidue("typeurl"))
+        XCTAssertTrue(MacClippySmartListPolicy.isFieldResidue(" type:Image "))
+        XCTAssertFalse(MacClippySmartListPolicy.isFieldResidue(""))
+        XCTAssertFalse(MacClippySmartListPolicy.isFieldResidue("invoice"))
+        XCTAssertFalse(MacClippySmartListPolicy.isFieldResidue("notes type:url"))
+    }
+
+    func testVisibleListTokensMatchVisibleCatalogQueries() {
+        XCTAssertEqual(
+            MacClippySmartListPolicy.visibleListTokens(hiddenIDs: []),
+            ["type:url", "type:image"]
+        )
+        XCTAssertEqual(
+            MacClippySmartListPolicy.visibleListTokens(hiddenIDs: ["urls"]),
+            ["type:image"]
+        )
+    }
+
     func testHiddenIDsRoundTripThroughUserDefaults() throws {
         let suiteName = "MacClippySmartListHidden-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

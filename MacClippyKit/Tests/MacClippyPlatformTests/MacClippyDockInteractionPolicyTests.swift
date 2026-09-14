@@ -61,6 +61,8 @@ final class MacClippyDockInteractionPolicyTests: XCTestCase {
         XCTAssertTrue(MacClippyDockSearchEscapePolicy.clearsQueryFirst("clip"))
         XCTAssertFalse(MacClippyDockSearchEscapePolicy.clearsQueryFirst("   "))
         XCTAssertFalse(MacClippyDockSearchEscapePolicy.clearsQueryFirst(""))
+        XCTAssertTrue(MacClippyDockSearchEscapePolicy.dismissesDockWhenQueryIsEmpty())
+        XCTAssertFalse(MacClippyDockSearchEscapePolicy.shouldChangeOverlayLevel())
     }
 
     func testSearchModeLeavesTextEditingKeysNative() {
@@ -69,6 +71,10 @@ final class MacClippyDockInteractionPolicyTests: XCTestCase {
         XCTAssertEqual(action(mode: .search, keyCode: 51, hasCardFocus: true), .native)
         XCTAssertEqual(action(mode: .search, keyCode: 36, hasCardFocus: true), .native)
         XCTAssertEqual(action(mode: .search, keyCode: 53, hasCardFocus: true), .exitSearch)
+        XCTAssertEqual(
+            action(mode: .search, keyCode: 53, hasCardFocus: true, hasMarkedText: true),
+            .native
+        )
     }
 
     func testReturnPastesInPickerAndPreview() {
@@ -181,6 +187,51 @@ final class MacClippyDockInteractionPolicyTests: XCTestCase {
         )
     }
 
+    func testPickerHandsPrintableKeysToInputMethodInsteadOfAppending() {
+        XCTAssertEqual(
+            action(
+                mode: .picker,
+                keyCode: 45,
+                characters: "n",
+                hasCardFocus: true,
+                letInputMethodOwnTyping: true
+            ),
+            .handOffSearchToInputMethod
+        )
+        XCTAssertEqual(
+            action(
+                mode: .picker,
+                keyCode: 51,
+                hasCardFocus: true,
+                letInputMethodOwnTyping: true
+            ),
+            .handOffSearchToInputMethod
+        )
+        XCTAssertEqual(
+            action(
+                mode: .picker,
+                keyCode: 0,
+                characters: "a",
+                hasCardFocus: true,
+                letInputMethodOwnTyping: false
+            ),
+            .appendSearch("a")
+        )
+        XCTAssertEqual(
+            action(mode: .picker, keyCode: 49, hasCardFocus: true, letInputMethodOwnTyping: true),
+            .showPreview
+        )
+        XCTAssertEqual(
+            action(
+                mode: .picker,
+                keyCode: 49,
+                hasCardFocus: true,
+                hasMarkedText: true
+            ),
+            .handOffSearchToInputMethod
+        )
+    }
+
     func testPickerDoesNotBubbleNavigationWhenThereIsNoCard() {
         XCTAssertEqual(action(mode: .picker, keyCode: 49, hasCardFocus: false), .consume)
         XCTAssertEqual(action(mode: .picker, keyCode: 36, hasCardFocus: false), .consume)
@@ -258,7 +309,9 @@ final class MacClippyDockInteractionPolicyTests: XCTestCase {
         isRepeat: Bool = false,
         detailsEditing: Bool = false,
         hasTextSelection: Bool = false,
-        alwaysPastePlainText: Bool = false
+        alwaysPastePlainText: Bool = false,
+        letInputMethodOwnTyping: Bool = false,
+        hasMarkedText: Bool = false
     ) -> MacClippyDockKeyAction {
         MacClippyDockKeyRouterPolicy.action(
             for: .keyDown(
@@ -272,7 +325,9 @@ final class MacClippyDockInteractionPolicyTests: XCTestCase {
             hasMultipleSelection: hasMultipleSelection,
             detailsEditing: detailsEditing,
             hasTextSelection: hasTextSelection,
-            alwaysPastePlainText: alwaysPastePlainText
+            alwaysPastePlainText: alwaysPastePlainText,
+            letInputMethodOwnTyping: letInputMethodOwnTyping,
+            hasMarkedText: hasMarkedText
         )
     }
 

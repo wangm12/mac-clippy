@@ -198,9 +198,6 @@ final class MacClippyQueuePasteModelTests: XCTestCase {
     }
 
     private func wait(until condition: () -> Bool, timeout: TimeInterval = 2.0) {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline, !condition() {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
-        }
+        MacClippyTestWait.until(condition, timeout: timeout)
     }
 }

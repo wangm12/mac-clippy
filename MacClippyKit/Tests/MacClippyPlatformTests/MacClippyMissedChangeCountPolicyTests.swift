@@ -41,4 +41,11 @@ final class MacClippyMissedChangeCountPolicyTests: XCTestCase {
             Array(93...100)
         )
     }
+
+    func testMissedGenerationsAreDocumentedAsUnrecoverable() {
+        XCTAssertEqual(
+            MacClippyMissedChangeCountPolicy.recoveryAction,
+            "document_unrecoverable_generations"
+        )
+    }
 }

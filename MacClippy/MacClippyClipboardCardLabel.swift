@@ -24,6 +24,7 @@ struct MacClippyClipboardCardLabel: View, Equatable {
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @Environment(\.macClippyCardHovered) private var isHovered
+    @Environment(\.macClippyCarouselScrolling) private var isCarouselScrolling
 
     init(
         context: MacClippyClipboardCardContext,
@@ -41,10 +42,7 @@ struct MacClippyClipboardCardLabel: View, Equatable {
     }
 
     private var highContrast: Bool {
-        colorSchemeContrast == .increased
-            || differentiateWithoutColor
-            || NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
-            || NSWorkspace.shared.accessibilityDisplayShouldDifferentiateWithoutColor
+        colorSchemeContrast == .increased || differentiateWithoutColor
     }
 
     private var reduceMotion: Bool {
@@ -104,23 +102,39 @@ struct MacClippyClipboardCardLabel: View, Equatable {
                     : .black.opacity(
                         MacClippyDockCardHoverChrome.shadowOpacity(
                             elevated: context.isElevated,
-                            hovered: isHovered
+                            hovered: isHovered,
+                            isScrolling: isCarouselScrolling
                         )
                     ),
                 radius: context.isPreviewVisible
                     ? 0
                     : MacClippyDockCardHoverChrome.shadowRadius(
                         elevated: context.isElevated,
-                        hovered: isHovered
+                        hovered: isHovered,
+                        isScrolling: isCarouselScrolling
                     ),
                 y: context.isPreviewVisible
                     ? 0
                     : MacClippyDockCardHoverChrome.shadowY(
                         elevated: context.isElevated,
-                        hovered: isHovered
+                        hovered: isHovered,
+                        isScrolling: isCarouselScrolling
                     )
             )
-            .scaleEffect(reduceMotion ? 1 : (isHovered ? MacClippyMotion.hoverScale : 1))
+            .scaleEffect(
+                MacClippyDockCardHoverChrome.allowsHoverScale(
+                    isScrolling: isCarouselScrolling,
+                    reduceMotion: reduceMotion
+                ) && isHovered ? MacClippyMotion.hoverScale : 1
+            )
+            .animation(
+                MacClippyMotion.animation(MacClippyMotion.hoverAnimation, reduceMotion: reduceMotion),
+                value: context.activeBorder
+            )
+            .animation(
+                MacClippyMotion.animation(MacClippyMotion.actionFeedbackAnimation, reduceMotion: reduceMotion),
+                value: context.isSelected
+            )
             .overlay(alignment: .topTrailing) {
                 cardSelectionBadge
             }

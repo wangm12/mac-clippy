@@ -47,6 +47,12 @@ final class MacClippyRuntime: @unchecked Sendable {
     let snippetLookupSnapshot: MacClippySnippetLookupSnapshot
     let historyEntryCache = NSCache<NSString, MacClippyHistoryEntryCacheBox>()
     private let storeLock = NSLock()
+    private static let storeLockHeldThreadKey = "MacClippy.storeLockHeld"
+    #if DEBUG
+    private let storeLockMetricsLock = NSLock()
+    private var storeLockAcquisitionCountValue = 0
+    private var blobReadsWhileStoreLockHeldValue = 0
+    #endif
     // Shared sentinel so Mac Clippy's own copy/paste/snippet writes are
     // suppressed by the observer without filtering any external content.
     private let writeSentinel = MacClippyPasteboardWriteSentinel()
@@ -240,9 +246,66 @@ final class MacClippyRuntime: @unchecked Sendable {
 
     func withStoreLock<T>(_ operation: () throws -> T) rethrows -> T {
         storeLock.lock()
-        defer { storeLock.unlock() }
+        beginStoreLockOnCurrentThread()
+        defer {
+            endStoreLockOnCurrentThread()
+            storeLock.unlock()
+        }
         return try operation()
     }
+
+    var isStoreLockHeldOnCurrentThread: Bool {
+        ((Thread.current.threadDictionary[Self.storeLockHeldThreadKey] as? Int) ?? 0) > 0
+    }
+
+    private func beginStoreLockOnCurrentThread() {
+        let thread = Thread.current
+        let depth = (thread.threadDictionary[Self.storeLockHeldThreadKey] as? Int) ?? 0
+        thread.threadDictionary[Self.storeLockHeldThreadKey] = depth + 1
+        #if DEBUG
+        storeLockMetricsLock.lock()
+        storeLockAcquisitionCountValue += 1
+        storeLockMetricsLock.unlock()
+        #endif
+    }
+
+    private func endStoreLockOnCurrentThread() {
+        let thread = Thread.current
+        let depth = (thread.threadDictionary[Self.storeLockHeldThreadKey] as? Int) ?? 1
+        thread.threadDictionary[Self.storeLockHeldThreadKey] = max(0, depth - 1)
+    }
+
+    func readImageBlob(id: String, maxBytes: Int) throws -> Data {
+        #if DEBUG
+        if isStoreLockHeldOnCurrentThread {
+            storeLockMetricsLock.lock()
+            blobReadsWhileStoreLockHeldValue += 1
+            storeLockMetricsLock.unlock()
+        }
+        #endif
+        return try blobStore.read(id: id, maxBytes: maxBytes)
+    }
+
+    #if DEBUG
+    var storeLockAcquisitionCount: Int {
+        storeLockMetricsLock.lock()
+        defer { storeLockMetricsLock.unlock() }
+        return storeLockAcquisitionCountValue
+    }
+
+    var blobReadsWhileStoreLockHeld: Int {
+        storeLockMetricsLock.lock()
+        defer { storeLockMetricsLock.unlock() }
+        return blobReadsWhileStoreLockHeldValue
+    }
+
+    func resetStoreLockMetricsForTesting() {
+        storeLockMetricsLock.lock()
+        storeLockAcquisitionCountValue = 0
+        blobReadsWhileStoreLockHeldValue = 0
+        storeLockMetricsLock.unlock()
+    }
+    #endif
 
     // Database queues are closed only after all work already submitted to the
     // capture queue has reached a terminal state. The specific-value guard
@@ -276,7 +339,11 @@ final class MacClippyRuntime: @unchecked Sendable {
         lifecycleCommitLock.lock()
         defer { lifecycleCommitLock.unlock() }
         storeLock.lock()
-        defer { storeLock.unlock() }
+        beginStoreLockOnCurrentThread()
+        defer {
+            endStoreLockOnCurrentThread()
+            storeLock.unlock()
+        }
         guard isCurrentLifecycleToken(token) else { return nil }
         return try operation()
     }

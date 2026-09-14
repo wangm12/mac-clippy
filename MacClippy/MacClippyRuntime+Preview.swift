@@ -22,6 +22,7 @@ extension MacClippyRuntime {
         case html(String)
         case rtf(Data)
         case image(Data)
+        case imageBlob(String)
         case files([URL])
     }
 
@@ -35,10 +36,13 @@ extension MacClippyRuntime {
             case let .rtf(data):
                 return .rtf(data)
             case let .image(blobID, _, _), let .encryptedImage(blobID, _, _):
-                return .image(try blobStore.read(id: blobID, maxBytes: Self.previewImageReadLimit))
+                return .imageBlob(blobID)
             case let .files(urls):
                 return .files(urls)
             }
+        }
+        if case let .imageBlob(blobID) = source {
+            return try previewPayload(for: .image(try readImageBlob(id: blobID, maxBytes: Self.previewImageReadLimit)))
         }
         return try previewPayload(for: source)
     }
@@ -65,6 +69,8 @@ extension MacClippyRuntime {
             return try previewRTFPayload(data)
         case let .image(data):
             return .image(data)
+        case .imageBlob:
+            throw MacClippyStoreError.invalidStoredRecord
         case let .files(urls):
             return .files(urls)
         }

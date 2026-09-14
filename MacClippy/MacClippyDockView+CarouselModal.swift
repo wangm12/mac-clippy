@@ -124,9 +124,26 @@ extension MacClippyDockView {
 
     @ViewBuilder
     var carousel: some View {
-        carouselContent
-            .transition(MacClippyMotion.contentTransition(reduceMotion: reduceMotion))
-            .animation(MacClippyMotion.animation(MacClippyMotion.contentAnimation, reduceMotion: reduceMotion), value: model.selectedTab)
+        ZStack {
+            carouselContent
+                .id(model.filterSurfaceID)
+                .transition(
+                    MacClippyDockFilterSurfacePolicy.usesSlideTransition(surfaceID: model.filterSurfaceID)
+                        ? MacClippyMotion.filterSurfaceTransition(reduceMotion: reduceMotion)
+                        : MacClippyMotion.fadeTransition(reduceMotion: reduceMotion)
+                )
+        }
+        .frame(height: MacClippyDockCardMetrics.carouselHeight(for: dynamicTypeSize))
+        .clipped()
+        .animation(
+            model.hasCompletedInitialPaint
+                ? MacClippyMotion.animation(
+                    MacClippyMotion.filterSurfaceAnimation,
+                    reduceMotion: reduceMotion
+                )
+                : nil,
+            value: model.filterSurfaceID
+        )
     }
 
     @ViewBuilder
@@ -239,7 +256,12 @@ extension MacClippyDockView {
             // panel vertically and leaves a large blank gap below the cards.
             .frame(height: MacClippyDockCardMetrics.carouselHeight(for: dynamicTypeSize))
             .mask { carouselEdgeFade }
-            .overlay { MacClippyDockScrollSignpostProbe().allowsHitTesting(false) }
+            .overlay {
+                MacClippyDockScrollSignpostProbe { scrolling in
+                    isCarouselScrolling = scrolling
+                }
+                .allowsHitTesting(false)
+            }
             .onAppear { model.noteCardListAppeared() }
         }
     }

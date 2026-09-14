@@ -9,18 +9,275 @@ final class MacClippyDockTests: XCTestCase {
     @MainActor
     func testDockPanelJoinsFullScreenSpacesWithoutActivatingHostApp() {
         let panel = MacClippyDockPanel(contentRect: NSRect(x: 0, y: 0, width: 320, height: 240))
-        defer { panel.close() }
+        defer {
+            panel.animationBehavior = .none
+            panel.orderOut(nil)
+        }
 
         XCTAssertTrue(panel.styleMask.contains(.nonactivatingPanel))
         XCTAssertTrue(panel.collectionBehavior.contains(.canJoinAllSpaces))
         XCTAssertTrue(panel.collectionBehavior.contains(.fullScreenAuxiliary))
         XCTAssertEqual(panel.level.rawValue, NSWindow.Level.mainMenu.rawValue)
+        XCTAssertEqual(panel.animationBehavior, .none)
+    }
+
+    @MainActor
+    func testSearchFieldAcceptsNativeTextThroughThePanelFieldEditor() {
+        let panel = MacClippyDockPanel(contentRect: NSRect(x: 0, y: 0, width: 320, height: 80))
+        let field = MacClippyIMESearchField(frame: NSRect(x: 12, y: 12, width: 296, height: 28))
+        panel.contentView = field
+        panel.makeKeyAndOrderFront(nil)
+        defer {
+            panel.animationBehavior = .none
+            panel.orderOut(nil)
+        }
+
+        XCTAssertTrue(panel.makeFirstResponder(field))
+        guard let editor = field.currentEditor() else {
+            return XCTFail("search field did not acquire a field editor")
+        }
+
+        editor.insertText("abc")
+
+        XCTAssertEqual(editor.string, "abc")
+        XCTAssertEqual(field.stringValue, "abc")
+
+        field.stringValue = ""
+
+        XCTAssertEqual(editor.string, "")
+        XCTAssertEqual(field.stringValue, "")
+    }
+
+    @MainActor
+    func testSearchFieldPublishesOnlyAfterNativeMarkedTextCommits() {
+        var commits: [String] = []
+        var compositionStates: [Bool] = []
+        let representable = MacClippyAppKitSearchField(
+            committedQuery: "",
+            isFocused: true,
+            collapseToken: 0,
+            programmaticSyncToken: 0,
+            onCommit: { commits.append($0) },
+            onFocusChange: { _ in },
+            onCompositionChange: { compositionStates.append($0) },
+            onSubmit: {}
+        )
+        let coordinator = representable.makeCoordinator()
+        let panel = MacClippyDockPanel(contentRect: NSRect(x: 0, y: 0, width: 320, height: 80))
+        let field = MacClippyIMESearchField(frame: NSRect(x: 12, y: 12, width: 296, height: 28))
+        field.delegate = coordinator
+        coordinator.attach(to: field, parent: representable)
+        panel.contentView = field
+        panel.makeKeyAndOrderFront(nil)
+        defer {
+            panel.animationBehavior = .none
+            panel.orderOut(nil)
+        }
+
+        XCTAssertTrue(panel.makeFirstResponder(field))
+        guard let editor = field.currentEditor() as? NSTextView else {
+            return XCTFail("search field did not acquire a native text editor")
+        }
+
+        editor.setMarkedText(
+            "ce",
+            selectedRange: NSRange(location: 2, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+
+        XCTAssertTrue(editor.hasMarkedText())
+        XCTAssertTrue(commits.isEmpty)
+        XCTAssertEqual(compositionStates.last, true)
+
+        editor.insertText("测试", replacementRange: editor.markedRange())
+
+        XCTAssertFalse(editor.hasMarkedText())
+        XCTAssertEqual(field.stringValue, "测试")
+        XCTAssertEqual(commits.last, "测试")
+        XCTAssertEqual(compositionStates.last, false)
+    }
+
+    @MainActor
+    func testSearchKeepsOverlayAboveTheSystemDockAfterFocusAndComposition() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "MacClippyDockInputTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = try MacClippyRuntime(paths: try MacClippyPaths(rootURL: root))
+        defer { runtime.closeForTesting() }
+        let controller = MacClippyDockController(runtime: runtime)
+        let panel = MacClippyDockPanel(contentRect: NSRect(x: 0, y: 0, width: 320, height: 80))
+        controller.panel = panel
+        panel.makeKeyAndOrderFront(nil)
+        defer {
+            panel.animationBehavior = .none
+            panel.orderOut(nil)
+        }
+
+        controller.enterSearchMode()
+        controller.isFullscreenSearchHost = false
+        controller.applyOverlayLevel(allowsInputMethodCandidates: false)
+
+        XCTAssertEqual(panel.level, .mainMenu)
+        XCTAssertTrue(panel.isFloatingPanel)
+
+        controller.applyOverlayLevel(allowsInputMethodCandidates: true)
+        XCTAssertEqual(panel.level, .mainMenu)
+        XCTAssertGreaterThan(panel.level.rawValue, Int(CGWindowLevelForKey(.dockWindow)))
+        XCTAssertTrue(panel.isFloatingPanel)
+
+        panel.level = .floating
+        controller.applyOverlayLevel(allowsInputMethodCandidates: true)
+        XCTAssertEqual(panel.level, .mainMenu)
+        XCTAssertTrue(panel.isFloatingPanel)
+    }
+
+    @MainActor
+    func testSearchFieldFocusReassertsOverlayAboveTheSystemDock() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "MacClippyDockFocusOverlay-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = try MacClippyRuntime(paths: try MacClippyPaths(rootURL: root))
+        defer { runtime.closeForTesting() }
+        let controller = MacClippyDockController(runtime: runtime)
+        let panel = MacClippyDockPanel(contentRect: NSRect(x: 0, y: 0, width: 320, height: 80))
+        let field = MacClippyIMESearchField(frame: NSRect(x: 12, y: 12, width: 296, height: 28))
+        panel.contentView = field
+        controller.panel = panel
+        panel.makeKeyAndOrderFront(nil)
+        defer {
+            panel.animationBehavior = .none
+            panel.orderOut(nil)
+        }
+
+        controller.enterSearchMode()
+        controller.isFullscreenSearchHost = false
+        controller.applyOverlayLevel(allowsInputMethodCandidates: false)
+        XCTAssertTrue(panel.makeFirstResponder(field))
+        if let editor = field.currentEditor() {
+            XCTAssertTrue(panel.makeFirstResponder(editor))
+        }
+
+        XCTAssertEqual(panel.level, .mainMenu)
+        XCTAssertGreaterThan(panel.level.rawValue, Int(CGWindowLevelForKey(.dockWindow)))
+
+        panel.level = .floating
+        XCTAssertTrue(panel.makeFirstResponder(field))
+        XCTAssertEqual(panel.level, .mainMenu)
+        XCTAssertGreaterThan(panel.level.rawValue, Int(CGWindowLevelForKey(.dockWindow)))
+
+        panel.level = .floating
+        panel.makeKeyAndOrderFront(nil)
+        XCTAssertEqual(panel.level, .mainMenu)
+        XCTAssertGreaterThan(panel.level.rawValue, Int(CGWindowLevelForKey(.dockWindow)))
+    }
+
+    @MainActor
+    func testFullscreenSearchYieldsOverlayToInputMethodCandidates() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "MacClippyDockFullscreenIME-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = try MacClippyRuntime(paths: try MacClippyPaths(rootURL: root))
+        defer { runtime.closeForTesting() }
+        let controller = MacClippyDockController(runtime: runtime)
+        let panel = MacClippyDockPanel(contentRect: NSRect(x: 0, y: 0, width: 320, height: 80))
+        let field = MacClippyIMESearchField(frame: NSRect(x: 12, y: 12, width: 296, height: 28))
+        panel.contentView = field
+        controller.panel = panel
+        panel.makeKeyAndOrderFront(nil)
+        defer {
+            panel.animationBehavior = .none
+            panel.orderOut(nil)
+        }
+
+        controller.isFullscreenSearchHost = true
+        controller.interactionMode = .search
+        controller.applyOverlayLevel(allowsInputMethodCandidates: false)
+
+        let yielded = NSWindow.Level.floating
+        XCTAssertEqual(panel.level, yielded)
+        XCTAssertEqual(panel.pinnedOverlayLevel, yielded)
+        XCTAssertTrue(panel.collectionBehavior.contains(.moveToActiveSpace))
+        XCTAssertFalse(panel.collectionBehavior.contains(.canJoinAllSpaces))
+        XCTAssertTrue(panel.isFloatingPanel)
+
+        panel.level = .floating
+        XCTAssertTrue(panel.makeFirstResponder(field))
+        XCTAssertEqual(panel.level, yielded)
+
+        panel.level = .mainMenu
+        panel.makeKeyAndOrderFront(nil)
+        XCTAssertEqual(panel.level, yielded)
+    }
+
+    @MainActor
+    func testLeavingSearchClearsTheQueryInsteadOfInheritingIt() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "MacClippyDockSearchDismiss-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = try MacClippyRuntime(paths: try MacClippyPaths(rootURL: root))
+        defer { runtime.closeForTesting() }
+        let controller = MacClippyDockController(runtime: runtime)
+        controller.interactionMode = .search
+        controller.model.query = "测试"
+
+        controller.enterPickerMode()
+
+        XCTAssertEqual(controller.interactionMode, .picker)
+        XCTAssertEqual(controller.model.query, "")
+    }
+
+    @MainActor
+    func testInputMethodHandoffFocusesTheNativeEditorBeforeReturningTheFirstKey() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "MacClippyDockHandoffTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = try MacClippyRuntime(paths: try MacClippyPaths(rootURL: root))
+        defer { runtime.closeForTesting() }
+        let controller = MacClippyDockController(runtime: runtime)
+        let panel = MacClippyDockPanel(contentRect: NSRect(x: 0, y: 0, width: 320, height: 80))
+        let field = MacClippyIMESearchField(frame: NSRect(x: 12, y: 12, width: 296, height: 28))
+        panel.contentView = field
+        controller.panel = panel
+        panel.makeKeyAndOrderFront(nil)
+        defer {
+            panel.animationBehavior = .none
+            panel.orderOut(nil)
+        }
+
+        XCTAssertFalse(controller.applyKeyAction(.handOffSearchToInputMethod))
+        XCTAssertEqual(controller.interactionMode, .search)
+        guard let editor = field.currentEditor() else {
+            return XCTFail("input-method handoff did not synchronously focus the native editor")
+        }
+        XCTAssertTrue(panel.firstResponder === editor)
+
+        editor.insertText("c")
+
+        XCTAssertEqual(field.stringValue, "c")
     }
 
     @MainActor
     func testCopyToastPanelDoesNotAddRectangularWindowShadow() {
         let panel = MacClippyToastPanel(contentRect: NSRect(x: 0, y: 0, width: 120, height: 40))
-        defer { panel.close() }
+        defer {
+            panel.animationBehavior = .none
+            panel.orderOut(nil)
+        }
 
         XCTAssertFalse(panel.hasShadow)
         XCTAssertFalse(panel.styleMask.contains(.fullSizeContentView))
@@ -49,7 +306,7 @@ final class MacClippyDockTests: XCTestCase {
                 isClosing: false
             )
         )
-        XCTAssertFalse(
+        XCTAssertTrue(
             MacClippyDockKeyboardOwnershipPolicy.shouldRestoreKeyboard(
                 for: .search,
                 isVisible: true,
@@ -408,24 +665,37 @@ final class MacClippyDockTests: XCTestCase {
         )
     }
 
-    func testFileThumbnailLoaderDecodesJPEGWithoutQuickLook() async throws {
+    func testFileThumbnailLoaderDecodesJPEGWithoutQuickLook() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("macclippy-thumb-\(UUID().uuidString).jpg")
-        let image = NSImage(size: NSSize(width: 8, height: 8))
-        image.lockFocus()
+        let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 8,
+            pixelsHigh: 8,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        )
+        guard let rep else {
+            return XCTFail("could not allocate bitmap")
+        }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
         NSColor.red.setFill()
         NSBezierPath(rect: NSRect(x: 0, y: 0, width: 8, height: 8)).fill()
-        image.unlockFocus()
-        guard let tiff = image.tiffRepresentation,
-              let rep = NSBitmapImageRep(data: tiff),
-              let jpeg = rep.representation(using: .jpeg, properties: [:]) else {
+        NSGraphicsContext.restoreGraphicsState()
+        guard let jpeg = rep.representation(using: .jpeg, properties: [:]) else {
             return XCTFail("could not encode jpeg")
         }
         try jpeg.write(to: url)
         defer { try? FileManager.default.removeItem(at: url) }
 
-        let loaded = await MacClippyFileThumbnailLoader.image(
-            for: url,
+        let loaded = waitForFileThumbnail(
+            url: url,
             pointSize: CGSize(width: 16, height: 16)
         )
         XCTAssertNotNil(loaded)
@@ -664,6 +934,20 @@ final class MacClippyDockTests: XCTestCase {
         XCTAssertFalse(files.supportsPlainCopy)
         XCTAssertTrue(image.isPasteable)
         XCTAssertTrue(files.isPasteable)
+    }
+
+    private func waitForFileThumbnail(url: URL, pointSize: CGSize) -> CGImage? {
+        final class Box: @unchecked Sendable {
+            var value: CGImage?
+        }
+        let box = Box()
+        let semaphore = DispatchSemaphore(value: 0)
+        Task.detached {
+            box.value = await MacClippyFileThumbnailLoader.image(for: url, pointSize: pointSize)
+            semaphore.signal()
+        }
+        XCTAssertEqual(semaphore.wait(timeout: .now() + 2), .success)
+        return box.value
     }
 
     private func historyEntry(kind: ContentKind = .text) throws -> MacClippyHistoryEntry {

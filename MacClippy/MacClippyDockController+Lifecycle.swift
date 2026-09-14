@@ -42,6 +42,7 @@ extension MacClippyDockController {
         let skipGlassMotion = MacClippyDisplayGenerationPolicy.shouldSkipGlassMotion(
             pendingEvent: pendingDisplayEvent
         )
+        skipGlassMotionForSession = skipGlassMotion
         pendingDisplayEvent = nil
         dismissPreviewImmediately()
         dismissDetailsImmediately()
@@ -50,6 +51,9 @@ extension MacClippyDockController {
             hasMultipleSelection: model.hasMultipleSelection
         )
         model.clearActionFeedback()
+        capturePasteTargetApplicationIfNeeded()
+        didActivateApplicationForSearch = false
+        isFullscreenSearchHost = false
         interactionMode = .picker
         // Bump the session generation so any still-in-flight async completion
         // from a previous dock session cannot mutate state or close this newly
@@ -76,13 +80,18 @@ extension MacClippyDockController {
         isClosing = false
         dockPanel.contentView?.frame = NSRect(origin: .zero, size: frame.size)
         dockPanel.contentView?.autoresizingMask = [.width, .height]
+        // Keep the window still. Window-frame slides resample glass every tick;
+        // MacClippyPanelGlassMotionPolicy.shouldAnimateWindowFrame is false.
         dockPanel.setFrame(frame, display: false, animate: false)
         configurePanelLayer(dockPanel)
         dockPanel.interceptsPickerKeys = true
         model.resetSearchFocus()
         startMonitors()
 
-        let reduceMotion = shouldReduceMotion || skipGlassMotion
+        let reduceMotion = MacClippyPanelGlassMotionPolicy.shouldSkipAnimatedTransition(
+            reduceMotion: shouldReduceMotion,
+            skipGlassMotion: skipGlassMotion
+        )
         if reduceMotion {
             setPanelLayerState(
                 dockPanel,
@@ -92,11 +101,9 @@ extension MacClippyDockController {
                 shadowOpacity: MacClippyMotion.panelShadowOpacity
             )
         } else {
-            // Move only the fixed frame's origin; the dock never animates its size.
-            dockPanel.setFrame(MacClippyMotion.offscreenPanelFrame(for: frame), display: false, animate: false)
             setPanelLayerState(
                 dockPanel,
-                backdropOpacity: 0,
+                backdropOpacity: MacClippyPanelGlassMotionPolicy.shouldFadeBackdrop() ? 0 : 1,
                 foregroundOpacity: 0,
                 scale: MacClippyMotion.panelContentScaleStart,
                 shadowOpacity: MacClippyMotion.panelShadowOpacityStart
@@ -116,17 +123,25 @@ extension MacClippyDockController {
                   dockPanel.isVisible,
                   !self.isClosing,
                   self.monitorGeneration == expectedMonitorGeneration else { return }
+            guard MacClippyDockInputMethodPolicy.shouldEnterDeferredPickerMode(
+                interactionModeIsSearch: self.interactionMode == .search
+            ) else { return }
             self.enterPickerMode()
         }
 
         if !reduceMotion {
-            animatePanelOpacity(
-                layer: panelContentView?.backdropView.layer,
-                from: 0,
-                to: 1,
-                duration: MacClippyMotion.entranceDuration,
-                timingFunction: MacClippyMotion.entranceTimingFunction
-            )
+            let backdrop = MacClippyPanelGlassMotionPolicy.backdropOpacity(animated: true)
+            if MacClippyPanelGlassMotionPolicy.shouldFadeBackdrop() {
+                animatePanelOpacity(
+                    layer: panelContentView?.backdropView.layer,
+                    from: backdrop.from,
+                    to: backdrop.to,
+                    duration: MacClippyMotion.entranceDuration,
+                    timingFunction: MacClippyMotion.entranceTimingFunction
+                )
+            } else {
+                panelContentView?.backdropView.layer?.opacity = backdrop.to
+            }
             animatePanelOpacity(
                 layer: panelContentView?.foregroundView.layer,
                 from: 0,
@@ -144,11 +159,6 @@ extension MacClippyDockController {
                 duration: MacClippyMotion.entranceDuration,
                 timingFunction: MacClippyMotion.entranceTimingFunction
             )
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = MacClippyMotion.entranceDuration
-                context.timingFunction = MacClippyMotion.entranceTimingFunction
-                dockPanel.animator().setFrame(frame, display: true)
-            }
         }
         ignoreOutsideClicksUntil = Date().addingTimeInterval(MacClippyMotion.outsideClickGraceDuration)
     }
@@ -176,6 +186,13 @@ extension MacClippyDockController {
                 onPreview: { [weak self] in self?.showPreview() },
                 onSearchModeChange: { [weak self] isSearching in
                     self?.setSearchMode(isSearching)
+                },
+                onSearchCompositionChange: { [weak self] composing in
+                    guard let self, self.interactionMode == .search else { return }
+                    guard MacClippyDockInputMethodPolicy.shouldAdjustOverlayForComposition() else {
+                        return
+                    }
+                    self.applyOverlayLevel(allowsInputMethodCandidates: composing)
                 },
                 onModalPresentationChange: { [weak self] isPresented in
                     self?.setModalMode(isPresented)
@@ -234,22 +251,32 @@ extension MacClippyDockController {
         }
     }
 
-    func hide(completion: (() -> Void)? = nil) {
+    func hide(reason: MacClippyDockHideReason = .command, completion: (() -> Void)? = nil) {
         guard let dockPanel = panel, dockPanel.isVisible, !isClosing else { return }
         guard hideDetails() else { return }
+        let leavingSearch = interactionMode == .search
         isClosing = true
         model.dismissModal()
         interactionMode = .picker
+        isFullscreenSearchHost = false
+        restorePasteTargetApplicationIfNeeded(
+            leavingSearch: leavingSearch,
+            isHiding: true,
+            hideReason: reason
+        )
+        applyOverlayLevel(allowsInputMethodCandidates: false)
         hidePreview()
         stopMonitors()
         // Bump the session generation so an async batch completion that was
         // started while the dock was visible cannot mutate state or close a
-        // dock that the user has just reopened.
-        model.endSession()
+        // dock that the user has just reopened. Thumbnail cache reset waits
+        // until the panel is gone so cards do not publish nil mid-hide.
+        let resetCachesBeforeAnimation = MacClippyDockHideTeardownPolicy
+            .shouldResetThumbnailCachesBeforeHideAnimation()
+        model.endSession(resetCaches: resetCachesBeforeAnimation)
         completion?()
         let transaction = beginAnimation(.hiding)
-        let targetFrame = MacClippyMotion.offscreenPanelFrame(for: dockPanel.frame)
-            let finish: @MainActor @Sendable () -> Void = { [weak self, weak dockPanel] in
+        let finish: @MainActor @Sendable () -> Void = { [weak self, weak dockPanel] in
             guard let self, let dockPanel,
                   MacClippyDockAnimationLifecyclePolicy.shouldApplyCompletion(
                       for: transaction,
@@ -267,18 +294,34 @@ extension MacClippyDockController {
             dockPanel.interceptsPickerKeys = false
             self.animationTransaction = nil
             self.isClosing = false
+            if !resetCachesBeforeAnimation {
+                self.model.resetSessionThumbnailCaches()
+            }
         }
 
-        if shouldReduceMotion {
+        let reduceMotion = MacClippyPanelGlassMotionPolicy.shouldSkipAnimatedTransition(
+            reduceMotion: shouldReduceMotion,
+            skipGlassMotion: skipGlassMotionForSession,
+            hideReason: reason
+        )
+        if reduceMotion {
             finish()
         } else {
-            animatePanelOpacity(
-                layer: panelContentView?.backdropView.layer,
-                from: 1,
-                to: 0,
-                duration: MacClippyMotion.exitDuration,
-                timingFunction: MacClippyMotion.exitTimingFunction
-            )
+            CATransaction.begin()
+            CATransaction.setCompletionBlock {
+                Task { @MainActor in
+                    finish()
+                }
+            }
+            if MacClippyPanelGlassMotionPolicy.shouldFadeBackdrop() {
+                animatePanelOpacity(
+                    layer: panelContentView?.backdropView.layer,
+                    from: 1,
+                    to: 0,
+                    duration: MacClippyMotion.exitDuration,
+                    timingFunction: MacClippyMotion.exitTimingFunction
+                )
+            }
             animatePanelOpacity(
                 layer: panelContentView?.foregroundView.layer,
                 from: 1,
@@ -295,15 +338,7 @@ extension MacClippyDockController {
                 duration: MacClippyMotion.exitDuration,
                 timingFunction: MacClippyMotion.exitTimingFunction
             )
-            NSAnimationContext.runAnimationGroup({ context in
-                context.duration = MacClippyMotion.exitDuration
-                context.timingFunction = MacClippyMotion.exitTimingFunction
-                dockPanel.animator().setFrame(targetFrame, display: true)
-            }, completionHandler: {
-                Task { @MainActor in
-                    finish()
-                }
-            })
+            CATransaction.commit()
         }
     }
 
@@ -312,6 +347,7 @@ extension MacClippyDockController {
         panel?.contentView?.layer?.removeAllAnimations()
         panelContentView?.backdropView.layer?.removeAllAnimations()
         panelContentView?.foregroundView.layer?.removeAllAnimations()
+        panel?.animationBehavior = .none
         panel?.orderOut(nil)
         panel?.close()
         panel = nil
@@ -386,6 +422,7 @@ extension MacClippyDockController {
         panel?.contentView?.layer?.removeAllAnimations()
         panelContentView?.backdropView.layer?.removeAllAnimations()
         panelContentView?.foregroundView.layer?.removeAllAnimations()
+        panel?.animationBehavior = .none
         panel?.orderOut(nil)
         panel?.close()
         panel = nil

@@ -127,23 +127,25 @@ extension MacClippyRuntime {
     // from the general preview enum so card rendering does not construct or
     // retain text/file preview values on the image path.
     func imageData(id: RecordID) throws -> Data {
-        try withStoreLock {
+        let blobID = try withStoreLock { () -> String in
             switch try clipboardStore.body(for: id) {
             case let .image(blobID, _, _), let .encryptedImage(blobID, _, _):
-                return try blobStore.read(id: blobID, maxBytes: 128 * 1_024 * 1_024)
+                return blobID
             case .text, .html, .rtf, .files:
                 throw MacClippyStoreError.invalidStoredRecord
             }
         }
+        return try readImageBlob(id: blobID, maxBytes: 128 * 1_024 * 1_024)
     }
 
     func details(id: RecordID) throws -> MacClippyItemDetails {
-        try withStoreLock {
+        let locked = try withStoreLock { () -> (details: MacClippyItemDetails, spilledBlobIDs: [Int: String]) in
             guard let meta = try clipboardStore.metas(for: [id]).first else {
                 throw MacClippyStoreError.recordNotFound
             }
             let record = try clipboardStore.body(for: id)
-            let representations = try clipboardStore.representationMetadata(for: id).map { representation in
+            var spilledBlobIDs: [Int: String] = [:]
+            let representations = try clipboardStore.representationMetadata(for: id).enumerated().map { index, representation in
                 let byteCount: Int
                 let isAvailable: Bool
                 switch representation.payloadState {
@@ -154,9 +156,9 @@ extension MacClippyRuntime {
                     guard let blobID = representation.blobID else {
                         throw MacClippyStoreError.invalidStoredRecord
                     }
-                    let available = try blobStore.containsChecked(id: blobID)
-                    byteCount = available ? (try blobStore.byteSizeChecked(id: blobID)) : 0
-                    isAvailable = available
+                    spilledBlobIDs[index] = blobID
+                    byteCount = 0
+                    isAvailable = false
                 case .unavailable:
                     byteCount = 0
                     isAvailable = false
@@ -217,28 +219,61 @@ extension MacClippyRuntime {
                 fileURLs = []
                 imageDimensions = CGSize(width: width, height: height)
             }
-            return MacClippyItemDetails(
-                id: id,
-                title: meta.customLabel ?? meta.preview,
-                contentKind: record.contentKind,
-                sourceAppBundleID: meta.sourceAppBundleID,
-                created: meta.created,
-                modified: meta.modified,
-                frequency: meta.frequency,
-                lastAccessed: meta.lastAccessed,
-                customLabel: meta.customLabel,
-                ocrText: meta.ocrText.map {
-                    Self.boundedDisplayText($0, limit: Self.detailsOCRCharacterLimit)
-                },
-                preview: meta.preview,
-                textContent: textContent,
-                textContentPreview: textContentPreview,
-                fileURLs: fileURLs,
-                imageDimensions: imageDimensions,
-                pinboardNames: boardNames,
-                representations: representations
+            return (
+                MacClippyItemDetails(
+                    id: id,
+                    title: meta.customLabel ?? meta.preview,
+                    contentKind: record.contentKind,
+                    sourceAppBundleID: meta.sourceAppBundleID,
+                    created: meta.created,
+                    modified: meta.modified,
+                    frequency: meta.frequency,
+                    lastAccessed: meta.lastAccessed,
+                    customLabel: meta.customLabel,
+                    ocrText: meta.ocrText.map {
+                        Self.boundedDisplayText($0, limit: Self.detailsOCRCharacterLimit)
+                    },
+                    preview: meta.preview,
+                    textContent: textContent,
+                    textContentPreview: textContentPreview,
+                    fileURLs: fileURLs,
+                    imageDimensions: imageDimensions,
+                    pinboardNames: boardNames,
+                    representations: representations
+                ),
+                spilledBlobIDs
             )
         }
+        var representations = locked.details.representations
+        for (index, blobID) in locked.spilledBlobIDs {
+            let available = try blobStore.containsChecked(id: blobID)
+            representations[index] = MacClippyItemRepresentationDetails(
+                uti: representations[index].uti,
+                payloadState: representations[index].payloadState,
+                byteCount: available ? (try blobStore.byteSizeChecked(id: blobID)) : 0,
+                isAvailable: available
+            )
+        }
+        let details = locked.details
+        return MacClippyItemDetails(
+            id: details.id,
+            title: details.title,
+            contentKind: details.contentKind,
+            sourceAppBundleID: details.sourceAppBundleID,
+            created: details.created,
+            modified: details.modified,
+            frequency: details.frequency,
+            lastAccessed: details.lastAccessed,
+            customLabel: details.customLabel,
+            ocrText: details.ocrText,
+            preview: details.preview,
+            textContent: details.textContent,
+            textContentPreview: details.textContentPreview,
+            fileURLs: details.fileURLs,
+            imageDimensions: details.imageDimensions,
+            pinboardNames: details.pinboardNames,
+            representations: representations
+        )
     }
 
     @discardableResult

@@ -15,6 +15,21 @@ enum MacClippyDockSessionOpenPolicy {
     static func shouldScheduleReloadForQueryChange(isSessionActive: Bool) -> Bool {
         isSessionActive
     }
+
+    /// All after URL/Image/Snippets can leave `historyItems` on a filtered
+    /// snapshot (including `[]` for Image-with-no-images). Returning to All
+    /// with an empty query does not schedule a History reload by itself.
+    static func shouldReloadHistoryForAllFilter(historyQuery: String, query: String) -> Bool {
+        historyQuery != query
+    }
+
+    static func shouldReuseVisibleHistoryOnShow(
+        queryIsEmpty: Bool,
+        historyQueryIsEmpty: Bool,
+        hasItems: Bool
+    ) -> Bool {
+        queryIsEmpty && historyQueryIsEmpty && hasItems
+    }
 }
 
 enum MacClippyDockShowDiagnostics {
@@ -41,14 +56,21 @@ enum MacClippyDockShowDiagnostics {
 @MainActor
 final class MacClippyMainQueueCoalescer {
     private var isScheduled = false
+    private var pendingWork: (@MainActor () -> Void)?
 
     func schedule(_ work: @escaping @MainActor () -> Void) {
         guard !isScheduled else { return }
         isScheduled = true
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.isScheduled = false
-            work()
+        pendingWork = work
+        MacClippyMainHop.async { [weak self] in
+            self?.performPendingWork()
         }
+    }
+
+    func performPendingWork() {
+        guard isScheduled, let work = pendingWork else { return }
+        pendingWork = nil
+        isScheduled = false
+        work()
     }
 }

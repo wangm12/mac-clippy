@@ -39,6 +39,7 @@ public enum MacClippyDockKeyAction: Equatable {
     case paste(plain: Bool)
     case appendSearch(String)
     case deleteSearchCharacter
+    case handOffSearchToInputMethod
     case selectAll
     case clearSelection
     case deleteSelection
@@ -58,6 +59,8 @@ private struct MacClippyDockKeyDownContext {
     let hasTextSelection: Bool
     let isLoading: Bool
     let alwaysPastePlainText: Bool
+    let letInputMethodOwnTyping: Bool
+    let hasMarkedText: Bool
 }
 
 public enum MacClippyDockKeyRouterPolicy {
@@ -79,7 +82,9 @@ public enum MacClippyDockKeyRouterPolicy {
         detailsEditing: Bool = false,
         hasTextSelection: Bool = false,
         isLoading: Bool = false,
-        alwaysPastePlainText: Bool = false
+        alwaysPastePlainText: Bool = false,
+        letInputMethodOwnTyping: Bool = false,
+        hasMarkedText: Bool = false
     ) -> MacClippyDockKeyAction {
         switch event {
         case let .keyUp(keyCode, _):
@@ -97,7 +102,9 @@ public enum MacClippyDockKeyRouterPolicy {
                 detailsEditing: detailsEditing,
                 hasTextSelection: hasTextSelection,
                 isLoading: isLoading,
-                alwaysPastePlainText: alwaysPastePlainText
+                alwaysPastePlainText: alwaysPastePlainText,
+                letInputMethodOwnTyping: letInputMethodOwnTyping,
+                hasMarkedText: hasMarkedText
             ))
         }
     }
@@ -126,7 +133,8 @@ private extension MacClippyDockKeyRouterPolicy {
             return escapeAction(
                 mode: context.mode,
                 detailsEditing: context.detailsEditing,
-                hasMultipleSelection: context.hasMultipleSelection
+                hasMultipleSelection: context.hasMultipleSelection,
+                hasMarkedText: context.hasMarkedText
             )
         }
         guard context.mode != .search else { return .native }
@@ -199,6 +207,9 @@ private extension MacClippyDockKeyRouterPolicy {
               context.modifiers.isDisjoint(with: commandModifiers) else {
             return nil
         }
+        if context.hasMarkedText {
+            return .handOffSearchToInputMethod
+        }
         // Space is a toggle, not a repeatable navigation key. Without this
         // guard a held Space opens Preview and its repeated keyDown immediately closes it again.
         guard !context.isRepeat else { return .consume }
@@ -212,6 +223,9 @@ private extension MacClippyDockKeyRouterPolicy {
         _ context: MacClippyDockKeyDownContext
     ) -> MacClippyDockKeyAction? {
         guard context.keyCode == 123 || context.keyCode == 124 else { return nil }
+        if context.hasMarkedText {
+            return .handOffSearchToInputMethod
+        }
         guard context.modifiers.isDisjoint(with: [.option, .control]) else { return .native }
         if context.modifiers.contains(.shift) {
             return .extendRange(context.keyCode == 123 ? .left : .right)
@@ -252,6 +266,17 @@ private extension MacClippyDockKeyRouterPolicy {
         _ context: MacClippyDockKeyDownContext
     ) -> MacClippyDockKeyAction? {
         guard context.modifiers.isDisjoint(with: commandModifiers) else { return nil }
+        if context.letInputMethodOwnTyping {
+            if context.keyCode == 51 {
+                return .handOffSearchToInputMethod
+            }
+            if let characters = context.characters,
+               !characters.isEmpty,
+               characters.rangeOfCharacter(from: .controlCharacters) == nil {
+                return .handOffSearchToInputMethod
+            }
+            return nil
+        }
         if context.keyCode == 51 {
             return .deleteSearchCharacter
         }
@@ -290,10 +315,11 @@ private extension MacClippyDockKeyRouterPolicy {
     private static func escapeAction(
         mode: MacClippyDockInteractionMode,
         detailsEditing: Bool,
-        hasMultipleSelection: Bool
+        hasMultipleSelection: Bool,
+        hasMarkedText: Bool
     ) -> MacClippyDockKeyAction {
         if mode == .search {
-            return .exitSearch
+            return hasMarkedText ? .native : .exitSearch
         }
         if mode == .preview {
             return .hidePreview

@@ -178,7 +178,8 @@ final class MacClippyRuntimeBatchTests: XCTestCase {
                 $0.code == .databaseHealthFailed && $0.operation == "startup_health_check_search"
             }
             if event != nil { break }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+            Thread.sleep(forTimeInterval: 0.01)
+            MacClippyMainHop.flushCapturedWork()
         }
 
         runtime.stop()
@@ -539,9 +540,6 @@ final class MacClippyRuntimeBatchTests: XCTestCase {
     // MARK: - Helpers
 
     private func wait(until condition: () -> Bool, timeout: TimeInterval = 2.0) {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline, !condition() {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
-        }
+        MacClippyTestWait.until(condition, timeout: timeout)
     }
 }

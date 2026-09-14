@@ -13,9 +13,7 @@ extension MacClippyRuntime {
         query: String,
         shouldCancel: () -> Bool = { false }
     ) throws -> [RecordID] {
-        try withStoreLock {
-            try historyRecordIDsLocked(query: query, shouldCancel: shouldCancel)
-        }
+        try historyRecordIDsLocked(query: query, shouldCancel: shouldCancel)
     }
 
     private func historyRecordIDsLocked(
@@ -68,10 +66,12 @@ extension MacClippyRuntime {
         var ids: [RecordID] = []
         while true {
             guard !shouldCancel() else { return [] }
-            let metas = try clipboardStore.list(
-                limit: Self.selectionRecordIDPageSize,
-                before: cursor
-            )
+            let metas = try withStoreLock {
+                try clipboardStore.list(
+                    limit: Self.selectionRecordIDPageSize,
+                    before: cursor
+                )
+            }
             guard !metas.isEmpty else { return ids }
             ids.append(contentsOf: metas.map(\.id))
             guard metas.count == Self.selectionRecordIDPageSize,
@@ -88,13 +88,16 @@ extension MacClippyRuntime {
         var collected: [ClipboardItemMeta] = []
         while true {
             guard !shouldCancel() else { return [] }
-            let hits = try searchStore.search(
-                terms: terms,
-                limit: Self.selectionRecordIDPageSize,
-                after: cursor
-            )
+            let (hits, metas) = try withStoreLock { () -> ([SearchHit], [ClipboardItemMeta]) in
+                let hits = try searchStore.search(
+                    terms: terms,
+                    limit: Self.selectionRecordIDPageSize,
+                    after: cursor
+                )
+                let metas = try clipboardStore.metas(for: hits.map(\.id))
+                return (hits, metas)
+            }
             guard !hits.isEmpty else { return MacClippyHistoryRecencyOrder.sortedIDs(collected) }
-            let metas = try clipboardStore.metas(for: hits.map(\.id))
             collected.append(contentsOf: metas)
             guard hits.count == Self.selectionRecordIDPageSize, let last = hits.last else {
                 return MacClippyHistoryRecencyOrder.sortedIDs(collected)
@@ -112,24 +115,27 @@ extension MacClippyRuntime {
         let filter = metadataFilter(for: context.query, contentKind: context.requestedKind)
         while true {
             guard !shouldCancel() else { return [] }
-            let metas = try clipboardStore.list(
-                limit: Self.selectionRecordIDPageSize,
-                filter: filter,
-                requiresURL: listRequiresURL(for: context.query),
-                before: cursor
-            )
+            let (metas, matching) = try withStoreLock { () -> ([ClipboardItemMeta], [ClipboardItemMeta]) in
+                let metas = try clipboardStore.list(
+                    limit: Self.selectionRecordIDPageSize,
+                    filter: filter,
+                    requiresURL: listRequiresURL(for: context.query),
+                    before: cursor
+                )
+                let knownKinds = context.needsKind
+                    ? try clipboardStore.contentKinds(for: metas.map(\.id))
+                    : [:]
+                let matching = try matchingStructuredMetas(
+                    metas,
+                    limit: metas.count,
+                    query: context.query,
+                    needsKind: context.needsKind,
+                    knownKinds: knownKinds,
+                    shouldCancel: shouldCancel
+                )
+                return (metas, matching)
+            }
             guard !metas.isEmpty else { return ids }
-            let knownKinds = context.needsKind
-                ? try clipboardStore.contentKinds(for: metas.map(\.id))
-                : [:]
-            let matching = try matchingStructuredMetas(
-                metas,
-                limit: metas.count,
-                query: context.query,
-                needsKind: context.needsKind,
-                knownKinds: knownKinds,
-                shouldCancel: shouldCancel
-            )
             ids.append(contentsOf: matching.map(\.id))
             guard metas.count == Self.selectionRecordIDPageSize,
                   let last = metas.last else { return ids }
@@ -145,26 +151,29 @@ extension MacClippyRuntime {
         var collected: [ClipboardItemMeta] = []
         while true {
             guard !shouldCancel() else { return [] }
-            let hits = try searchStore.search(
-                terms: context.query.bareTerms,
-                limit: Self.selectionRecordIDPageSize,
-                after: cursor
-            )
+            let (hits, matching) = try withStoreLock { () -> ([SearchHit], [(SearchHit, ClipboardItemMeta)]) in
+                let hits = try searchStore.search(
+                    terms: context.query.bareTerms,
+                    limit: Self.selectionRecordIDPageSize,
+                    after: cursor
+                )
+                let metas = try clipboardStore.metas(for: hits.map(\.id))
+                let metasByID = Dictionary(uniqueKeysWithValues: metas.map { ($0.id, $0) })
+                let knownKinds = context.needsKind
+                    ? try clipboardStore.contentKinds(for: hits.map(\.id))
+                    : [:]
+                let matching = try matchingStructuredHits(
+                    hits,
+                    metasByID: metasByID,
+                    limit: hits.count,
+                    query: context.query,
+                    needsKind: context.needsKind,
+                    knownKinds: knownKinds,
+                    shouldCancel: shouldCancel
+                )
+                return (hits, matching)
+            }
             guard !hits.isEmpty else { return MacClippyHistoryRecencyOrder.sortedIDs(collected) }
-            let metas = try clipboardStore.metas(for: hits.map(\.id))
-            let metasByID = Dictionary(uniqueKeysWithValues: metas.map { ($0.id, $0) })
-            let knownKinds = context.needsKind
-                ? try clipboardStore.contentKinds(for: hits.map(\.id))
-                : [:]
-            let matching = try matchingStructuredHits(
-                hits,
-                metasByID: metasByID,
-                limit: hits.count,
-                query: context.query,
-                needsKind: context.needsKind,
-                knownKinds: knownKinds,
-                shouldCancel: shouldCancel
-            )
             collected.append(contentsOf: matching.map(\.1))
             guard hits.count == Self.selectionRecordIDPageSize, let last = hits.last else {
                 return MacClippyHistoryRecencyOrder.sortedIDs(collected)

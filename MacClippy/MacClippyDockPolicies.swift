@@ -11,6 +11,45 @@ enum MacClippyDockTab: Hashable, Sendable {
     case pinboard(RecordID)
 }
 
+/// Rail pills share `.history` for All/URL/Image. Animate the card well
+/// from this identity so those switches crossfade like tab changes.
+enum MacClippyDockFilterPillWashPolicy {
+    static func opacity(selected: Bool, hovered: Bool) -> Double {
+        if selected { return 0.22 }
+        if hovered { return 0.12 }
+        return 0
+    }
+}
+
+enum MacClippyDockFilterSurfacePolicy {
+    /// The card well keeps a fixed height and slides incoming pages from
+    /// the trailing edge. Identity changes stay inside that clipped track
+    /// so History ↔ Snippets cannot jump between a centered empty state
+    /// and the compact card row.
+    static let remountsCarouselPage = true
+    static let slidesFromTrailing = true
+
+    static func usesSlideTransition(surfaceID: String) -> Bool {
+        surfaceID.hasPrefix("smart:")
+    }
+
+    static func id(tab: MacClippyDockTab, query: String) -> String {
+        switch tab {
+        case .snippets:
+            return "snippets"
+        case let .pinboard(id):
+            return "pinboard:\(id.rawValue)"
+        case .history:
+            if let list = MacClippySmartListPolicy.catalog.first(where: {
+                MacClippySmartListPolicy.isActive($0, in: query)
+            }) {
+                return "smart:\(list.id)"
+            }
+            return "history"
+        }
+    }
+}
+
 enum MacClippyDockModal: Equatable {
     case createCategory(token: UInt)
     case renameItem(recordID: RecordID, initialName: String?, token: UInt)
@@ -184,26 +223,33 @@ enum MacClippyDockHoverPolicy {
 }
 
 enum MacClippyDockCardHoverChrome {
-    static func shadowOpacity(elevated: Bool, hovered: Bool) -> Double {
+    static func allowsHoverScale(isScrolling: Bool, reduceMotion: Bool) -> Bool {
+        !isScrolling && !reduceMotion
+    }
+
+    static func shadowOpacity(elevated: Bool, hovered: Bool, isScrolling: Bool = false) -> Double {
+        if isScrolling { return 0.04 }
         switch (elevated, hovered) {
-        case (true, true): 0.18
-        case (true, false): 0.16
-        case (false, true): 0.13
-        case (false, false): 0.08
+        case (true, true): return 0.18
+        case (true, false): return 0.16
+        case (false, true): return 0.13
+        case (false, false): return 0.08
         }
     }
 
-    static func shadowRadius(elevated: Bool, hovered: Bool) -> CGFloat {
+    static func shadowRadius(elevated: Bool, hovered: Bool, isScrolling: Bool = false) -> CGFloat {
+        if isScrolling { return 4 }
         switch (elevated, hovered) {
-        case (true, true): 15
-        case (true, false): 14
-        case (false, true): 13
-        case (false, false): 10
+        case (true, true): return 15
+        case (true, false): return 14
+        case (false, true): return 13
+        case (false, false): return 10
         }
     }
 
-    static func shadowY(elevated: Bool, hovered: Bool) -> CGFloat {
-        elevated ? 5 : (hovered ? 4 : 3)
+    static func shadowY(elevated: Bool, hovered: Bool, isScrolling: Bool = false) -> CGFloat {
+        if isScrolling { return 1 }
+        return elevated ? 5 : (hovered ? 4 : 3)
     }
 }
 

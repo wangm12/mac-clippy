@@ -225,9 +225,16 @@ public final class MacClippyGlobalHotKey {
             break
         }
 
-        DispatchQueue.main.async { @MainActor [weak self] in
-            guard let self, self.hotKeyRef != nil else { return }
-            self.callback()
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { [weak self] in
+                guard let self, self.hotKeyRef != nil else { return }
+                self.callback()
+            }
+        } else {
+            DispatchQueue.main.async { @MainActor [weak self] in
+                guard let self, self.hotKeyRef != nil else { return }
+                self.callback()
+            }
         }
         return noErr
     }

@@ -127,7 +127,7 @@ extension MacClippyDockModel {
                     sideEffectGate: sideEffectGate
                 )
             }
-            DispatchQueue.main.async { [weak self] in
+            MacClippyMainHop.async { [weak self] in
                 guard let self,
                       self.sessionGeneration == session,
                       self.operationGeneration == operation else { return }
@@ -200,7 +200,7 @@ extension MacClippyDockModel {
                 _ = try runtimeReference.setCustomLabel(id: id, label: name)
                 return true
             }
-            DispatchQueue.main.async { [weak self] in
+            MacClippyMainHop.async { [weak self] in
                 guard let self,
                       self.sessionGeneration == session,
                       self.nameOperationGeneration == nameGeneration else { return }
@@ -253,7 +253,7 @@ extension MacClippyDockModel {
 
         workQueue.async { [weak self, runtimeReference] in
             let result = Result { try runtimeReference.createSnippet(from: recordID) }
-            DispatchQueue.main.async { [weak self] in
+            MacClippyMainHop.async { [weak self] in
                 guard let self, self.sessionGeneration == session else { return }
                 switch result {
                 case .success:
@@ -288,7 +288,7 @@ extension MacClippyDockModel {
             let result = Result {
                 try runtime.createSnippet(name: name, trigger: trigger, body: body, folder: folder)
             }
-            DispatchQueue.main.async { [weak self] in
+            MacClippyMainHop.async { [weak self] in
                 guard let self, self.sessionGeneration == session else { return }
                 switch result {
                 case .success:
@@ -324,7 +324,7 @@ extension MacClippyDockModel {
         let session = sessionGeneration
         workQueue.async { [weak self, runtime] in
             let result = Result { try runtime.createPinboard(name: trimmedName, color: color) }
-            DispatchQueue.main.async { [weak self] in
+            MacClippyMainHop.async { [weak self] in
                 guard let self, self.sessionGeneration == session else { return }
                 switch result {
                 case let .success(board):

@@ -34,7 +34,7 @@ extension MacClippyDockModel {
                 )
             }
             guard !cancellationToken.isCancelled else { return }
-            DispatchQueue.main.async { [weak self] in
+            MacClippyMainHop.async { [weak self] in
                 self?.applyRestartedHistoryPage(
                     result,
                     query: query,

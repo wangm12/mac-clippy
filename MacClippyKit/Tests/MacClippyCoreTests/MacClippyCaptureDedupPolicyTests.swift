@@ -80,4 +80,52 @@ final class MacClippyCaptureDedupPolicyTests: XCTestCase {
         )
         XCTAssertNotEqual(plain, rich)
     }
+
+    func testHealthyDuplicateRowSkipsEnvelopeOpen() {
+        let id = RecordID.generate().rawValue
+        XCTAssertTrue(
+            MacClippyCaptureDedupPolicy.canSkipEnvelopeOpen(
+                recordID: id,
+                contentKind: MacClippyContentKind.text.rawValue,
+                preview: "hello",
+                envelopeByteCount: MacClippyCaptureDedupPolicy.minimumSealedEnvelopeByteCount
+            )
+        )
+    }
+
+    func testGarbageOrIncompleteRowsStillRequireEnvelopeOpen() {
+        let id = RecordID.generate().rawValue
+        XCTAssertFalse(
+            MacClippyCaptureDedupPolicy.canSkipEnvelopeOpen(
+                recordID: id,
+                contentKind: MacClippyContentKind.text.rawValue,
+                preview: "hello",
+                envelopeByteCount: 3
+            )
+        )
+        XCTAssertFalse(
+            MacClippyCaptureDedupPolicy.canSkipEnvelopeOpen(
+                recordID: "not-a-record-id",
+                contentKind: MacClippyContentKind.text.rawValue,
+                preview: "hello",
+                envelopeByteCount: 64
+            )
+        )
+        XCTAssertFalse(
+            MacClippyCaptureDedupPolicy.canSkipEnvelopeOpen(
+                recordID: id,
+                contentKind: nil,
+                preview: "hello",
+                envelopeByteCount: 64
+            )
+        )
+        XCTAssertFalse(
+            MacClippyCaptureDedupPolicy.canSkipEnvelopeOpen(
+                recordID: id,
+                contentKind: MacClippyContentKind.text.rawValue,
+                preview: "",
+                envelopeByteCount: 64
+            )
+        )
+    }
 }

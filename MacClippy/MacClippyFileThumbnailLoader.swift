@@ -21,6 +21,10 @@ enum MacClippyFileThumbnailLoader {
         "\(url.path)|\(Int(pointSize.width.rounded()))x\(Int(pointSize.height.rounded()))"
     }
 
+    static func resetForSessionEnd() {
+        cache.removeAllObjects()
+    }
+
     static func cachedImage(for url: URL, pointSize: CGSize) -> CGImage? {
         cache.object(for: cacheKey(url: url, pointSize: pointSize))
     }
@@ -43,7 +47,9 @@ enum MacClippyFileThumbnailLoader {
         if MacClippyFileThumbnailPolicy.usesImageIO(for: url) {
             return imageIOThumbnail(url: url, pointSize: pointSize, scale: 2)
         }
-        return workspaceIcon(for: url, pointSize: pointSize)
+        return await MainActor.run {
+            workspaceIcon(for: url, pointSize: pointSize)
+        }
     }
 
     private static func imageIOThumbnail(url: URL, pointSize: CGSize, scale: CGFloat) -> CGImage? {
@@ -91,42 +97,24 @@ private actor MacClippyFileThumbnailFlights {
 }
 
 private final class MacClippyFileThumbnailCache: @unchecked Sendable {
-    private let lock = NSLock()
-    private let countLimit = 48
-    private let costLimit = 32 * 1_024 * 1_024
-    private var order: [String] = []
-    private var images: [String: CGImage] = [:]
-    private var costs: [String: Int] = [:]
-    private var totalCost = 0
+    private let storage = NSCache<NSString, CGImage>()
+
+    init() {
+        storage.countLimit = 48
+        storage.totalCostLimit = 32 * 1_024 * 1_024
+    }
 
     func object(for key: String) -> CGImage? {
-        lock.lock()
-        defer { lock.unlock() }
-        guard let image = images[key] else { return nil }
-        order.removeAll { $0 == key }
-        order.append(key)
-        return image
+        storage.object(forKey: key as NSString)
     }
 
     func setObject(_ image: CGImage, for key: String) {
-        lock.lock()
-        defer { lock.unlock() }
         let cost = max(1, image.width * image.height * 4)
-        if let existingCost = costs[key] {
-            totalCost -= existingCost
-        } else {
-            order.append(key)
-        }
-        images[key] = image
-        costs[key] = cost
-        totalCost += cost
-        while (images.count > countLimit || totalCost > costLimit), let oldest = order.first {
-            order.removeFirst()
-            images.removeValue(forKey: oldest)
-            if let removedCost = costs.removeValue(forKey: oldest) {
-                totalCost -= removedCost
-            }
-        }
+        storage.setObject(image, forKey: key as NSString, cost: cost)
+    }
+
+    func removeAllObjects() {
+        storage.removeAllObjects()
     }
 }
 

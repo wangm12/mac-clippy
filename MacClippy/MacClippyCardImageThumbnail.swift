@@ -13,6 +13,7 @@ struct MacClippyCardImageThumbnail: View, Equatable {
     let cached: @MainActor @Sendable (RecordID) -> CGImage?
     @State private var image: CGImage?
     @State private var loadedIdentity: String?
+    @State private var isCardVisible = false
 
     init(
         itemID: RecordID,
@@ -59,7 +60,9 @@ struct MacClippyCardImageThumbnail: View, Equatable {
                     }
             }
         }
-        .task(id: itemID) {
+        .onAppear { isCardVisible = true }
+        .onDisappear { isCardVisible = false }
+        .task(id: "\(itemID.rawValue)-\(isCardVisible)") {
             if MacClippyThumbnailRetainPolicy.shouldClearDisplayedImage(
                 displayedIdentity: loadedIdentity,
                 loadingIdentity: identity
@@ -67,7 +70,7 @@ struct MacClippyCardImageThumbnail: View, Equatable {
                 image = nil
             }
             loadedIdentity = identity
-            guard MacClippyThumbnailCachePolicy.shouldDecode(isCardVisible: true) else { return }
+            guard MacClippyThumbnailCachePolicy.shouldDecode(isCardVisible: isCardVisible) else { return }
             let loaded = await load(itemID)
             guard !Task.isCancelled else { return }
             image = loaded

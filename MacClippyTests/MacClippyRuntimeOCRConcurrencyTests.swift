@@ -231,13 +231,13 @@ final class MacClippyRuntimeOCRConcurrencyTests: XCTestCase {
         controlledRuntime.setOCRScheduleConditionsForTest(secondsSinceLastInput: 0.1, isLowPowerMode: false)
         controlledRuntime.enqueueScheduledOCRForTest(data: Data([1, 2, 3]), recordID: record.id)
 
-        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        Thread.sleep(forTimeInterval: 0.05)
         XCTAssertEqual(recognized.value, 0)
         XCTAssertEqual(controlledRuntime.pendingOCRJobsForTest(), 1)
 
         controlledRuntime.setOCRScheduleConditionsForTest(secondsSinceLastInput: 30, isLowPowerMode: true)
         controlledRuntime.flushDeferredOCRForTest()
-        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        Thread.sleep(forTimeInterval: 0.05)
         XCTAssertEqual(recognized.value, 0)
 
         controlledRuntime.setOCRScheduleConditionsForTest(secondsSinceLastInput: 30, isLowPowerMode: false)
@@ -249,9 +249,6 @@ final class MacClippyRuntimeOCRConcurrencyTests: XCTestCase {
     }
 
     private func waitUntil(timeout: TimeInterval, condition: () -> Bool) {
-        let deadline = Date().addingTimeInterval(timeout)
-        while !condition() && Date() < deadline {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
-        }
+        MacClippyTestWait.until(condition, timeout: timeout)
     }
 }

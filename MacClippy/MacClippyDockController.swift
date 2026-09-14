@@ -70,7 +70,7 @@ enum MacClippyDockKeyboardOwnershipPolicy {
         guard isVisible, !isClosing, !isExternalWindowPresented, !isSystemQuickLookVisible else {
             return false
         }
-        return mode == .picker || mode == .preview || mode == .modal
+        return mode == .picker || mode == .preview || mode == .modal || mode == .search
     }
 
     static func shouldRestoreFirstResponder(for mode: MacClippyDockInteractionMode) -> Bool {
@@ -167,7 +167,13 @@ final class MacClippyDockController {
     var keyUpMonitor: Any?
     var spaceChangeObserver: NSObjectProtocol?
     var keyWindowObserver: NSObjectProtocol?
+    var keyboardInputSourceObserver: NSObjectProtocol?
+    var cachedKeyboardInputSourceType: String?
+    var pasteTargetApplication: NSRunningApplication?
+    var didActivateApplicationForSearch = false
+    var isFullscreenSearchHost = false
     var pendingDisplayEvent: MacClippyDisplayLifecycleEvent?
+    var skipGlassMotionForSession = false
     var ignoreOutsideClicksUntil = Date.distantPast
     var statusItemScreenFrame: (() -> CGRect?)?
     var isClosing = false

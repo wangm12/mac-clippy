@@ -3,18 +3,49 @@ import os.signpost
 import SwiftUI
 
 struct MacClippyDockScrollSignpostProbe: NSViewRepresentable {
-    func makeNSView(context: Context) -> MacClippyDockScrollSignpostView {
-        MacClippyDockScrollSignpostView()
+    var onScrollingChange: ((Bool) -> Void)?
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onScrollingChange: onScrollingChange)
     }
 
-    func updateNSView(_ nsView: MacClippyDockScrollSignpostView, context: Context) {}
+    func makeNSView(context: Context) -> MacClippyDockScrollSignpostView {
+        let view = MacClippyDockScrollSignpostView()
+        view.onScrollingChange = { [weak coordinator = context.coordinator] scrolling in
+            coordinator?.setScrolling(scrolling)
+        }
+        return view
+    }
 
-    static func dismantleNSView(_ nsView: MacClippyDockScrollSignpostView, coordinator: ()) {
+    func updateNSView(_ nsView: MacClippyDockScrollSignpostView, context: Context) {
+        context.coordinator.onScrollingChange = onScrollingChange
+        nsView.onScrollingChange = { [weak coordinator = context.coordinator] scrolling in
+            coordinator?.setScrolling(scrolling)
+        }
+    }
+
+    static func dismantleNSView(_ nsView: MacClippyDockScrollSignpostView, coordinator: Coordinator) {
         nsView.teardown()
+    }
+
+    final class Coordinator {
+        var onScrollingChange: ((Bool) -> Void)?
+        private var isScrolling = false
+
+        init(onScrollingChange: ((Bool) -> Void)?) {
+            self.onScrollingChange = onScrollingChange
+        }
+
+        func setScrolling(_ scrolling: Bool) {
+            guard isScrolling != scrolling else { return }
+            isScrolling = scrolling
+            onScrollingChange?(scrolling)
+        }
     }
 }
 
 final class MacClippyDockScrollSignpostView: NSView {
+    var onScrollingChange: ((Bool) -> Void)?
     nonisolated(unsafe) private var observation: NSObjectProtocol?
     nonisolated(unsafe) private var activeID: OSSignpostID?
     nonisolated(unsafe) private var endWork: DispatchWorkItem?
@@ -47,12 +78,14 @@ final class MacClippyDockScrollSignpostView: NSView {
     private func noteScroll() {
         if activeID == nil {
             activeID = MacClippyPerformance.begin("card_scroll")
+            onScrollingChange?(true)
         }
         endWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self, let id = self.activeID else { return }
             MacClippyPerformance.end("card_scroll", id: id)
             self.activeID = nil
+            self.onScrollingChange?(false)
         }
         endWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.16, execute: work)

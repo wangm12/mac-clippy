@@ -70,6 +70,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var maintenanceGeneration: UInt = 0
     let displayLifecycleCoordinator = MacClippyDisplayLifecycleCoordinator()
 
+    private var isLaunchedByXCTest: Bool {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["XCTestConfigurationFilePath"] != nil
+            || environment["XCInjectBundleInto"] != nil
+    }
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        guard isLaunchedByXCTest else { return }
+        UserDefaults.standard.set(false, forKey: "NSAutomaticWindowAnimationsEnabled")
+        UserDefaults.standard.set(true, forKey: "NSDisableAutomaticWindowAnimations")
+        NSWindow.allowsAutomaticWindowTabbing = false
+        MacClippyMainHop.setCaptureForTesting(true)
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         observeHotKeyDescriptorChanges()
         observeHotKeyRecordingChanges()
@@ -207,9 +221,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // indefinitely in a clean test environment. The privacy notice is
         // still exercised by its policy tests and remains unchanged for real
         // user launches.
-        let environment = ProcessInfo.processInfo.environment
-        guard environment["XCTestConfigurationFilePath"] == nil,
-              environment["XCInjectBundleInto"] == nil else { return }
+        guard !isLaunchedByXCTest else { return }
         guard MacClippyPrivacyNoticePolicy.shouldPresent() else { return }
 
         let alert = NSAlert()

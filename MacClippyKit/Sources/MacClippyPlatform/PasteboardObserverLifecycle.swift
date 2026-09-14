@@ -417,7 +417,7 @@ public extension MacClippyPasteboardObserver {
                 category: .capture,
                 code: .missedChangeCounts,
                 operation: "pasteboard_missed_change_counts",
-                recoveryAction: "recover_intermediate_generations",
+                recoveryAction: MacClippyMissedChangeCountPolicy.recoveryAction,
                 impact: "pasteboard_generation_gap"
             )
         )

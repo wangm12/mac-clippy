@@ -68,6 +68,34 @@ final class MacClippyDockOutsideClickTests: XCTestCase {
     }
 
     @MainActor
+    func testOutsidePointerKeyLossOrdersOutWithoutWaitingForGlassMotion() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "MacClippyDockOutsideClickMotionTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let runtime = try MacClippyRuntime(paths: try MacClippyPaths(rootURL: root))
+        let controller = MacClippyDockController(runtime: runtime)
+        let panel = MacClippyDockPanel(contentRect: NSRect(x: 0, y: 0, width: 800, height: 360))
+        controller.panel = panel
+        controller.swiftUIReduceMotion = false
+        panel.orderFrontRegardless()
+        defer { controller.cleanup() }
+
+        XCTAssertTrue(panel.isVisible)
+        controller.handlePanelDidResignKey(
+            panel,
+            monitorGeneration: controller.monitorGeneration,
+            pointerLocation: CGPoint(x: 900, y: 200)
+        )
+
+        XCTAssertFalse(panel.isVisible)
+        XCTAssertFalse(controller.isClosing)
+    }
+
+    @MainActor
     func testStatusItemClickDoesNotCountAsAnOutsideDismiss() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "MacClippyDockStatusItemClickTests-\(UUID().uuidString)",

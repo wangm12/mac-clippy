@@ -1,6 +1,7 @@
 import SwiftUI
 
 import MacClippyCore
+import MacClippyPlatform
 
 struct MacClippyDockSearchFieldWell<Content: View>: View {
     let isSearchFocused: Bool
@@ -188,10 +189,13 @@ extension MacClippyDockView {
         GeometryReader { proxy in
             let available = proxy.size.width
             let searchWidth = max(240, min(available * 0.42, 640))
-            HStack(spacing: 10) {
+            HStack(spacing: 0) {
                 searchField
                     .frame(width: searchWidth, alignment: .leading)
+                searchFilterChipRow
+                    .padding(.leading, chipRowVisible ? 10 : 0)
                 filterPillRow
+                    .padding(.leading, 10)
             }
         }
         .onAppear {
@@ -199,7 +203,14 @@ extension MacClippyDockView {
             // launch. Reduce Motion is still reported to the controller.
             onReduceMotionChange(accessibilityReduceMotion)
         }
-        .onChange(of: model.searchFocusRequest) { _, _ in isSearchFocused = true }
+        .onChange(of: model.searchFocusRequest) { _, token in
+            if MacClippyDockSearchQueryWritePolicy.shouldCollapseCaretAfterProgrammaticFocus(
+                query: model.query
+            ) {
+                searchCaretCollapseToken = token
+            }
+            isSearchFocused = true
+        }
         .onChange(of: model.searchFocusReset) { _, _ in isSearchFocused = false }
     }
 
@@ -210,56 +221,32 @@ extension MacClippyDockView {
                 Image(systemName: "magnifyingglass")
                     .font(.body.weight(.medium))
                     .foregroundStyle(MacClippyDockTheme.muted2Color)
-                TextField(
-                    "",
-                    text: $model.query,
-                    prompt: Text("Search clipboard...").foregroundStyle(MacClippyDockTheme.muted2Color)
-                )
-                    .textFieldStyle(.plain)
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(MacClippyDockTheme.textColor)
-                    .focused($isSearchFocused)
-                    .onChange(of: isSearchFocused) { _, focused in
+                MacClippyAppKitSearchField(
+                    committedQuery: model.displayedSearchText,
+                    isFocused: isSearchFocused,
+                    collapseToken: searchCaretCollapseToken,
+                    programmaticSyncToken: searchFieldProgrammaticSyncToken
+                        + model.searchQueryProgrammaticWriteToken,
+                    onCommit: { incoming in
+                        model.commitSearchFieldText(incoming, hasMarkedText: false)
+                    },
+                    onFocusChange: { focused in
+                        isSearchFocused = focused
                         onSearchModeChange(focused)
-                    }
-                    .onTapGesture {
-                        isSearchFocused = true
-                        onSearchModeChange(true)
-                    }
-                    .onSubmit { model.reload() }
+                    },
+                    onCompositionChange: { composing in
+                        onSearchCompositionChange(composing)
+                    },
+                    onSubmit: { model.reload() }
+                )
+                    .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
                     .help(
                         "Search clipboard history. Filter by source with app:Safari. Add clauses like "
                             + "type:text, type:url, name:work, has:name, has:ocr, before:YYYY-MM-DD, "
                             + "after:YYYY-MM-DD. Quote a phrase to keep it together. Bare words match any "
                             + "continuous fragment (ss finds passport)."
                     )
-                if !visibleSearchFilterChips.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 4) {
-                            ForEach(visibleSearchFilterChips) { chip in
-                                searchFilterChip(chip)
-                            }
-                        }
-                    }
-                    .frame(maxWidth: 220)
-                    .accessibilityLabel("Search filters")
-                }
-                if !model.query.isEmpty {
-                    Button {
-                        model.query = ""
-                        isSearchFocused = true
-                        onSearchModeChange(true)
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(MacClippyDockTheme.muted2Color)
-                            .frame(width: 22, height: 22)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Clear search")
-                    .help("Clear search")
-                    .transition(MacClippyMotion.fadeTransition(reduceMotion: reduceMotion))
-                }
+                searchClearButton
             }
             .macClippySearchFieldWell(
                 isSearchFocused: isSearchFocused,
@@ -269,11 +256,62 @@ extension MacClippyDockView {
         }
     }
 
-    var visibleSearchFilterChips: [MacClippySearchFilterChip] {
-        if isSearchFocused {
-            return model.searchFilterChips + model.searchFilterSuggestions
+    private var mountedSearchFilterChips: [MacClippySearchFilterChip] {
+        MacClippyDockSearchQueryWritePolicy.mountedSearchFilterChips(
+            applied: model.searchFilterChips,
+            suggestions: isSearchFocused ? model.searchFilterSuggestions : [],
+            excludingTokens: MacClippySmartListPolicy.visibleListTokens(
+                hiddenIDs: model.hiddenSmartListIDs
+            )
+        )
+    }
+
+    private var chipRowVisible: Bool {
+        MacClippyDockSearchQueryWritePolicy.isChipRowVisible(
+            isSearchFocused: isSearchFocused,
+            hasAppliedChips: mountedSearchFilterChips.contains { !$0.isSuggestion }
+        )
+    }
+
+    @ViewBuilder
+    var searchFilterChipRow: some View {
+        let chips = mountedSearchFilterChips
+        if chipRowVisible, !chips.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 4) {
+                    ForEach(chips) { chip in
+                        searchFilterChip(chip)
+                            .transition(MacClippyMotion.fadeTransition(reduceMotion: reduceMotion))
+                    }
+                }
+            }
+            .frame(maxWidth: MacClippyDockSearchQueryWritePolicy.chipRowMaxWidth(isVisible: true))
+            .animation(
+                MacClippyMotion.animation(MacClippyMotion.hoverAnimation, reduceMotion: reduceMotion),
+                value: chips.map(\.id)
+            )
+            .accessibilityLabel("Search filters")
         }
-        return model.searchFilterChips
+    }
+
+    @ViewBuilder
+    var searchClearButton: some View {
+        if MacClippyDockSearchQueryWritePolicy.isClearButtonVisible(hasQuery: !model.displayedSearchText.isEmpty) {
+            Button {
+                model.clearSearchQuery()
+                searchFieldProgrammaticSyncToken += 1
+                isSearchFocused = true
+                onSearchModeChange(true)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(MacClippyDockTheme.muted2Color)
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Clear search")
+            .help("Clear search")
+        }
     }
 
     func searchFilterChip(_ chip: MacClippySearchFilterChip) -> some View {
@@ -283,6 +321,7 @@ extension MacClippyDockView {
             } else {
                 model.removeSearchFilter(token: chip.token)
             }
+            searchFieldProgrammaticSyncToken += 1
             isSearchFocused = true
             onSearchModeChange(true)
         } label: {

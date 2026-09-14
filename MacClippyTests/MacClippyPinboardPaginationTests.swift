@@ -279,12 +279,6 @@ private extension MacClippyPinboardPaginationTests {
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline, !condition() {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
-        }
-        if !condition() {
-            XCTFail("Timed out waiting for condition", file: file, line: line)
-        }
+        MacClippyTestWait.until(condition, timeout: timeout, failOnTimeout: true, file: file, line: line)
     }
 }

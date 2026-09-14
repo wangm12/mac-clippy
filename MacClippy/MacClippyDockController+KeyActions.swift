@@ -9,6 +9,9 @@ extension MacClippyDockController {
             return true
         case .native:
             return false
+        case .handOffSearchToInputMethod:
+            enterSearchMode()
+            return false
         case .dismissModal, .enterSearch, .exitSearch, .closeDock, .showPreview, .hidePreview,
              .showDetails, .hideDetails, .editContent, .rename, .cancelDetailsEdit:
             applyNavigationAction(action)
@@ -42,9 +45,13 @@ extension MacClippyDockController {
         case .enterSearch: enterSearchMode()
         case .exitSearch:
             if MacClippyDockSearchEscapePolicy.clearsQueryFirst(model.query) {
-                model.query = ""
-            } else {
+                model.clearSearchQuery()
+            } else if MacClippyDockSearchEscapePolicy.dismissesDockWhenQueryIsEmpty() {
+                hide()
+            } else if MacClippyDockSearchEscapePolicy.shouldChangeOverlayLevel() {
                 enterPickerMode()
+            } else {
+                hide()
             }
         case .closeDock: hide()
         default: break
@@ -83,8 +90,8 @@ extension MacClippyDockController {
     private func applySearchAction(_ action: MacClippyDockKeyAction) {
         switch action {
         case let .appendSearch(text):
-            setSearchMode(true)
             model.appendSearchText(text)
+            setSearchMode(true)
         case .deleteSearchCharacter:
             model.deleteSearchCharacter()
         default: break
@@ -102,6 +109,10 @@ extension MacClippyDockController {
     }
 
     private func pasteFocusedSelection(plain: Bool) {
+        restorePasteTargetApplicationIfNeeded(
+            leavingSearch: interactionMode == .search,
+            isHiding: false
+        )
         if model.hasMultipleSelection {
             model.pasteSelectedAll(completion: { [weak self] in self?.hide() })
         } else {

@@ -46,14 +46,16 @@ extension MacClippyDockController {
         toast.hasShadow = false
         toast.invalidateShadow()
         toast.setFrame(frame, display: true)
+        toast.contentView?.layer?.opacity = 0
         toast.orderFrontRegardless()
         announceCopyToast(title)
+        animateToastOpacity(toast, from: 0, to: 1, duration: MacClippyMotion.actionFeedbackDuration)
 
         toastDismissTask?.cancel()
         toastDismissTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 1_200_000_000)
             guard let self, !Task.isCancelled else { return }
-            self.toastPanel?.orderOut(nil)
+            self.dismissCopyToast()
         }
     }
 
@@ -69,6 +71,27 @@ extension MacClippyDockController {
     func dismissCopyToast() {
         toastDismissTask?.cancel()
         toastDismissTask = nil
-        toastPanel?.orderOut(nil)
+        guard let toast = toastPanel, toast.isVisible else { return }
+        animateToastOpacity(toast, from: toast.contentView?.layer?.opacity ?? 1, to: 0, duration: 0.1)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak toast] in
+            guard let self, self.toastPanel === toast else { return }
+            toast?.orderOut(nil)
+        }
+    }
+
+    private func animateToastOpacity(
+        _ toast: NSWindow,
+        from: Float,
+        to: Float,
+        duration: TimeInterval
+    ) {
+        guard let layer = toast.contentView?.layer else { return }
+        let animation = CABasicAnimation(keyPath: "opacity")
+        animation.fromValue = from
+        animation.toValue = to
+        animation.duration = duration
+        animation.timingFunction = MacClippyMotion.entranceTimingFunction
+        layer.add(animation, forKey: "macClippyToastOpacity")
+        layer.opacity = to
     }
 }

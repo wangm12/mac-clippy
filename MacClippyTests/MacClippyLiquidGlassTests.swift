@@ -167,6 +167,8 @@ final class MacClippyLiquidGlassTests: XCTestCase {
         XCTAssertFalse(filters.contains("macClippyChromeButtonStyle"))
         XCTAssertFalse(filters.contains("prominent: selected"))
         XCTAssertTrue(filters.contains("animation(nil, value: selected)"))
+        XCTAssertFalse(filters.contains("filterSelectionAnimation"))
+        XCTAssertTrue(filters.contains("hovered: isHovered"))
 
         let glass = try appSource(named: "MacClippyGlass.swift")
         guard let chipStart = glass.range(of: "func macClippyFilterChipStyle"),
@@ -176,8 +178,7 @@ final class MacClippyLiquidGlassTests: XCTestCase {
         let chip = String(glass[chipStart.lowerBound..<chipEnd.lowerBound])
         XCTAssertTrue(chip.contains(".regular"))
         XCTAssertTrue(chip.contains("hovered"))
-        XCTAssertTrue(chip.contains("0.22"))
-        XCTAssertTrue(chip.contains("0.12"))
+        XCTAssertTrue(chip.contains("MacClippyDockFilterPillWashPolicy.opacity"))
         XCTAssertFalse(chip.contains(".regular.tint("))
         XCTAssertFalse(chip.contains(".interactive()"))
 
@@ -212,6 +213,8 @@ final class MacClippyLiquidGlassTests: XCTestCase {
 
         let carousel = try appSource(named: "MacClippyDockView+CarouselModal.swift")
         XCTAssertTrue(carousel.contains("carouselEdgeFade"))
+        XCTAssertTrue(carousel.contains(".id(model.filterSurfaceID)"))
+        XCTAssertTrue(carousel.contains("filterSurfaceTransition"))
 
         let actionBar = try appSource(named: "MacClippyDockActionBar.swift")
         XCTAssertTrue(actionBar.contains("macClippyGlassButtonStyle") || actionBar.contains("buttonStyle(.glass"))

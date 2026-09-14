@@ -42,6 +42,40 @@ final class MacClippyRuntimeConcurrencyTests: XCTestCase {
         }
     }
 
+    func testSelectAllReleasesStoreLockBetweenHistoryPages() throws {
+        for index in 0..<257 {
+            _ = try runtime.appendTestRecord(.text("page item \(index)"))
+        }
+        runtime.resetStoreLockMetricsForTesting()
+
+        let ids = try runtime.historyRecordIDs(query: "")
+        XCTAssertEqual(ids.count, 257)
+        XCTAssertGreaterThanOrEqual(runtime.storeLockAcquisitionCount, 2)
+    }
+
+    func testImageDataReadsBlobOutsideStoreLock() throws {
+        let image = try runtime.appendTestRecord(.image(blobID: "unused", width: 1, height: 1))
+        runtime.resetStoreLockMetricsForTesting()
+
+        let data = try runtime.imageData(id: image.id)
+        XCTAssertFalse(data.isEmpty)
+        XCTAssertEqual(runtime.blobReadsWhileStoreLockHeld, 0)
+        XCTAssertGreaterThan(runtime.storeLockAcquisitionCount, 0)
+    }
+
+    func testPreviewImageReadsBlobOutsideStoreLock() throws {
+        let image = try runtime.appendTestRecord(.image(blobID: "unused", width: 1, height: 1))
+        runtime.resetStoreLockMetricsForTesting()
+
+        let preview = try runtime.preview(id: image.id)
+        if case .image = preview {
+            // Expected image payload.
+        } else {
+            XCTFail("expected image preview")
+        }
+        XCTAssertEqual(runtime.blobReadsWhileStoreLockHeld, 0)
+    }
+
     func testConcurrentHistoryAndLabelAccessUsesRuntimeStoreBoundary() throws {
         let record = try runtime.appendTestRecord(.text("concurrency body"))
         let sharedRuntime = runtime!

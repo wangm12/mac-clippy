@@ -139,7 +139,7 @@ final class PasteboardObserverDiagnosticTests: XCTestCase {
         )
         let missed = diagnosticsRecorder.recentEvents().filter { $0.code == .missedChangeCounts }
         XCTAssertEqual(missed.count, 1)
-        XCTAssertEqual(missed.last?.recoveryAction, "recover_intermediate_generations")
+        XCTAssertEqual(missed.last?.recoveryAction, MacClippyMissedChangeCountPolicy.recoveryAction)
         observer.stop()
     }
 

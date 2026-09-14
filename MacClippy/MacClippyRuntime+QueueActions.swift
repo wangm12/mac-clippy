@@ -49,7 +49,8 @@ extension MacClippyRuntime {
     func pasteQueued(
         ids: [RecordID],
         shouldCancel: () -> Bool = { false },
-        sideEffectGate: MacClippyPasteInjectionGate? = nil
+        sideEffectGate: MacClippyPasteInjectionGate? = nil,
+        onProgress: (@Sendable (Int, Int) -> Void)? = nil
     ) throws -> MacClippyQueuePasteResult {
         try measureDiagnosticMetric("paste_queue") {
             guard !shouldCancel() else {
@@ -65,7 +66,8 @@ extension MacClippyRuntime {
                 ids: ids,
                 knownKinds: knownKinds,
                 shouldCancel: shouldCancel,
-                sideEffectGate: sideEffectGate
+                sideEffectGate: sideEffectGate,
+                onProgress: onProgress
             )
         }
     }
@@ -74,7 +76,8 @@ extension MacClippyRuntime {
         ids: [RecordID],
         knownKinds: [RecordID: MacClippyContentKind],
         shouldCancel: () -> Bool,
-        sideEffectGate: MacClippyPasteInjectionGate?
+        sideEffectGate: MacClippyPasteInjectionGate?,
+        onProgress: (@Sendable (Int, Int) -> Void)?
     ) throws -> MacClippyQueuePasteResult {
         var injectedIDs: [RecordID] = []
         var unavailableIDs: [RecordID] = []
@@ -89,6 +92,7 @@ extension MacClippyRuntime {
                 )
             }
 
+            onProgress?(index + 1, ids.count)
             switch try attemptQueuedPaste(
                 id: id,
                 knownKinds: knownKinds,
@@ -227,43 +231,61 @@ extension MacClippyRuntime {
     /// result (mergedText / mixed / textUnavailable) without performing any
     /// pasteboard write or paste injection.
     func resolveOrderedMultiSelection(ids: [RecordID]) throws -> MacClippyDockMultiPastePolicy.Result {
-        try withStoreLock {
-            let knownKinds = try clipboardStore.contentKinds(for: ids)
-            return try MacClippyDockMultiPastePolicy.resolveThrowing(
-                orderedSelectedIDs: ids,
-                kindForID: { id in
-                    guard let contentKind = knownKinds[id] else { return .unsupported }
-                    return MacClippyDockMultiPasteKindMapping.kind(for: contentKind)
-                },
-                textForID: { id in
-                    do {
-                        let record = try clipboardStore.body(for: id)
-                        switch record {
-                        case let .text(value):
-                            return value
-                        case let .html(value):
-                            return MacClippyClipboardText.plainText(from: record) ?? value
-                        case let .rtf(data):
-                            let rtfRecord = ClipboardRecord.rtf(data)
-                            return MacClippyClipboardText.plainText(from: rtfRecord)
-                        case .image, .encryptedImage, .files:
-                            // The policy does not request text from these kinds,
-                            // but keep this defensive branch if the projection
-                            // and payload ever diverge.
-                            return nil
-                        }
-                    } catch {
-                        if isCorruptStoredRecord(error) {
-                            recordCorruptStoredRecord(operation: "ordered_multi_selection_record")
-                            return nil
-                        }
-                        if case MacClippyStoreError.recordNotFound = error {
-                            return nil
-                        }
+        let knownKinds = try withStoreLock {
+            try clipboardStore.contentKinds(for: ids)
+        }
+        let textIDs = ids.filter { id in
+            switch knownKinds[id] {
+            case .text, .html, .rtf: return true
+            default: return false
+            }
+        }
+        var texts: [RecordID: String?] = [:]
+        var index = 0
+        while index < textIDs.count {
+            let end = min(index + 16, textIDs.count)
+            let chunk = Array(textIDs[index..<end])
+            let records = withStoreLock {
+                chunk.map { id -> (RecordID, Result<ClipboardRecord, Error>) in
+                    (id, Result { try clipboardStore.body(for: id) })
+                }
+            }
+            for (id, result) in records {
+                switch result {
+                case let .success(record):
+                    switch record {
+                    case let .text(value):
+                        texts[id] = value
+                    case let .html(value):
+                        texts[id] = MacClippyClipboardText.plainText(from: record) ?? value
+                    case let .rtf(data):
+                        texts[id] = MacClippyClipboardText.plainText(from: .rtf(data))
+                    case .image, .encryptedImage, .files:
+                        texts[id] = nil
+                    }
+                case let .failure(error):
+                    if isCorruptStoredRecord(error) {
+                        recordCorruptStoredRecord(operation: "ordered_multi_selection_record")
+                        texts[id] = nil
+                    } else if case MacClippyStoreError.recordNotFound = error {
+                        texts[id] = nil
+                    } else {
                         throw error
                     }
                 }
-            )
+            }
+            index = end
         }
+        return try MacClippyDockMultiPastePolicy.resolveThrowing(
+            orderedSelectedIDs: ids,
+            kindForID: { id in
+                guard let contentKind = knownKinds[id] else { return .unsupported }
+                return MacClippyDockMultiPasteKindMapping.kind(for: contentKind)
+            },
+            textForID: { id in
+                if let value = texts[id] { return value }
+                return nil
+            }
+        )
     }
 }

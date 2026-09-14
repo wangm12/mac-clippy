@@ -41,6 +41,17 @@ struct MacClippyCardButtonStyle: ButtonStyle {
     }
 }
 
+private struct MacClippyCarouselScrollingKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var macClippyCarouselScrolling: Bool {
+        get { self[MacClippyCarouselScrollingKey.self] }
+        set { self[MacClippyCarouselScrollingKey.self] = newValue }
+    }
+}
+
 struct MacClippyCardHoverModifier: ViewModifier {
     let enabled: Bool
     let reduceMotion: Bool
@@ -68,6 +79,7 @@ struct MacClippyDockView: View {
     let onEnterPickerMode: () -> Void
     let onPreview: () -> Void
     let onSearchModeChange: (Bool) -> Void
+    let onSearchCompositionChange: (Bool) -> Void
     let onModalPresentationChange: (Bool) -> Void
     let onReduceMotionChange: (Bool) -> Void
     let onLayoutHeightChange: (Bool) -> Void
@@ -97,6 +109,10 @@ struct MacClippyDockView: View {
     @State var modalFocusGeneration: UInt = 0
     @State var sourceResolveBatch = MacClippySourceResolveBatch()
     @State var sourceResolveCoalescer = MacClippyMainQueueCoalescer()
+    @State var isCarouselScrolling = false
+    @State var searchCaretCollapseToken = 0
+    @State var searchFieldProgrammaticSyncToken = 0
+    @State var workspaceHighContrast = false
     @Namespace var headerGlassNamespace
 
     var reduceMotion: Bool {
@@ -106,8 +122,7 @@ struct MacClippyDockView: View {
     var highContrast: Bool {
         colorSchemeContrast == .increased
             || differentiateWithoutColor
-            || NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
-            || NSWorkspace.shared.accessibilityDisplayShouldDifferentiateWithoutColor
+            || workspaceHighContrast
     }
 
     var body: some View {
@@ -139,6 +154,7 @@ struct MacClippyDockView: View {
             // decorative edge overlays over the first and last cards.
             carousel
                 .frame(maxWidth: .infinity)
+                .environment(\.macClippyCarouselScrolling, isCarouselScrolling)
         }
         .padding(.horizontal, 12)
         .padding(.top, 12)
@@ -168,6 +184,22 @@ struct MacClippyDockView: View {
                     )
             }
         }
+        .overlay(alignment: .bottom) {
+            if let progress = model.queuePasteProgress {
+                Text("Pasting \(progress.done) of \(progress.total)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(MacClippyDockTheme.textColor)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(MacClippyDockTheme.panelStrongColor, in: Capsule())
+                    .padding(.bottom, 10)
+                    .transition(MacClippyMotion.fadeTransition(reduceMotion: reduceMotion))
+                    .animation(
+                        MacClippyMotion.animation(MacClippyMotion.actionFeedbackAnimation, reduceMotion: reduceMotion),
+                        value: model.queuePasteProgress?.done
+                    )
+            }
+        }
         .overlay(alignment: .topLeading) {
             if let actionError = model.actionError {
                 HStack(spacing: 8) {
@@ -191,6 +223,10 @@ struct MacClippyDockView: View {
                 .padding(.top, 56)
                 .padding(.leading, 18)
                 .transition(MacClippyMotion.fadeTransition(reduceMotion: reduceMotion))
+                .animation(
+                    MacClippyMotion.animation(MacClippyMotion.actionFeedbackAnimation, reduceMotion: reduceMotion),
+                    value: model.actionError
+                )
             }
         }
         .onReceive(model.$actionFeedback) { feedback in
@@ -244,10 +280,17 @@ struct MacClippyDockView: View {
         .onChange(of: model.selectedTab) { _, _ in
             announceSearchResultsIfNeeded()
         }
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: NSWorkspace.shared
+        )) { _ in
+            refreshWorkspaceHighContrast()
+        }
         .onAppear {
             // Keyboard-first: do NOT auto-focus the search field on launch.
             // The first card is focusable; Cmd+K still focuses search on
             // demand via the controller key monitor.
+            refreshWorkspaceHighContrast()
             onReduceMotionChange(accessibilityReduceMotion)
             let signpostID = MacClippyPerformance.begin("dock_open")
             DispatchQueue.main.async {
@@ -284,6 +327,13 @@ struct MacClippyDockView: View {
             }
             onModalPresentationChange(modal != nil)
         }
+    }
+
+    func refreshWorkspaceHighContrast() {
+        let workspace = NSWorkspace.shared
+        workspaceHighContrast =
+            workspace.accessibilityDisplayShouldIncreaseContrast
+            || workspace.accessibilityDisplayShouldDifferentiateWithoutColor
     }
 }
 

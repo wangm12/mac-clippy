@@ -24,6 +24,8 @@ final class MacClippyMotionTests: XCTestCase {
         XCTAssertGreaterThan(MacClippyMotion.panelTravelPadding, 0)
         XCTAssertEqual(MacClippyMotion.panelContentScaleStart, 0.98)
         XCTAssertLessThan(MacClippyMotion.panelShadowOpacityStart, MacClippyMotion.panelShadowOpacity)
+        XCTAssertLessThanOrEqual(MacClippyMotion.filterSurfaceDuration, MacClippyMotion.entranceDuration)
+        XCTAssertGreaterThanOrEqual(MacClippyMotion.filterSurfaceDuration, MacClippyMotion.contentDuration)
     }
 
     func testHoverLeaveAlwaysAppliesEvenWhileAButtonIsDown() {

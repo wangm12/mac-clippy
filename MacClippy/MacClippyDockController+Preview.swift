@@ -175,15 +175,9 @@ extension MacClippyDockController: MacClippySystemQuickLookHosting {
         previewPerformanceSignpostID = previewSignpostID
         if shouldAnimate && !shouldReduceMotion {
             preview.alphaValue = 0
-            preview.setFrame(
-                previewFrame.offsetBy(dx: 0, dy: -MacClippyMotion.panelOffset),
-                display: false,
-                animate: false
-            )
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = MacClippyMotion.entranceDuration
                 context.timingFunction = MacClippyMotion.entranceTimingFunction
-                preview.animator().setFrame(previewFrame, display: true)
                 preview.animator().alphaValue = 1
             }
         }
@@ -420,7 +414,6 @@ extension MacClippyDockController: MacClippySystemQuickLookHosting {
         previewIsClosing = true
         previewAnimationGeneration &+= 1
         let generation = previewAnimationGeneration
-        let targetFrame = preview.frame.offsetBy(dx: 0, dy: -MacClippyMotion.panelOffset)
         let finish: @MainActor @Sendable () -> Void = { [weak self, weak preview] in
             guard let self, let preview, self.previewAnimationGeneration == generation else { return }
             preview.orderOut(nil)
@@ -434,7 +427,6 @@ extension MacClippyDockController: MacClippySystemQuickLookHosting {
             NSAnimationContext.runAnimationGroup({ context in
                 context.duration = MacClippyMotion.exitDuration
                 context.timingFunction = MacClippyMotion.exitTimingFunction
-                preview.animator().setFrame(targetFrame, display: true)
                 preview.animator().alphaValue = 0
             }, completionHandler: {
                 Task { @MainActor in finish() }

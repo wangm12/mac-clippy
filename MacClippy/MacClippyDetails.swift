@@ -232,6 +232,7 @@ final class MacClippyDetailsPanel: NSPanel {
         level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 2)
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         isReleasedWhenClosed = false
+        animationBehavior = .none
     }
 
     override var canBecomeKey: Bool { true }
