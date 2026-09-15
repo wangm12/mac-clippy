@@ -1,7 +1,7 @@
-# Build MacClippy.dmg with the repo Makefile and attach it to a GitHub Release.
+# Build MacClippy (DMG/ZIP) with the repo Makefile and attach it to a GitHub Release.
 #
-# Every branch push (and Actions → Release → Run workflow) updates the rolling
-# `nightly` prerelease. A vX.Y.Z tag still publishes a stable release.
+# Every branch push updates the rolling `nightly` prerelease.
+# Pushing a tag `v*` publishes a stable release.
 #
 # Optional secrets (unsigned builds lose TCC on other Macs):
 #   MACOS_CERT_P12        base64-encoded Mac Clippy .p12
@@ -14,50 +14,65 @@ on:
     branches:
       - "**"
     tags:
-      - "v*.*.*"
+      - "v*"
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: macclippy-release-${{ github.ref }}
+  group: release-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
-  dmg:
-    runs-on: macos-26
+  release:
+    name: Build & Release
+    runs-on: macos-14
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      # Same pinned XcodeGen as CI. Do not brew install: runners float past 2.45.4.
+
       - name: Install pinned build tools
         run: ./scripts/install-pinned-tools.sh
+
       - name: Import stable signing certificate
         env:
           MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
           MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
         run: ./scripts/import-signing-cert.sh
-      - name: Package Release DMG
+
+      - name: Package Release DMG and ZIP
         run: make dmg
-      - name: Upload DMG artifact
+
+      - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
-          name: MacClippy.dmg
-          path: dist/MacClippy.dmg
+          name: macos-installers
+          path: |
+            dist/MacClippy.dmg
+            dist/MacClippy.zip
           if-no-files-found: error
-      - name: Publish GitHub Release
+
+      - name: Publish to GitHub Releases
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           short_sha="${GITHUB_SHA::7}"
+          files=(dist/MacClippy.dmg dist/MacClippy.zip)
+
+          echo "Files to upload:"
+          ls -lh "${files[@]}"
+
+          # Stable tag release
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             tag="${GITHUB_REF_NAME}"
             if gh release view "$tag" >/dev/null 2>&1; then
-              gh release upload "$tag" dist/MacClippy.dmg --clobber
+              echo "Updating release $tag..."
+              gh release upload "$tag" "${files[@]}" --clobber
             else
-              gh release create "$tag" dist/MacClippy.dmg \
+              echo "Creating release $tag..."
+              gh release create "$tag" "${files[@]}" \
                 --title "Mac Clippy ${tag#v}" \
                 --generate-notes \
                 --verify-tag
@@ -65,9 +80,11 @@ jobs:
             exit 0
           fi
 
-          notes="Nightly from ${GITHUB_SHA} on ${GITHUB_REF_NAME}."
+          # Rolling nightly pre-release
+          notes="Nightly rolling build from commit ${GITHUB_SHA} on branch ${GITHUB_REF_NAME}."
           if gh release view nightly >/dev/null 2>&1; then
-            gh release upload nightly dist/MacClippy.dmg --clobber
+            echo "Updating existing nightly release..."
+            gh release upload nightly "${files[@]}" --clobber
             gh release edit nightly \
               --title "Mac Clippy nightly (${short_sha})" \
               --notes "$notes" \
@@ -75,7 +92,8 @@ jobs:
               --latest=false \
               --target "${GITHUB_SHA}"
           else
-            gh release create nightly dist/MacClippy.dmg \
+            echo "Creating initial nightly release..."
+            gh release create nightly "${files[@]}" \
               --title "Mac Clippy nightly (${short_sha})" \
               --notes "$notes" \
               --prerelease \

@@ -41,19 +41,9 @@ fi
 
 echo "==> Creating signing keychain ${keychain}"
 security create-keychain -p "${keychain_password}" "${keychain}"
-security set-keychain-settings -lut 21600 "${keychain}"
+security set-keychain-settings -t 21600 -u "${keychain}"
 security unlock-keychain -p "${keychain_password}" "${keychain}"
-security import "${p12_path}" -k "${keychain}" -P "${P12_PASSWORD}" \
-  -T /usr/bin/codesign -A
-security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
-  -k "${keychain_password}" "${keychain}" >/dev/null
-
-openssl pkcs12 -in "${p12_path}" -nokeys -clcerts -passin "pass:${P12_PASSWORD}" \
-  -out "${tmp}/cert.pem" 2>/dev/null \
-  || openssl pkcs12 -in "${p12_path}" -nokeys -clcerts -legacy \
-    -passin "pass:${P12_PASSWORD}" -out "${tmp}/cert.pem"
-
-security add-trusted-cert -r trustRoot -p codeSign -k "${keychain}" "${tmp}/cert.pem"
+security default-keychain -s "${keychain}"
 
 existing_keychains=()
 while IFS= read -r keychain_path; do
@@ -63,6 +53,19 @@ while IFS= read -r keychain_path; do
   [[ -n "${keychain_path}" ]] && existing_keychains+=("${keychain_path}")
 done < <(security list-keychains -d user)
 security list-keychain -d user -s "${keychain}" "${existing_keychains[@]}"
+
+security import "${p12_path}" -k "${keychain}" -P "${P12_PASSWORD}" \
+  -T /usr/bin/codesign -T /usr/bin/security -A
+
+perl -e 'alarm 15; exec @ARGV' security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+  -k "${keychain_password}" "${keychain}" >/dev/null 2>&1 || true
+
+openssl pkcs12 -in "${p12_path}" -nokeys -clcerts -passin "pass:${P12_PASSWORD}" \
+  -out "${tmp}/cert.pem" 2>/dev/null \
+  || openssl pkcs12 -in "${p12_path}" -nokeys -clcerts -legacy \
+    -passin "pass:${P12_PASSWORD}" -out "${tmp}/cert.pem"
+
+security add-trusted-cert -r trustRoot -p codeSign -k "${keychain}" "${tmp}/cert.pem"
 
 echo "==> Imported signing certificate"
 security find-identity -v -p codesigning

@@ -9,6 +9,7 @@ DERIVED_DATA="${DERIVED_DATA:-$ROOT/.build/DerivedData/MacClippy-$CONFIGURATION}
 DIST_DIR="${DIST_DIR:-$ROOT/dist}"
 STAGING_DIR="${STAGING_DIR:-$ROOT/.build/mac-clippy-dmg-staging}"
 DMG_PATH="${DMG_PATH:-$DIST_DIR/MacClippy.dmg}"
+ZIP_PATH="${ZIP_PATH:-$DIST_DIR/MacClippy.zip}"
 VOLUME_NAME="${VOLUME_NAME:-Mac Clippy}"
 CODE_SIGNING_MODE="${CODE_SIGNING_ALLOWED:-NO}"
 PREBUILT_APP="${PREBUILT_APP:-}"
@@ -51,6 +52,7 @@ if [[ "${canonical_staging_path}" == "${canonical_build_root}" ]]; then
 fi
 require_path_under "${DIST_DIR}" "${ROOT}/dist"
 require_path_under "${DMG_PATH}" "${DIST_DIR}"
+require_path_under "${ZIP_PATH}" "${DIST_DIR}"
 if [[ -n "${PREBUILT_APP}" ]]; then
   require_path_under "${PREBUILT_APP}" "${ROOT}/build"
   if [[ ! -d "${PREBUILT_APP}" || "${PREBUILT_APP}" != *.app ]]; then
@@ -123,3 +125,8 @@ hdiutil create \
   "$DMG_PATH"
 
 echo "==> Wrote $DMG_PATH"
+
+echo "==> Creating ZIP archive"
+rm -f "$ZIP_PATH"
+ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_PATH"
+echo "==> Wrote $ZIP_PATH"
