@@ -30,6 +30,6 @@ public enum MacClippyPanelGlassMotionPolicy {
         skipGlassMotion: Bool,
         hideReason: MacClippyDockHideReason = .command
     ) -> Bool {
-        return reduceMotion || skipGlassMotion || hideReason == .outsideClick
+        return reduceMotion || skipGlassMotion || hideReason == .outsideClick || hideReason == .spaceChange
     }
 }

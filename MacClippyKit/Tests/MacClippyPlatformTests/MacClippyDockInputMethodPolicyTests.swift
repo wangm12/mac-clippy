@@ -118,7 +118,7 @@ final class MacClippyDockInputMethodPolicyTests: XCTestCase {
     func testSearchActivatesTheAppSoInputMethodCanJoinTheFullscreenSpace() {
         // Maccy stays nonactivating. `NSApp.activate` assigns system
         // Pinyin to the app's home (desktop) Space while the panel is
-        // only painted onto the fullscreen Space via canJoinAllSpaces.
+        // only painted onto the fullscreen Space.
         XCTAssertFalse(
             MacClippyDockInputMethodPolicy.shouldActivateApplication(
                 isSearchMode: true,
@@ -149,7 +149,7 @@ final class MacClippyDockInputMethodPolicyTests: XCTestCase {
         XCTAssertFalse(
             MacClippyDockInputMethodPolicy.shouldActivateIgnoringOtherApps(isSearchMode: false)
         )
-        XCTAssertTrue(
+        XCTAssertFalse(
             MacClippyDockInputMethodPolicy.shouldYieldOverlayToInputMethodCandidates(
                 isSearchMode: true,
                 hostIsFullscreen: true
@@ -167,16 +167,11 @@ final class MacClippyDockInputMethodPolicyTests: XCTestCase {
                 hostIsFullscreen: true
             )
         )
-        let dockLayer = Int(CGWindowLevelForKey(.dockWindow))
         let fullscreenSearch = MacClippyDockInputMethodPolicy.overlayLevel(
             allowsInputMethodCandidates: true,
             hostIsFullscreen: true
         )
-        // Cherry Studio measured SCIM's bar at a fixed layer 20. Only
-        // `.floating` (3) revealed it; status/mainMenu/screenSaver did not.
-        XCTAssertEqual(fullscreenSearch, .floating)
-        XCTAssertLessThan(fullscreenSearch.rawValue, 20)
-        XCTAssertLessThan(fullscreenSearch.rawValue, dockLayer)
+        XCTAssertEqual(fullscreenSearch, .mainMenu)
         XCTAssertEqual(
             MacClippyDockInputMethodPolicy.overlayLevel(
                 allowsInputMethodCandidates: false,
@@ -201,9 +196,15 @@ final class MacClippyDockInputMethodPolicyTests: XCTestCase {
         XCTAssertTrue(fullscreenBehavior.contains(.fullScreenAuxiliary))
         XCTAssertTrue(fullscreenBehavior.contains(.canJoinAllApplications))
         XCTAssertFalse(fullscreenBehavior.contains(.canJoinAllSpaces))
-        XCTAssertTrue(desktopBehavior.contains(.canJoinAllSpaces))
+        XCTAssertFalse(fullscreenBehavior.contains(.transient))
+        XCTAssertTrue(fullscreenBehavior.contains(.stationary))
+
+        XCTAssertTrue(desktopBehavior.contains(.moveToActiveSpace))
         XCTAssertTrue(desktopBehavior.contains(.fullScreenAuxiliary))
-        XCTAssertFalse(desktopBehavior.contains(.moveToActiveSpace))
+        XCTAssertTrue(desktopBehavior.contains(.canJoinAllApplications))
+        XCTAssertFalse(desktopBehavior.contains(.canJoinAllSpaces))
+        XCTAssertTrue(desktopBehavior.contains(.stationary))
+        XCTAssertFalse(desktopBehavior.contains(.transient))
         XCTAssertTrue(MacClippyDockInputMethodPolicy.shouldActivateInputContextForFullscreenSearch())
         XCTAssertFalse(
             MacClippyDockInputMethodPolicy.shouldInspectCandidateWindowsOnKeyEvent()
@@ -313,6 +314,19 @@ final class MacClippyDockInputMethodPolicyTests: XCTestCase {
                 screens: [screen]
             )
         )
+        // MacBook Pro notch menu bar is 44pt.
+        XCTAssertTrue(
+            MacClippyDockInputMethodPolicy.isFullscreenHost(
+                hostPID: 42,
+                windows: [[
+                    kCGWindowOwnerPID as String: 42,
+                    kCGWindowBounds as String: [
+                        "X": 0, "Y": 44, "Width": 1920, "Height": 1036,
+                    ],
+                ]],
+                screens: [screen]
+            )
+        )
         XCTAssertTrue(
             MacClippyDockInputMethodPolicy.isFullscreenHost(
                 hostPID: 42,
@@ -328,12 +342,50 @@ final class MacClippyDockInputMethodPolicyTests: XCTestCase {
         )
         XCTAssertFalse(
             MacClippyDockInputMethodPolicy.shouldHideWhenActiveSpaceChanges(
+                isSearchMode: true,
+                hasMarkedText: false,
+                didActivateApplicationForSearch: false
+            )
+        )
+        XCTAssertFalse(
+            MacClippyDockInputMethodPolicy.shouldHideWhenActiveSpaceChanges(
+                isSearchMode: false,
+                hasMarkedText: true,
+                didActivateApplicationForSearch: false
+            )
+        )
+        XCTAssertFalse(
+            MacClippyDockInputMethodPolicy.shouldHideWhenActiveSpaceChanges(
+                isSearchMode: false,
+                hasMarkedText: false,
                 didActivateApplicationForSearch: true
             )
         )
         XCTAssertTrue(
             MacClippyDockInputMethodPolicy.shouldHideWhenActiveSpaceChanges(
-                didActivateApplicationForSearch: false
+                isSearchMode: false,
+                hasMarkedText: false,
+                didActivateApplicationForSearch: false,
+                isOnActiveSpace: false,
+                isWithinGracePeriod: false
+            )
+        )
+        XCTAssertFalse(
+            MacClippyDockInputMethodPolicy.shouldHideWhenActiveSpaceChanges(
+                isSearchMode: false,
+                hasMarkedText: false,
+                didActivateApplicationForSearch: false,
+                isOnActiveSpace: true,
+                isWithinGracePeriod: false
+            )
+        )
+        XCTAssertFalse(
+            MacClippyDockInputMethodPolicy.shouldHideWhenActiveSpaceChanges(
+                isSearchMode: false,
+                hasMarkedText: false,
+                didActivateApplicationForSearch: false,
+                isOnActiveSpace: false,
+                isWithinGracePeriod: true
             )
         )
         let displayAbovePrimary = CGRect(x: 0, y: 1080, width: 1920, height: 1080)

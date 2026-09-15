@@ -47,9 +47,13 @@ extension MacClippyDockController {
             Task { @MainActor in
                 guard let self, self.monitorGeneration == monitorGeneration else { return }
                 guard MacClippyDockInputMethodPolicy.shouldHideWhenActiveSpaceChanges(
-                    didActivateApplicationForSearch: self.didActivateApplicationForSearch
+                    isSearchMode: self.interactionMode == .search,
+                    hasMarkedText: self.searchFieldHasMarkedText,
+                    didActivateApplicationForSearch: self.didActivateApplicationForSearch,
+                    isOnActiveSpace: self.panel?.isOnActiveSpace ?? false,
+                    isWithinGracePeriod: Date() < self.ignoreSpaceChangesUntil
                 ) else { return }
-                self.hide()
+                self.hide(reason: .spaceChange)
             }
         }
         installKeyWindowObserver(for: dockPanel, monitorGeneration: monitorGeneration)
@@ -79,6 +83,13 @@ extension MacClippyDockController {
     ) {
         guard monitorGeneration == self.monitorGeneration else { return }
 
+        // If the window resigned key because the user switched spaces away from this window,
+        // dismiss immediately without stealing focus back or animating across spaces.
+        if !dockPanel.isOnActiveSpace {
+            hide(reason: .spaceChange)
+            return
+        }
+
         // A nonactivating panel can lose key status before the global monitor
         // observes the click in another app. Resolve the pointer location here
         // first so restoring key ownership does not keep an outside click from
@@ -95,7 +106,7 @@ extension MacClippyDockController {
         // Candidate chrome is another process. Stealing key back here
         // dismisses the option list the user just clicked.
         if isInputMethodCandidate(at: pointerLocation) { return }
-        if interactionMode == .search, searchFieldHasMarkedText { return }
+        if interactionMode == .search, (searchFieldHasMarkedText || searchFieldIsFirstResponder) { return }
         takeKeyboardOwnership(of: dockPanel)
     }
 
@@ -201,7 +212,7 @@ extension MacClippyDockController {
         ) else { return }
         let leavingSearch = interactionMode == .search
         interactionMode = .picker
-        isFullscreenSearchHost = false
+        isFullscreenSearchHost = hostApplicationIsFullscreen()
         applyOverlayLevel(allowsInputMethodCandidates: false)
         if leavingSearch,
            MacClippyDockSearchQueryWritePolicy.shouldClearQueryWhenLeavingSearch() {
@@ -237,7 +248,7 @@ extension MacClippyDockController {
         activateForFullscreenSearchIfNeeded()
         applyOverlayLevel(allowsInputMethodCandidates: true)
         if let dockPanel = panel, dockPanel.isVisible {
-            takeKeyboardOwnership(of: dockPanel, restoreFirstResponder: false)
+            takeKeyboardOwnership(of: dockPanel, restoreFirstResponder: false, retryLimit: 0)
         }
         model.requestSearchFocus()
         focusSearchFieldEditor()
@@ -290,6 +301,10 @@ extension MacClippyDockController {
                   self.monitorGeneration == expectedMonitorGeneration,
                   self.interactionMode == expectedMode else { return }
 
+            if expectedMode == .search, self.searchFieldHasMarkedText || self.searchFieldIsFirstResponder {
+                return
+            }
+
             self.bringOverlayToKeyboard(
                 dockPanel,
                 allowsInputMethodCandidates: expectedMode == .search && self.searchFieldHasMarkedText,
@@ -335,7 +350,7 @@ extension MacClippyDockController {
             allowsInputMethodCandidates: allowsInputMethodCandidates
         )
         let behavior = MacClippyDockInputMethodPolicy.collectionBehavior(
-            hostIsFullscreen: isFullscreenSearchHost && interactionMode == .search
+            hostIsFullscreen: isFullscreenSearchHost
         )
         if panel.collectionBehavior != behavior {
             panel.collectionBehavior = behavior
@@ -356,11 +371,29 @@ extension MacClippyDockController {
     func capturePasteTargetApplicationIfNeeded() {
         guard pasteTargetApplication == nil else { return }
         let front = NSWorkspace.shared.frontmostApplication
-        guard MacClippyDockInputMethodPolicy.shouldCaptureHostApplication(
-            hostBundleID: front?.bundleIdentifier,
+        if let front, MacClippyDockInputMethodPolicy.shouldCaptureHostApplication(
+            hostBundleID: front.bundleIdentifier,
             ownBundleID: Bundle.main.bundleIdentifier
-        ) else { return }
-        pasteTargetApplication = front
+        ) {
+            pasteTargetApplication = front
+            return
+        }
+        if let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] {
+            for win in windows {
+                guard let layer = win[kCGWindowLayer as String] as? Int, layer == 0,
+                      let pid = win[kCGWindowOwnerPID as String] as? Int32,
+                      pid != NSRunningApplication.current.processIdentifier,
+                      let app = NSRunningApplication(processIdentifier: pid),
+                      MacClippyDockInputMethodPolicy.shouldCaptureHostApplication(
+                          hostBundleID: app.bundleIdentifier,
+                          ownBundleID: Bundle.main.bundleIdentifier
+                      ) else {
+                    continue
+                }
+                pasteTargetApplication = app
+                return
+            }
+        }
     }
 
     func restorePasteTargetApplicationIfNeeded(
@@ -404,7 +437,7 @@ extension MacClippyDockController {
         didActivateApplicationForSearch = true
     }
 
-    private func hostApplicationIsFullscreen() -> Bool {
+    func hostApplicationIsFullscreen() -> Bool {
         guard let windows = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly],
             kCGNullWindowID
@@ -424,13 +457,23 @@ extension MacClippyDockController {
             return pid
         }
         let front = NSWorkspace.shared.frontmostApplication
-        guard MacClippyDockInputMethodPolicy.shouldCaptureHostApplication(
-            hostBundleID: front?.bundleIdentifier,
+        if let front, MacClippyDockInputMethodPolicy.shouldCaptureHostApplication(
+            hostBundleID: front.bundleIdentifier,
             ownBundleID: Bundle.main.bundleIdentifier
-        ) else {
-            return nil
+        ) {
+            return front.processIdentifier
         }
-        return front?.processIdentifier
+        if let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] {
+            for win in windows {
+                guard let layer = win[kCGWindowLayer as String] as? Int, layer == 0,
+                      let pid = win[kCGWindowOwnerPID as String] as? Int32,
+                      pid != NSRunningApplication.current.processIdentifier else {
+                    continue
+                }
+                return pid
+            }
+        }
+        return nil
     }
 
     private func hostAccessibilityFullscreen() -> Bool? {
@@ -440,35 +483,43 @@ extension MacClippyDockController {
         }
         let app = AXUIElementCreateApplication(pid)
         var focused: CFTypeRef?
-        let window: AXUIElement
         if AXUIElementCopyAttributeValue(
             app,
             kAXFocusedWindowAttribute as CFString,
             &focused
         ) == .success, let focused {
-            window = unsafeBitCast(focused, to: AXUIElement.self)
-        } else {
-            var windowsRef: CFTypeRef?
-            guard AXUIElementCopyAttributeValue(
-                app,
-                kAXWindowsAttribute as CFString,
-                &windowsRef
-            ) == .success,
-                  let windows = windowsRef as? [AXUIElement],
-                  let first = windows.first else {
-                return nil
+            let window = unsafeBitCast(focused, to: AXUIElement.self)
+            var value: CFTypeRef?
+            if AXUIElementCopyAttributeValue(
+                window,
+                "AXFullScreen" as CFString,
+                &value
+            ) == .success, let val = value as? NSNumber, val.boolValue {
+                return true
             }
-            window = first
         }
-        var value: CFTypeRef?
+        var windowsRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(
-            window,
-            "AXFullScreen" as CFString,
-            &value
-        ) == .success else {
+            app,
+            kAXWindowsAttribute as CFString,
+            &windowsRef
+        ) == .success,
+              let windows = windowsRef as? [AXUIElement] else {
             return nil
         }
-        return (value as? NSNumber)?.boolValue
+        for window in windows {
+            var value: CFTypeRef?
+            if AXUIElementCopyAttributeValue(
+                window,
+                "AXFullScreen" as CFString,
+                &value
+            ) == .success,
+               let val = value as? NSNumber,
+               val.boolValue {
+                return true
+            }
+        }
+        return false
     }
 
     private func activatePasteTarget(_ host: NSRunningApplication) {
@@ -476,6 +527,7 @@ extension MacClippyDockController {
     }
 
     private func exposeSearchFieldToInputMethodIfNeeded() {
+        guard !searchFieldHasMarkedText else { return }
         if MacClippyDockInputMethodPolicy.shouldPerformDeferredSearchFieldFocus(
             searchFieldIsFirstResponder: searchFieldIsFirstResponder,
             hasMarkedText: searchFieldHasMarkedText
@@ -488,11 +540,17 @@ extension MacClippyDockController {
     private func activateInputContextForFullscreenSearchIfNeeded() {
         guard isFullscreenSearchHost,
               interactionMode == .search,
+              !searchFieldHasMarkedText,
               MacClippyDockInputMethodPolicy.shouldActivateInputContextForFullscreenSearch()
         else { return }
         // Activate the context only. A deactivate/activate cycle dismisses
         // the candidate window while leaving marked text in the field.
         NSTextInputContext.current?.activate()
+        if let contentView = panel?.contentView,
+           let field = firstTextField(in: contentView),
+           let editor = field.currentEditor() {
+            editor.inputContext?.activate()
+        }
     }
 
     private var searchFieldIsFirstResponder: Bool {
@@ -502,6 +560,12 @@ extension MacClippyDockController {
         }
         if let field = responder as? NSTextField {
             return field.isEditable
+        }
+        if let contentView = panel?.contentView,
+           let field = firstTextField(in: contentView),
+           let editor = field.currentEditor(),
+           panel?.firstResponder === editor {
+            return true
         }
         return false
     }
@@ -700,9 +764,13 @@ extension MacClippyDockController {
     }
 
     private var markedTextClient: NSTextInputClient? {
+        let fieldEditor = panel?.contentView.flatMap { firstTextField(in: $0) }?.currentEditor()
         let responders: [NSResponder?] = [
             NSApp.keyWindow?.firstResponder,
             panel?.firstResponder,
+            (panel?.firstResponder as? NSTextField)?.currentEditor(),
+            (NSApp.keyWindow?.firstResponder as? NSTextField)?.currentEditor(),
+            fieldEditor,
         ]
         for responder in responders {
             if let client = responder as? NSTextInputClient {

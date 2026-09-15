@@ -274,7 +274,7 @@ final class MacClippyDockPanel: NSPanel {
         // (Maccy / PasteClip keep one stable level). The floating-panel bit
         // never changes.
         level = .mainMenu
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         isReleasedWhenClosed = false
         animationBehavior = .none
     }
@@ -323,6 +323,18 @@ final class MacClippyDockPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
+    private var customFieldEditorInstance: MacClippyDockFieldEditor?
+
+    override func fieldEditor(_ createFlag: Bool, for object: Any?) -> NSText? {
+        if object is NSTextField {
+            if customFieldEditorInstance == nil, createFlag {
+                customFieldEditorInstance = MacClippyDockFieldEditor()
+            }
+            return customFieldEditorInstance
+        }
+        return super.fieldEditor(createFlag, for: object)
+    }
+
     override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
         MainActor.assumeIsolated {
             systemQuickLookHost?.acceptsSystemQuickLook(panel) ?? false
@@ -341,6 +353,58 @@ final class MacClippyDockPanel: NSPanel {
         }
     }
 
+}
+
+@MainActor
+final class MacClippyDockFieldEditor: NSTextView {
+    override init(frame frameRect: NSRect, textContainer: NSTextContainer?) {
+        super.init(frame: frameRect, textContainer: textContainer)
+        isFieldEditor = true
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        isFieldEditor = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
+        var rect = super.firstRect(forCharacterRange: range, actualRange: actualRange)
+        let win = window ?? (delegate as? NSView)?.window
+        let isZero = rect.origin == .zero && rect.size == .zero
+        let onWrongScreen: Bool
+        if let win, let screen = win.screen ?? NSScreen.screens.first(where: { $0.frame.contains(win.frame.origin) }) {
+            onWrongScreen = !screen.frame.intersects(rect)
+        } else {
+            onWrongScreen = false
+        }
+        if isZero || rect.size.height <= 0 || range.location == NSNotFound || onWrongScreen {
+            let strLength = (string as NSString).length
+            let loc = range.location == NSNotFound ? selectedRange().location : range.location
+            let clampedLoc = min(max(0, loc), strLength)
+            let targetRange = NSRange(location: clampedLoc, length: min(range.length, strLength - clampedLoc))
+
+            var insertionRect = NSRect.zero
+            if let lm = layoutManager, let tc = textContainer, lm.numberOfGlyphs > 0 {
+                let glyphRange = lm.glyphRange(forCharacterRange: targetRange, actualCharacterRange: nil)
+                insertionRect = lm.boundingRect(forGlyphRange: glyphRange, in: tc)
+            }
+            if insertionRect.isEmpty || insertionRect.size.height <= 0 {
+                let h = font?.pointSize ?? 16
+                insertionRect = NSRect(x: 0, y: 0, width: 2, height: h)
+            }
+            let windowRect = convert(insertionRect, to: nil)
+            rect = win?.convertToScreen(windowRect) ?? windowRect
+            if let actualRange {
+                actualRange.pointee = targetRange
+            }
+        }
+        return rect
+    }
 }
 
 final class MacClippyPreviewPanel: NSPanel {

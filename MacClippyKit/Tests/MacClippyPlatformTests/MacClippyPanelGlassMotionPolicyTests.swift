@@ -49,5 +49,12 @@ final class MacClippyPanelGlassMotionPolicyTests: XCTestCase {
                 hideReason: .outsideClick
             )
         )
+        XCTAssertTrue(
+            MacClippyPanelGlassMotionPolicy.shouldSkipAnimatedTransition(
+                reduceMotion: false,
+                skipGlassMotion: false,
+                hideReason: .spaceChange
+            )
+        )
     }
 }

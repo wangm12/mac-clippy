@@ -34,13 +34,17 @@ enum MacClippyDockTogglePolicy {
     static func action(
         source: MacClippyDockToggleSource,
         panelIsVisible: Bool,
-        isClosing: Bool
+        isClosing: Bool,
+        isDifferentScreen: Bool = false
     ) -> MacClippyDockToggleAction {
         if isClosing {
             // The status-item mouseDown already hid the panel through the
             // local outside-click monitor. Reopening that same click flashes.
             // A hotkey during the exit animation is a new explicit open.
             return source == .hotKey ? .show : .ignore
+        }
+        if source == .hotKey && panelIsVisible && isDifferentScreen {
+            return .show
         }
         return panelIsVisible ? .hide : .show
     }
@@ -175,6 +179,7 @@ final class MacClippyDockController {
     var pendingDisplayEvent: MacClippyDisplayLifecycleEvent?
     var skipGlassMotionForSession = false
     var ignoreOutsideClicksUntil = Date.distantPast
+    var ignoreSpaceChangesUntil = Date.distantPast
     var statusItemScreenFrame: (() -> CGRect?)?
     var isClosing = false
     var monitorGeneration: UInt = 0

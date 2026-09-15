@@ -57,19 +57,13 @@ public enum MacClippyDockInputMethodPolicy {
     public static func collectionBehavior(
         hostIsFullscreen: Bool
     ) -> NSWindow.CollectionBehavior {
-        var behavior: NSWindow.CollectionBehavior = [
+        [
             .fullScreenAuxiliary,
             .ignoresCycle,
             .canJoinAllApplications,
+            .moveToActiveSpace,
+            .stationary,
         ]
-        if hostIsFullscreen {
-            behavior.insert(.moveToActiveSpace)
-            behavior.insert(.transient)
-        } else {
-            behavior.insert(.canJoinAllSpaces)
-            behavior.insert(.stationary)
-        }
-        return behavior
     }
 
     public static func shouldActivateInputContextForFullscreenSearch() -> Bool {
@@ -80,7 +74,7 @@ public enum MacClippyDockInputMethodPolicy {
         isSearchMode: Bool,
         hostIsFullscreen: Bool
     ) -> Bool {
-        isSearchMode && hostIsFullscreen
+        false
     }
 
     public static func usesFloatingPanel(allowsInputMethodCandidates _: Bool) -> Bool {
@@ -138,9 +132,9 @@ public enum MacClippyDockInputMethodPolicy {
     }
 
     /// Electron / Cursor native fullscreen is often `screen.height` minus
-    /// the 25–38pt menu bar, not the full frame. A maximized desktop
+    /// the 25–44pt menu bar/notch, not the full frame. A maximized desktop
     /// window also drops the Dock (~70pt) and must stay excluded.
-    public static let fullscreenHeightSlop: CGFloat = 40
+    public static let fullscreenHeightSlop: CGFloat = 60
 
     /// A host window that matches a screen is fullscreen. A large browser
     /// window is not — activating over that is what pops the menu bar.
@@ -168,13 +162,20 @@ public enum MacClippyDockInputMethodPolicy {
         }
     }
 
-    /// `activate(ignoringOtherApps:)` over a fullscreen host can emit a
-    /// space-change. Hiding on that notification closes the dock just as
-    /// search starts.
+    /// A space change notification must never dismiss the dock during search or
+    /// active marked-text composition, nor when the dock is on the active space
+    /// or within the presentation grace period.
     public static func shouldHideWhenActiveSpaceChanges(
-        didActivateApplicationForSearch: Bool
+        isSearchMode: Bool = false,
+        hasMarkedText: Bool = false,
+        didActivateApplicationForSearch: Bool = false,
+        isOnActiveSpace: Bool = false,
+        isWithinGracePeriod: Bool = false
     ) -> Bool {
-        !didActivateApplicationForSearch
+        if isWithinGracePeriod { return false }
+        if isOnActiveSpace { return false }
+        if isSearchMode || hasMarkedText { return false }
+        return !didActivateApplicationForSearch
     }
 
     /// `CGWindowList` on every key hitches composition. Overlay is latched

@@ -36,6 +36,7 @@ enum MacClippyMotion {
     static let settingsRevealStep: TimeInterval = 0.035
     static let settingsRevealOffset: CGFloat = 8
     static let outsideClickGraceDuration: TimeInterval = entranceDuration
+    static let spaceChangeGraceDuration: TimeInterval = 0.6
     static let panelOffset: CGFloat = 16
     static let panelTravelPadding: CGFloat = 24
     static let foregroundRevealDelay: TimeInterval = 0.02

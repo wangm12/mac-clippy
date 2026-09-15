@@ -15,7 +15,8 @@ final class MacClippyDockTests: XCTestCase {
         }
 
         XCTAssertTrue(panel.styleMask.contains(.nonactivatingPanel))
-        XCTAssertTrue(panel.collectionBehavior.contains(.canJoinAllSpaces))
+        XCTAssertTrue(panel.collectionBehavior.contains(.moveToActiveSpace))
+        XCTAssertFalse(panel.collectionBehavior.contains(.canJoinAllSpaces))
         XCTAssertTrue(panel.collectionBehavior.contains(.fullScreenAuxiliary))
         XCTAssertEqual(panel.level.rawValue, NSWindow.Level.mainMenu.rawValue)
         XCTAssertEqual(panel.animationBehavior, .none)
@@ -202,20 +203,20 @@ final class MacClippyDockTests: XCTestCase {
         controller.interactionMode = .search
         controller.applyOverlayLevel(allowsInputMethodCandidates: false)
 
-        let yielded = NSWindow.Level.floating
-        XCTAssertEqual(panel.level, yielded)
-        XCTAssertEqual(panel.pinnedOverlayLevel, yielded)
+        let stableLevel = NSWindow.Level.mainMenu
+        XCTAssertEqual(panel.level, stableLevel)
+        XCTAssertEqual(panel.pinnedOverlayLevel, stableLevel)
         XCTAssertTrue(panel.collectionBehavior.contains(.moveToActiveSpace))
-        XCTAssertFalse(panel.collectionBehavior.contains(.canJoinAllSpaces))
+        XCTAssertTrue(panel.collectionBehavior.contains(.fullScreenAuxiliary))
+        XCTAssertTrue(panel.collectionBehavior.contains(.stationary))
+        XCTAssertFalse(panel.collectionBehavior.contains(.transient))
         XCTAssertTrue(panel.isFloatingPanel)
 
-        panel.level = .floating
         XCTAssertTrue(panel.makeFirstResponder(field))
-        XCTAssertEqual(panel.level, yielded)
+        XCTAssertEqual(panel.level, stableLevel)
 
-        panel.level = .mainMenu
         panel.makeKeyAndOrderFront(nil)
-        XCTAssertEqual(panel.level, yielded)
+        XCTAssertEqual(panel.level, stableLevel)
     }
 
     @MainActor
@@ -380,11 +381,21 @@ final class MacClippyDockTests: XCTestCase {
         )
         XCTAssertEqual(
             MacClippyDockTogglePolicy.action(
-                source: .statusItem,
-                panelIsVisible: false,
-                isClosing: false
+                source: .hotKey,
+                panelIsVisible: true,
+                isClosing: false,
+                isDifferentScreen: true
             ),
             .show
+        )
+        XCTAssertEqual(
+            MacClippyDockTogglePolicy.action(
+                source: .hotKey,
+                panelIsVisible: true,
+                isClosing: false,
+                isDifferentScreen: false
+            ),
+            .hide
         )
     }
 

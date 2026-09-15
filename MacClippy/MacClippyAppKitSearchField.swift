@@ -29,7 +29,7 @@ struct MacClippyAppKitSearchField: NSViewRepresentable {
     func updateNSView(_ field: MacClippyIMESearchField, context: Context) {
         context.coordinator.attach(to: field, parent: self)
         field.applyChrome()
-        let composing = context.coordinator.publishComposition(from: field)
+        let composing = (field.currentEditor() as? NSTextInputClient)?.hasMarkedText() ?? false
         let isEditing = field.isEditing
         let programmaticSync =
             programmaticSyncToken != context.coordinator.lastProgrammaticSyncToken
@@ -38,7 +38,8 @@ struct MacClippyAppKitSearchField: NSViewRepresentable {
         if collapseToken > 0 {
             context.coordinator.lastCollapseToken = collapseToken
         }
-        if MacClippyDockSearchQueryWritePolicy.shouldApplyExternalStringToFieldEditor(
+        if !composing,
+           MacClippyDockSearchQueryWritePolicy.shouldApplyExternalStringToFieldEditor(
             hasMarkedText: composing,
             incoming: committedQuery,
             current: field.stringValue,
@@ -47,7 +48,8 @@ struct MacClippyAppKitSearchField: NSViewRepresentable {
         ) {
             field.stringValue = committedQuery
         }
-        if programmaticSync,
+        if !composing,
+           programmaticSync,
            MacClippyDockSearchQueryWritePolicy.shouldApplyProgrammaticCaret(hasMarkedText: composing) {
             let caret = MacClippyDockSearchQueryWritePolicy.caretAfterProgrammaticFocus(
                 query: field.stringValue
@@ -57,7 +59,8 @@ struct MacClippyAppKitSearchField: NSViewRepresentable {
                 queryUTF16Length: (field.stringValue as NSString).length
             )
         }
-        if MacClippyDockSearchQueryWritePolicy.shouldMakeSearchFieldFirstResponder(
+        if !composing,
+           MacClippyDockSearchQueryWritePolicy.shouldMakeSearchFieldFirstResponder(
             wantsFocus: isFocused,
             isAlreadyEditing: isEditing,
             hasMarkedText: composing

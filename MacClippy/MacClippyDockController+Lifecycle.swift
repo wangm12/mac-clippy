@@ -7,10 +7,14 @@ import SwiftUI
 
 extension MacClippyDockController {
     func toggle(source: MacClippyDockToggleSource = .hotKey) {
+        let cursorScreen = screenContainingCursor()
+        let panelScreen = panel.flatMap { screen(for: $0) }
+        let isDifferentScreen = cursorScreen != nil && panelScreen != nil && cursorScreen != panelScreen
         switch MacClippyDockTogglePolicy.action(
             source: source,
             panelIsVisible: panel?.isVisible == true,
-            isClosing: isClosing
+            isClosing: isClosing,
+            isDifferentScreen: isDifferentScreen
         ) {
         case .show:
             if isClosing {
@@ -53,7 +57,7 @@ extension MacClippyDockController {
         model.clearActionFeedback()
         capturePasteTargetApplicationIfNeeded()
         didActivateApplicationForSearch = false
-        isFullscreenSearchHost = false
+        isFullscreenSearchHost = hostApplicationIsFullscreen()
         interactionMode = .picker
         // Bump the session generation so any still-in-flight async completion
         // from a previous dock session cannot mutate state or close this newly
@@ -161,6 +165,7 @@ extension MacClippyDockController {
             )
         }
         ignoreOutsideClicksUntil = Date().addingTimeInterval(MacClippyMotion.outsideClickGraceDuration)
+        ignoreSpaceChangesUntil = Date().addingTimeInterval(MacClippyMotion.spaceChangeGraceDuration)
     }
 
     private func makeDockPanel(frame: NSRect) -> MacClippyDockPanel {
