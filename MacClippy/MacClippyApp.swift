@@ -71,12 +71,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let displayLifecycleCoordinator = MacClippyDisplayLifecycleCoordinator()
 
     private var isLaunchedByXCTest: Bool {
-        let environment = ProcessInfo.processInfo.environment
-        return environment["XCTestConfigurationFilePath"] != nil
-            || environment["XCInjectBundleInto"] != nil
-            || environment["XCTestBundlePath"] != nil
-            || ProcessInfo.processInfo.arguments.contains("-XCTest")
-            || NSClassFromString("XCTestCase") != nil
+        let env = ProcessInfo.processInfo.environment
+        return env["XCTestConfigurationFilePath"] != nil || env["XCInjectBundleInto"] != nil
     }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
