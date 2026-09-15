@@ -71,7 +71,11 @@ private final class MacClippyOCRContinuationBox: @unchecked Sendable {
     }
 }
 
-public final class MacClippyOCRService {
+private struct SendableCGImage: @unchecked Sendable {
+    let image: CGImage
+}
+
+public final class MacClippyOCRService: Sendable {
     // OCR accuracy does not improve enough from decoding a clipboard image at
     // poster-sized resolution to justify the peak memory cost. Keep the full
     // source data for paste/preview; only the Vision input is bounded.
@@ -94,7 +98,6 @@ public final class MacClippyOCRService {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
             return nil
         }
-
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceThumbnailMaxPixelSize: MacClippyOCRSchedulePolicy.recognitionPixelLimit(
@@ -116,8 +119,9 @@ public final class MacClippyOCRService {
 
     public func recognizeLayout(image: CGImage) async throws -> MacClippyOCRResult {
         try Task.checkCancellation()
+        let sendableImage = SendableCGImage(image: image)
         let worker = Task.detached(priority: .utility) {
-            try await Self.recognizeLayoutOnUtilityExecutor(image: image)
+            try await Self.recognizeLayoutOnUtilityExecutor(sendableImage: sendableImage)
         }
         return try await withTaskCancellationHandler(operation: {
             try await worker.value
@@ -126,7 +130,9 @@ public final class MacClippyOCRService {
         })
     }
 
-    private static func recognizeLayoutOnUtilityExecutor(image: CGImage) async throws -> MacClippyOCRResult {
+    private static func recognizeLayoutOnUtilityExecutor(
+        sendableImage: SendableCGImage
+    ) async throws -> MacClippyOCRResult {
         try Task.checkCancellation()
         let continuationBox = MacClippyOCRContinuationBox()
         let request = VNRecognizeTextRequest { request, error in
@@ -155,7 +161,7 @@ public final class MacClippyOCRService {
             try await withCheckedThrowingContinuation { continuation in
                 continuationBox.install(continuation)
                 do {
-                    try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+                    try VNImageRequestHandler(cgImage: sendableImage.image, options: [:]).perform([request])
                 } catch {
                     continuationBox.resume(
                         .failure(Task.isCancelled ? CancellationError() : MacClippyOCRError.requestFailed("vision_request_failed"))

@@ -19,7 +19,7 @@ extension Notification.Name {
     )
 }
 
-public final class MacClippyPasteInjector {
+public final class MacClippyPasteInjector: @unchecked Sendable {
     private struct PasteboardSnapshot {
         let items: [[(type: NSPasteboard.PasteboardType, data: Data)]]
         let isComplete: Bool
@@ -173,7 +173,7 @@ public final class MacClippyPasteInjector {
             return
         }
         var captured: Result<Void, Error>?
-        let opened = gate.withOpenGate {
+        let opened: ()? = gate.withOpenGate {
             captured = Result { try operation() }
         }
         guard opened != nil, let captured else {

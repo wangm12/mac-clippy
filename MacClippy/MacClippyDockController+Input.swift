@@ -488,7 +488,7 @@ extension MacClippyDockController {
             kAXFocusedWindowAttribute as CFString,
             &focused
         ) == .success, let focused {
-            let window = unsafeBitCast(focused, to: AXUIElement.self)
+            let window = unsafeDowncast(focused, to: AXUIElement.self)
             var value: CFTypeRef?
             if AXUIElementCopyAttributeValue(
                 window,
