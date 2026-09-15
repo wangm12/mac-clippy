@@ -536,7 +536,7 @@ extension MacClippyDockController {
     }
 
     var shouldReduceMotion: Bool {
-        MacClippyMotion.shouldReduceMotion(swiftUI: swiftUIReduceMotion)
+        reduceMotionOverride ?? MacClippyMotion.shouldReduceMotion(swiftUI: swiftUIReduceMotion)
     }
 
     // Show a short-lived floating copy toast in the center of the active screen.

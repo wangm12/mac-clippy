@@ -203,6 +203,7 @@ final class MacClippyDockController {
     var previewPerformanceSignpostID: OSSignpostID?
     var interactionMode: MacClippyDockInteractionMode = .picker
     var swiftUIReduceMotion = false
+    var reduceMotionOverride: Bool?
     // Local monitors normally consume picker events before AppKit dispatches
     // them to the panel. The panel remains a fallback for non-key windows and
     // event-routing edge cases, so remember the last consumed event object to

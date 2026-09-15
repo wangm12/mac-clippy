@@ -137,6 +137,7 @@ final class MacClippyDockOutsideClickTests: XCTestCase {
         let panel = MacClippyDockPanel(contentRect: NSRect(x: 0, y: 0, width: 800, height: 360))
         controller.panel = panel
         controller.swiftUIReduceMotion = false
+        controller.reduceMotionOverride = false
         panel.orderFrontRegardless()
         defer { controller.cleanup() }
 

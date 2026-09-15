@@ -7,7 +7,7 @@ import MacClippyPlatform
 
 extension MacClippyRuntime {
     private static let maxHistoryResultCount = 512
-    private static let maxSearchRevisionRetries = 8
+    private static let maxSearchRevisionRetries = 32
     static let searchIndexTextByteLimit = 1 * 1024 * 1024
 
     func history(
@@ -52,6 +52,7 @@ extension MacClippyRuntime {
                     guard revisionRetryCount < Self.maxSearchRevisionRetries else {
                         throw error
                     }
+                    Thread.sleep(forTimeInterval: 0.002)
                 }
             }
         }
