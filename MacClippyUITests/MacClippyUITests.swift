@@ -4,6 +4,7 @@ import XCTest
 final class MacClippyUITests: XCTestCase {
     func testApplicationLaunches() {
         let application = XCUIApplication()
+        application.launchArguments.append("-XCTest")
         application.launch()
 
         XCTAssertTrue(

@@ -74,6 +74,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let environment = ProcessInfo.processInfo.environment
         return environment["XCTestConfigurationFilePath"] != nil
             || environment["XCInjectBundleInto"] != nil
+            || environment["XCTestBundlePath"] != nil
+            || ProcessInfo.processInfo.arguments.contains("-XCTest")
+            || NSClassFromString("XCTestCase") != nil
     }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -85,6 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        guard !isLaunchedByXCTest else { return }
         observeHotKeyDescriptorChanges()
         observeHotKeyRecordingChanges()
         observePresentationPreferencesChanges()
