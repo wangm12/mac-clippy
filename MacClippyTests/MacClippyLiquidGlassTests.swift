@@ -217,8 +217,8 @@ final class MacClippyLiquidGlassTests: XCTestCase {
         XCTAssertTrue(carousel.contains("filterSurfaceTransition"))
 
         let actionBar = try appSource(named: "MacClippyDockActionBar.swift")
-        XCTAssertTrue(actionBar.contains("macClippyGlassButtonStyle") || actionBar.contains("buttonStyle(.glass"))
-        XCTAssertTrue(actionBar.contains("glassProminent") || actionBar.contains("macClippyGlassProminentButtonStyle"))
+        XCTAssertTrue(actionBar.contains("glassEffect") || actionBar.contains("macClippyGlassButtonStyle") || actionBar.contains("buttonStyle(.glass"))
+        XCTAssertTrue(actionBar.contains("Capsule") || actionBar.contains("glassProminent"))
 
         let preview = try appSource(named: "MacClippyDockPreview.swift")
         XCTAssertTrue(preview.contains("previewSurfaceColor"))

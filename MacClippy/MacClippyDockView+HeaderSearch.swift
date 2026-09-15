@@ -31,7 +31,7 @@ struct MacClippyDockSearchFieldWell<Content: View>: View {
             .macClippySearchFieldStyle(elevated: hoveredSearch || isSearchFocused)
             .overlay {
                 Capsule()
-                    .inset(by: isSearchFocused ? 0 : MacClippyDockTheme.pillBorderInset)
+                    .inset(by: MacClippyDockTheme.pillBorderInset)
                     .stroke(
                         searchStrokeColor,
                         lineWidth: searchStrokeWidth
@@ -41,7 +41,7 @@ struct MacClippyDockSearchFieldWell<Content: View>: View {
                 color: isSearchFocused && !highContrast
                     ? MacClippyDockTheme.searchFocusGlow
                     : .clear,
-                radius: isSearchFocused ? 8 : 0
+                radius: 0
             )
             .onContinuousHover { phase in
                 hoveredSearch = MacClippyDockHoverPolicy.isHovering(phase)
@@ -90,47 +90,16 @@ extension MacClippyDockView {
         .macClippyNavContainerShape()
     }
 
-    // Selection-mode header: count + Cancel on the left, primary/secondary
-    // actions in the center, destructive actions on the right. Replaces the
-    // old bottom action bar so the eye never leaves the card area.
+    // Selection-mode header: count + Cancel on the right, action buttons
+    // centered in the row.
     var selectionHeader: some View {
         GeometryReader { proxy in
-            HStack(spacing: 8) {
-                // Left: count badge (with number flip) + Cancel/Esc.
-                HStack(spacing: 8) {
-                    HStack(spacing: 4) {
-                        Text("\(model.selectionCount)")
-                            .id(model.selectionCount)
-                            .transition(MacClippyMotion.numberFlipTransition(reduceMotion: reduceMotion))
-                        Text("selected")
-                    }
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(MacClippyDockTheme.textColor)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(MacClippyDockTheme.accentSoftColor, in: Capsule())
-                    .animation(MacClippyMotion.animation(MacClippyMotion.focusAnimation, reduceMotion: reduceMotion), value: model.selectionCount)
+            let available = proxy.size.width
+            let rightControlsWidth: CGFloat = 250
+            let maxActionsWidth = max(200, available - rightControlsWidth)
 
-                    Button {
-                        model.clearSelection()
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "xmark")
-                                .font(.subheadline.weight(.bold))
-                            Text("Cancel")
-                                .font(.body.weight(.semibold))
-                        }
-                        .foregroundStyle(MacClippyDockTheme.textColor)
-                        .padding(.horizontal, 12)
-                        .frame(height: 36)
-                    }
-                    .macClippyChromeButtonStyle()
-                    .help("Exit selection (Esc)")
-                }
-
-                Spacer(minLength: 8)
-
-                // Center/right actions, horizontally scrollable on narrow widths.
+            ZStack {
+                // Centered actions (Paste all, Queue paste, Copy all, Pin, Delete, Clear)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
                         SelectionBarButton("Paste all", systemImage: "arrow.down.doc", emphasis: .primary) {
@@ -170,8 +139,47 @@ extension MacClippyDockView {
                     .padding(.horizontal, 2)
                     .padding(.vertical, 4)
                 }
-                .frame(maxWidth: proxy.size.width * 0.62, alignment: .trailing)
+                .frame(maxWidth: maxActionsWidth)
+                .frame(maxWidth: .infinity, alignment: .center)
+
+                // Right: count badge (with number flip) + Cancel/Esc.
+                HStack(spacing: 8) {
+                    Spacer()
+
+                    HStack(spacing: 4) {
+                        Text("\(model.selectionCount)")
+                            .id(model.selectionCount)
+                            .transition(MacClippyMotion.numberFlipTransition(reduceMotion: reduceMotion))
+                        Text("selected")
+                    }
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(MacClippyDockTheme.textColor)
+                    .padding(.horizontal, 14)
+                    .frame(height: 36)
+                    .contentShape(Capsule())
+                    .macClippyFilterChipStyle(
+                        selected: true,
+                        hovered: false,
+                        tint: MacClippyDockTheme.accentColor
+                    )
+                    .overlay(
+                        Capsule()
+                            .inset(by: MacClippyDockTheme.pillBorderInset)
+                            .stroke(
+                                MacClippyDockTheme.pillRestBorder,
+                                lineWidth: MacClippyDockTheme.pillBorderWidth
+                            )
+                    )
+                    .contentShape(Capsule())
+                    .animation(MacClippyMotion.animation(MacClippyMotion.focusAnimation, reduceMotion: reduceMotion), value: model.selectionCount)
+
+                    SelectionBarButton("Cancel", systemImage: "xmark") {
+                        model.clearSelection()
+                    }
+                    .help("Exit selection (Esc)")
+                }
             }
+            .frame(width: available, height: proxy.size.height, alignment: .center)
         }
         .onAppear { actionBarAppeared = true }
         .onDisappear { actionBarAppeared = false }
@@ -188,15 +196,37 @@ extension MacClippyDockView {
     var topRow: some View {
         GeometryReader { proxy in
             let available = proxy.size.width
-            let searchWidth = max(240, min(available * 0.42, 640))
-            HStack(spacing: 0) {
+            let searchWidth = min(max(240, available * 0.28), 380)
+            let searchRight = (available + searchWidth) / 2
+
+            ZStack(alignment: .leading) {
+                // 1. Far Left: default filters (All, URL, Image, Snippets)
+                HStack(spacing: 0) {
+                    defaultFilterPillsContainer(maxWidth: max(100, (available - searchWidth) / 2 - 16))
+                    Spacer()
+                }
+
+                // 2. Exact Center: search field (stays centered)
                 searchField
-                    .frame(width: searchWidth, alignment: .leading)
-                searchFilterChipRow
-                    .padding(.leading, chipRowVisible ? 10 : 0)
-                filterPillRow
-                    .padding(.leading, 10)
+                    .frame(width: searchWidth)
+                    .frame(maxWidth: .infinity, alignment: .center)
+
+                // 3. Right of Search Bar: active filter chips (if any) + user created categories (+ New)
+                HStack(spacing: 8) {
+                    Spacer()
+                        .frame(width: searchRight + 8)
+                    searchFilterChipRow
+                    userCategoryPillsContainer(maxWidth: max(60, available - searchRight - 8 - 48))
+                    Spacer()
+                }
+
+                // 4. Far Right: Settings
+                HStack(spacing: 0) {
+                    Spacer()
+                    headerTrailingButtons
+                }
             }
+            .frame(width: available, height: proxy.size.height, alignment: .center)
         }
         .onAppear {
             // Keyboard-first: do not steal focus into the search field on
@@ -220,7 +250,11 @@ extension MacClippyDockView {
                 // Plain magnifying-glass icon, no circular badge (reference).
                 Image(systemName: "magnifyingglass")
                     .font(.body.weight(.medium))
-                    .foregroundStyle(MacClippyDockTheme.muted2Color)
+                    .foregroundStyle(
+                        isSearchFocused
+                            ? MacClippyDockTheme.accentColor
+                            : MacClippyDockTheme.muted2Color
+                    )
                 MacClippyAppKitSearchField(
                     committedQuery: model.displayedSearchText,
                     isFocused: isSearchFocused,
@@ -231,6 +265,7 @@ extension MacClippyDockView {
                         model.commitSearchFieldText(incoming, hasMarkedText: false)
                     },
                     onFocusChange: { focused in
+                        guard isSearchFocused != focused else { return }
                         isSearchFocused = focused
                         onSearchModeChange(focused)
                     },
@@ -248,6 +283,13 @@ extension MacClippyDockView {
                     )
                 searchClearButton
             }
+            .contentShape(Capsule())
+            .onTapGesture {
+                if !isSearchFocused {
+                    isSearchFocused = true
+                    onSearchModeChange(true)
+                }
+            }
             .macClippySearchFieldWell(
                 isSearchFocused: isSearchFocused,
                 highContrast: highContrast,
@@ -259,7 +301,7 @@ extension MacClippyDockView {
     private var mountedSearchFilterChips: [MacClippySearchFilterChip] {
         MacClippyDockSearchQueryWritePolicy.mountedSearchFilterChips(
             applied: model.searchFilterChips,
-            suggestions: isSearchFocused ? model.searchFilterSuggestions : [],
+            suggestions: [],
             excludingTokens: MacClippySmartListPolicy.visibleListTokens(
                 hiddenIDs: model.hiddenSmartListIDs
             )

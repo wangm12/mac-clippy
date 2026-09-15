@@ -113,25 +113,6 @@ private struct MacClippySnippetHoverChrome: ViewModifier {
     func body(content: Content) -> some View {
         let reduceMotion = MacClippyMotion.shouldReduceMotion(swiftUI: accessibilityReduceMotion)
         content
-            .shadow(
-                color: .black.opacity(
-                    MacClippyDockCardHoverChrome.shadowOpacity(
-                        elevated: isFocused,
-                        hovered: isHovered,
-                        isScrolling: isCarouselScrolling
-                    )
-                ),
-                radius: MacClippyDockCardHoverChrome.shadowRadius(
-                    elevated: isFocused,
-                    hovered: isHovered,
-                    isScrolling: isCarouselScrolling
-                ),
-                y: MacClippyDockCardHoverChrome.shadowY(
-                    elevated: isFocused,
-                    hovered: isHovered,
-                    isScrolling: isCarouselScrolling
-                )
-            )
             .scaleEffect(
                 MacClippyDockCardHoverChrome.allowsHoverScale(
                     isScrolling: isCarouselScrolling,

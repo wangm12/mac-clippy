@@ -54,6 +54,7 @@ struct MacClippyDockChromeIconButton: View {
 struct MacClippyDockFilterPill: View {
     let title: String
     let selected: Bool
+    var systemImage: String? = nil
     var isDropTarget = false
     var isDropConfirmed = false
     var accentHex: String? = nil
@@ -73,7 +74,13 @@ struct MacClippyDockFilterPill: View {
                 (isHovered ? MacClippyDockTheme.interactiveFocusBorder : MacClippyDockTheme.pillRestBorder))
         return Button(action: action) {
             HStack(spacing: 6) {
-                if let accentColor {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(
+                            accentColor ?? (isHovered ? MacClippyDockTheme.accentColor : MacClippyDockTheme.textColor)
+                        )
+                } else if let accentColor {
                     Circle()
                         .fill(accentColor)
                         .frame(width: 7, height: 7)
@@ -125,96 +132,146 @@ struct MacClippyDockFilterPill: View {
 }
 
 extension MacClippyDockView {
+    var defaultFilterPillsOnly: some View {
+        HStack(spacing: 6) {
+            filterPill(
+                title: "All",
+                selected: model.isAllFilterSelected
+            ) {
+                model.selectAllFilter()
+            }
+            ForEach(model.visibleSmartLists) { list in
+                filterPill(
+                    title: list.title,
+                    selected: MacClippySmartListPolicy.isActive(list, in: model.query),
+                    systemImage: list.systemImage
+                ) {
+                    model.toggleSmartList(list)
+                }
+                .contextMenu {
+                    Button("Delete", role: .destructive) {
+                        model.hideSmartList(list)
+                    }
+                }
+            }
+            filterPill(
+                title: "Snippets",
+                selected: model.selectedTab == .snippets,
+                systemImage: "text.quote",
+                isDropTarget: dropTargetSnippets,
+                isDropConfirmed: dropConfirmedSnippets
+            ) {
+                model.selectSnippetsFilter()
+            }
+            .onDrop(
+                of: [clipboardRecordDragType],
+                isTargeted: Binding(
+                    get: { dropTargetSnippets },
+                    set: { isTargeted in
+                        dropTargetSnippets = isTargeted
+                    }
+                ),
+                perform: handleSnippetDrop
+            )
+        }
+    }
+
+    func defaultFilterPillsContainer(maxWidth: CGFloat) -> some View {
+        ViewThatFits(in: .horizontal) {
+            defaultFilterPillsOnly
+            ScrollView(.horizontal, showsIndicators: false) {
+                defaultFilterPillsOnly
+            }
+            .frame(maxWidth: maxWidth)
+        }
+    }
+
+    var userCategoryPillsOnly: some View {
+        HStack(spacing: 6) {
+            ForEach(model.pinboards) { pinboard in
+                filterPill(
+                    title: pinboard.name,
+                    selected: model.selectedTab == .pinboard(pinboard.id),
+                    systemImage: "pin.fill",
+                    isDropTarget: dropTargetPinboardID == pinboard.id,
+                    isDropConfirmed: dropConfirmedPinboardID == pinboard.id,
+                    accentHex: pinboard.colorHex
+                ) {
+                    model.selectTab(.pinboard(pinboard.id))
+                }
+                .contextMenu { pinboardContextMenu(pinboard) }
+                .onDrop(
+                    of: [clipboardRecordDragType],
+                    isTargeted: Binding(
+                        get: { dropTargetPinboardID == pinboard.id },
+                        set: { isTargeted in
+                            if isTargeted {
+                                dropTargetPinboardID = pinboard.id
+                            } else if dropTargetPinboardID == pinboard.id {
+                                dropTargetPinboardID = nil
+                            }
+                        }
+                    ),
+                    perform: { providers in handleDrop(providers, on: pinboard) }
+                )
+            }
+            newCategoryButton
+        }
+    }
+
+    func userCategoryPillsContainer(maxWidth: CGFloat) -> some View {
+        ViewThatFits(in: .horizontal) {
+            userCategoryPillsOnly
+            ScrollView(.horizontal, showsIndicators: false) {
+                userCategoryPillsOnly
+            }
+            .frame(maxWidth: maxWidth)
+        }
+    }
+
+    var filterPillsOnly: some View {
+        HStack(spacing: 6) {
+            defaultFilterPillsOnly
+            userCategoryPillsOnly
+        }
+    }
+
+    func filterPillsContainer(maxWidth: CGFloat) -> some View {
+        ViewThatFits(in: .horizontal) {
+            filterPillsOnly
+            ScrollView(.horizontal, showsIndicators: false) {
+                filterPillsOnly
+            }
+            .frame(maxWidth: maxWidth)
+        }
+    }
+
+    var settingsButton: some View {
+        MacClippyDockChromeIconButton(
+            systemImage: "gearshape",
+            glassID: "gear",
+            namespace: headerGlassNamespace,
+            reduceMotion: reduceMotion,
+            highContrast: highContrast,
+            accessibilityLabel: "Settings",
+            accessibilityIdentifier: "macClippy.settingsButton",
+            help: "Settings"
+        ) {
+            MacClippySettingsWindowCoordinator.shared.bringToFront()
+            showAboutPanel()
+        }
+    }
+
+    var headerTrailingButtons: some View {
+        settingsButton
+    }
+
     var filterPillRow: some View {
         HStack(spacing: 6) {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    filterPill(
-                        title: "All",
-                        selected: model.isAllFilterSelected
-                    ) {
-                        model.selectAllFilter()
-                    }
-                    ForEach(model.visibleSmartLists) { list in
-                        filterPill(
-                            title: list.title,
-                            selected: MacClippySmartListPolicy.isActive(list, in: model.query)
-                        ) {
-                            model.toggleSmartList(list)
-                        }
-                        .contextMenu {
-                            Button("Delete", role: .destructive) {
-                                model.hideSmartList(list)
-                            }
-                        }
-                    }
-                    ForEach(model.pinboards) { pinboard in
-                        filterPill(
-                            title: pinboard.name,
-                            selected: model.selectedTab == .pinboard(pinboard.id),
-                            isDropTarget: dropTargetPinboardID == pinboard.id,
-                            isDropConfirmed: dropConfirmedPinboardID == pinboard.id,
-                            accentHex: pinboard.colorHex
-                        ) {
-                            model.selectTab(.pinboard(pinboard.id))
-                        }
-                        .contextMenu { pinboardContextMenu(pinboard) }
-                        .onDrop(
-                            of: [clipboardRecordDragType],
-                            isTargeted: Binding(
-                                get: { dropTargetPinboardID == pinboard.id },
-                                set: { isTargeted in
-                                    if isTargeted {
-                                        dropTargetPinboardID = pinboard.id
-                                    } else if dropTargetPinboardID == pinboard.id {
-                                        dropTargetPinboardID = nil
-                                    }
-                                }
-                            ),
-                            perform: { providers in handleDrop(providers, on: pinboard) }
-                        )
-                    }
-                    // Snippets is a normal filter pill beside All/pinboards so
-                    // it is always reachable from the rail, not hidden behind
-                    // the overflow menu.
-                    filterPill(
-                        title: "Snippets",
-                        selected: model.selectedTab == .snippets,
-                        isDropTarget: dropTargetSnippets,
-                        isDropConfirmed: dropConfirmedSnippets
-                    ) {
-                        model.selectSnippetsFilter()
-                    }
-                    .onDrop(
-                        of: [clipboardRecordDragType],
-                        isTargeted: Binding(
-                            get: { dropTargetSnippets },
-                            set: { isTargeted in
-                                dropTargetSnippets = isTargeted
-                            }
-                        ),
-                        perform: handleSnippetDrop
-                    )
-                }
+                filterPillsOnly
             }
-            // +New is an action, not a filter, so it is split out of the pill
-            // row as its own small icon button. Keeps the filter tabs pure.
-            newCategoryButton
-            // A direct Settings action keeps the gear one click from the
-            // native preferences window.
-            MacClippyDockChromeIconButton(
-                systemImage: "gearshape",
-                glassID: "gear",
-                namespace: headerGlassNamespace,
-                reduceMotion: reduceMotion,
-                highContrast: highContrast,
-                accessibilityLabel: "Settings",
-                accessibilityIdentifier: "macClippy.settingsButton",
-                help: "Settings"
-            ) {
-                MacClippySettingsWindowCoordinator.shared.bringToFront()
-                showAboutPanel()
-            }
+            headerTrailingButtons
         }
     }
 
@@ -243,6 +300,7 @@ extension MacClippyDockView {
     func filterPill(
         title: String,
         selected: Bool,
+        systemImage: String? = nil,
         isDropTarget: Bool = false,
         isDropConfirmed: Bool = false,
         accentHex: String? = nil,
@@ -251,6 +309,7 @@ extension MacClippyDockView {
         MacClippyDockFilterPill(
             title: title,
             selected: selected,
+            systemImage: systemImage,
             isDropTarget: isDropTarget,
             isDropConfirmed: isDropConfirmed,
             accentHex: accentHex,

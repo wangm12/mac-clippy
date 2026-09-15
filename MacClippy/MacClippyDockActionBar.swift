@@ -237,16 +237,6 @@ struct SelectionBarButton: View {
     }
 
     var body: some View {
-        if #available(macOS 26, *) {
-            tahoeBody
-        } else {
-            fallbackBody
-        }
-    }
-
-    @available(macOS 26, *)
-    @ViewBuilder
-    private var tahoeBody: some View {
         let isDestructive = emphasis == .destructive
         let isPrimary = emphasis == .primary
         Button(role: role, action: action) {
@@ -254,57 +244,24 @@ struct SelectionBarButton: View {
                 .font(.body.weight(.semibold))
                 .foregroundStyle(
                     isPrimary ? MacClippyDockTheme.accentForegroundColor :
-                    (isDestructive ? Color.red.opacity(0.9) : MacClippyDockTheme.textColor)
+                    (isDestructive ? (isHovered ? Color.red : Color.red.opacity(0.9)) :
+                        (isHovered ? MacClippyDockTheme.accentColor : MacClippyDockTheme.textColor))
                 )
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .frame(minHeight: 34)
-        }
-        .modifier(MacClippySelectionGlassStyle(isPrimary: isPrimary))
-        .overlay {
-            if !isPrimary {
-                Capsule()
-                    .inset(by: MacClippyDockTheme.pillBorderInset)
-                    .stroke(selectionRingColor(isDestructive: isDestructive), lineWidth: MacClippyDockTheme.pillBorderWidth)
-            }
-        }
-        .onContinuousHover { phase in
-            isHovered = MacClippyDockHoverPolicy.isHovering(phase)
-        }
-        .animation(MacClippyMotion.animation(MacClippyMotion.hoverAnimation, reduceMotion: reduceMotion), value: isHovered)
-    }
-
-    @ViewBuilder
-    private var fallbackBody: some View {
-        let isDestructive = emphasis == .destructive
-        let isPrimary = emphasis == .primary
-        Button(role: role, action: action) {
-            Label(title, systemImage: systemImage)
-                .font(.body.weight(.semibold))
-                .foregroundStyle(
-                    isPrimary ? MacClippyDockTheme.accentForegroundColor :
-                    (isDestructive ? Color.red.opacity(0.9) : MacClippyDockTheme.textColor)
-                )
-                .padding(.horizontal, 11)
-                .padding(.vertical, 6)
-                .frame(minHeight: 28)
-                .background(
-                    isPrimary
-                        ? MacClippyDockTheme.accentColor
-                        : MacClippyDockTheme.cardColor.opacity(isHovered ? 0.85 : 0.55),
-                    in: Capsule()
-                )
-                .overlay(
-                    Capsule()
-                        .inset(by: MacClippyDockTheme.pillBorderInset)
-                        .stroke(
-                            isPrimary ? Color.clear : selectionRingColor(isDestructive: isDestructive),
-                            lineWidth: MacClippyDockTheme.pillBorderWidth
-                        )
-                )
-                .shadow(color: isPrimary ? MacClippyDockTheme.accentColor.opacity(0.25) : .clear, radius: 8, y: 2)
+                .padding(.horizontal, 14)
+                .frame(height: 36)
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .modifier(MacClippySelectionGlassStyle(isPrimary: isPrimary, isDestructive: isDestructive, isHovered: isHovered))
+        .overlay {
+            Capsule()
+                .inset(by: MacClippyDockTheme.pillBorderInset)
+                .stroke(
+                    isPrimary ? Color.clear : selectionRingColor(isDestructive: isDestructive),
+                    lineWidth: MacClippyDockTheme.pillBorderWidth
+                )
+        }
+        .contentShape(Capsule())
         .onContinuousHover { phase in
             isHovered = MacClippyDockHoverPolicy.isHovering(phase)
         }
@@ -323,16 +280,34 @@ struct SelectionBarButton: View {
 
 private struct MacClippySelectionGlassStyle: ViewModifier {
     let isPrimary: Bool
+    let isDestructive: Bool
+    let isHovered: Bool
 
     func body(content: Content) -> some View {
-        if #available(macOS 26, *) {
-            if isPrimary {
-                content.buttonStyle(.glassProminent)
-            } else {
-                content.buttonStyle(.glass)
-            }
+        if isPrimary {
+            content
+                .background(
+                    MacClippyDockTheme.accentColor.opacity(isHovered ? 0.9 : 1.0),
+                    in: Capsule()
+                )
         } else {
-            content.buttonStyle(.plain)
+            let washColor = isDestructive ? Color.red : MacClippyDockTheme.accentColor
+            let washOpacity: Double = isDestructive
+                ? (isHovered ? 0.18 : 0.08)
+                : (isHovered ? 0.14 : 0.04)
+            if #available(macOS 26, *) {
+                content
+                    .background(washColor.opacity(washOpacity), in: Capsule())
+                    .glassEffect(.regular, in: .capsule)
+            } else {
+                content
+                    .background(
+                        isDestructive
+                            ? Color.red.opacity(isHovered ? 0.18 : 0.08)
+                            : MacClippyDockTheme.cardColor.opacity(isHovered ? 0.85 : 0.55),
+                        in: Capsule()
+                    )
+            }
         }
     }
 }
@@ -364,7 +339,7 @@ struct TopRoundedRectangle: Shape {
 // in-dock overlay. Auto-dismissed by the controller after ~1.2s.
 struct MacClippyCopyToastView: View {
     let title: String
-    var showsShadow = true
+    var showsShadow = false
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
     var body: some View {
@@ -380,11 +355,10 @@ struct MacClippyCopyToastView: View {
         .background(
             Capsule()
                 .fill(MacClippyDockTheme.panelStrongColor)
-                .shadow(
-                    color: showsShadow ? .black.opacity(0.18) : .clear,
-                    radius: showsShadow ? 16 : 0,
-                    y: showsShadow ? 6 : 0
-                )
+                .overlay {
+                    Capsule()
+                        .strokeBorder(MacClippyDockTheme.lineColor, lineWidth: 1)
+                }
         )
     }
 }

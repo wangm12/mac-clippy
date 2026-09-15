@@ -4,11 +4,13 @@ public struct MacClippySmartList: Equatable, Sendable, Identifiable {
     public let id: String
     public let title: String
     public let query: String
+    public let systemImage: String?
 
-    public init(id: String, title: String, query: String) {
+    public init(id: String, title: String, query: String, systemImage: String? = nil) {
         self.id = id
         self.title = title
         self.query = query
+        self.systemImage = systemImage
     }
 }
 
@@ -18,8 +20,8 @@ public enum MacClippySmartListPolicy {
     public static let hiddenIDsKey = "com.macallyouneed.macclippy.dock.hiddenSmartLists"
 
     public static let catalog: [MacClippySmartList] = [
-        MacClippySmartList(id: "urls", title: "URL", query: "type:url"),
-        MacClippySmartList(id: "images", title: "Image", query: "type:image")
+        MacClippySmartList(id: "urls", title: "URL", query: "type:url", systemImage: "link"),
+        MacClippySmartList(id: "images", title: "Image", query: "type:image", systemImage: "photo")
     ]
 
     public static func visibleCatalog(hiddenIDs: Set<String>) -> [MacClippySmartList] {

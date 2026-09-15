@@ -154,8 +154,8 @@ extension MacClippyDockController {
                 dockPanel,
                 fromScale: MacClippyMotion.panelContentScaleStart,
                 toScale: 1,
-                fromShadowOpacity: MacClippyMotion.panelShadowOpacityStart,
-                toShadowOpacity: MacClippyMotion.panelShadowOpacity,
+                fromShadowOpacity: 0,
+                toShadowOpacity: 0,
                 duration: MacClippyMotion.entranceDuration,
                 timingFunction: MacClippyMotion.entranceTimingFunction
             )
@@ -464,10 +464,10 @@ extension MacClippyDockController {
     func configurePanelLayer(_ dockPanel: NSWindow) {
         guard let layer = dockPanel.contentView?.layer else { return }
         layer.masksToBounds = false
-        layer.shadowColor = NSColor.black.cgColor
-        layer.shadowOffset = CGSize(width: 0, height: MacClippyMotion.panelShadowYOffset)
-        layer.shadowRadius = MacClippyMotion.panelShadowRadius
-        layer.shadowPath = CGPath(rect: layer.bounds, transform: nil)
+        layer.shadowColor = nil
+        layer.shadowOpacity = 0
+        layer.shadowRadius = 0
+        layer.shadowPath = nil
     }
 
     func setPanelLayerState(
@@ -481,7 +481,7 @@ extension MacClippyDockController {
         contentView.backdropView.layer?.opacity = backdropOpacity
         contentView.foregroundView.layer?.opacity = foregroundOpacity
         contentView.foregroundView.layer?.transform = CATransform3DMakeScale(scale, scale, 1)
-        contentView.layer?.shadowOpacity = shadowOpacity
+        contentView.layer?.shadowOpacity = 0
     }
 
     func animatePanelLayer(
@@ -504,15 +504,10 @@ extension MacClippyDockController {
         scale.timingFunction = timingFunction
         foregroundLayer.add(scale, forKey: "macClippyPanelScale")
 
-        let shadow = CABasicAnimation(keyPath: "shadowOpacity")
-        shadow.fromValue = fromShadowOpacity
-        shadow.toValue = toShadowOpacity
-        shadow.duration = duration
-        shadow.timingFunction = timingFunction
-        containerLayer.add(shadow, forKey: "macClippyPanelShadow")
+        containerLayer.removeAnimation(forKey: "macClippyPanelShadow")
+        containerLayer.shadowOpacity = 0
 
         foregroundLayer.transform = CATransform3DMakeScale(toScale, toScale, 1)
-        containerLayer.shadowOpacity = toShadowOpacity
     }
 
     func animatePanelOpacity(

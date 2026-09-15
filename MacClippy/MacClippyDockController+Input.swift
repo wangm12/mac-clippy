@@ -686,6 +686,9 @@ extension MacClippyDockController {
     func focusSearchFieldEditor() {
         guard let contentView = panel?.contentView,
               let field = firstTextField(in: contentView) else { return }
+        if panel?.firstResponder === field || (field.currentEditor() != nil && panel?.firstResponder === field.currentEditor()) {
+            return
+        }
         panel?.makeFirstResponder(field)
         if let editor = field.currentEditor() {
             panel?.makeFirstResponder(editor)

@@ -6,6 +6,7 @@ final class MacClippySmartListPolicyTests: XCTestCase {
     func testCatalogCoversURLAndImage() {
         XCTAssertEqual(MacClippySmartListPolicy.catalog.map(\.id), ["urls", "images"])
         XCTAssertEqual(MacClippySmartListPolicy.catalog.map(\.title), ["URL", "Image"])
+        XCTAssertEqual(MacClippySmartListPolicy.catalog.map(\.systemImage), ["link", "photo"])
         XCTAssertEqual(
             MacClippySearchGrammar.parse(MacClippySmartListPolicy.catalog[0].query).clauses,
             [.url]

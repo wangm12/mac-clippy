@@ -110,8 +110,8 @@ enum MacClippyDockTheme {
             ? NSColor(calibratedWhite: 1, alpha: 0.08)
             : NSColor(calibratedWhite: 0, alpha: 0.08))
     }
-    static var searchFocusRing: Color { accentColor }
-    static var searchFocusGlow: Color { accentColor.opacity(0.45) }
+    static var searchFocusRing: Color { interactiveFocusBorder }
+    static var searchFocusGlow: Color { .clear }
     static let searchFocusRingWidth: CGFloat = 2
 
     // Preview is its own clear NSPanel. Translucent card/panel fills let the

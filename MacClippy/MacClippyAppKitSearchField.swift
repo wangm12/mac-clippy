@@ -93,15 +93,23 @@ struct MacClippyAppKitSearchField: NSViewRepresentable {
             parent?.onCommit(field.stringValue)
         }
 
+        func notifyFocusChanged(_ focused: Bool) {
+            guard let parent, parent.isFocused != focused else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let parent = self?.parent, parent.isFocused != focused else { return }
+                parent.onFocusChange(focused)
+            }
+        }
+
         func controlTextDidBeginEditing(_ notification: Notification) {
-            parent?.onFocusChange(true)
+            notifyFocusChanged(true)
             if let field = notification.object as? NSTextField {
                 _ = publishComposition(from: field)
             }
         }
 
         func controlTextDidEndEditing(_ notification: Notification) {
-            parent?.onFocusChange(false)
+            notifyFocusChanged(false)
             if let field = notification.object as? NSTextField {
                 _ = publishComposition(from: field)
             }
@@ -115,6 +123,10 @@ struct MacClippyAppKitSearchField: NSViewRepresentable {
             if commandSelector == #selector(NSResponder.insertNewline(_:)) {
                 parent?.onSubmit()
                 return true
+            }
+            if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+                notifyFocusChanged(false)
+                return false
             }
             return false
         }
@@ -136,6 +148,11 @@ final class MacClippyIMESearchField: NSTextField {
         if currentEditor() != nil { return true }
         if window?.firstResponder === self { return true }
         return false
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+        coordinator?.notifyFocusChanged(true)
     }
 
     override init(frame frameRect: NSRect) {

@@ -91,7 +91,7 @@ struct MacClippyDockView: View {
     @Environment(\.colorSchemeContrast) var colorSchemeContrast
     @Environment(\.accessibilityDifferentiateWithoutColor) var differentiateWithoutColor
     @Environment(\.dynamicTypeSize) var dynamicTypeSize
-    @FocusState var isSearchFocused: Bool
+    @State var isSearchFocused = false
     @AccessibilityFocusState var modalAccessibilityFocused: Bool
     @State var dropTargetPinboardID: RecordID?
     @State var dropConfirmedPinboardID: RecordID?

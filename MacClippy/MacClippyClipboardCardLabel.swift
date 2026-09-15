@@ -96,31 +96,6 @@ struct MacClippyClipboardCardLabel: View, Equatable {
                     highContrast: highContrast
                 )
             }
-            .shadow(
-                color: context.isPreviewVisible
-                    ? .clear
-                    : .black.opacity(
-                        MacClippyDockCardHoverChrome.shadowOpacity(
-                            elevated: context.isElevated,
-                            hovered: isHovered,
-                            isScrolling: isCarouselScrolling
-                        )
-                    ),
-                radius: context.isPreviewVisible
-                    ? 0
-                    : MacClippyDockCardHoverChrome.shadowRadius(
-                        elevated: context.isElevated,
-                        hovered: isHovered,
-                        isScrolling: isCarouselScrolling
-                    ),
-                y: context.isPreviewVisible
-                    ? 0
-                    : MacClippyDockCardHoverChrome.shadowY(
-                        elevated: context.isElevated,
-                        hovered: isHovered,
-                        isScrolling: isCarouselScrolling
-                    )
-            )
             .scaleEffect(
                 MacClippyDockCardHoverChrome.allowsHoverScale(
                     isScrolling: isCarouselScrolling,
@@ -225,7 +200,6 @@ struct MacClippyClipboardCardLabel: View, Equatable {
             width: MacClippyDockCardMetrics.sourceBadgeSize,
             height: MacClippyDockCardMetrics.sourceBadgeSize
         )
-        .shadow(color: .black.opacity(0.18), radius: 8, y: 3)
     }
 
     @ViewBuilder
@@ -251,7 +225,6 @@ struct MacClippyClipboardCardLabel: View, Equatable {
                 .foregroundStyle(MacClippyDockTheme.accentColor)
                 .background(Circle().fill(MacClippyDockTheme.cardColor))
                 .frame(width: 22, height: 22)
-                .shadow(color: .black.opacity(0.18), radius: 3, y: 1)
                 .offset(x: 3, y: -3)
                 .transition(
                     reduceMotion

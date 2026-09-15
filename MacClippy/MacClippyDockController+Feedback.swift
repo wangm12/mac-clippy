@@ -9,11 +9,7 @@ extension MacClippyDockController {
         let screen = screenContainingCursor() ?? NSScreen.main
         guard let screen else { return }
 
-        let isFullScreen = isFullScreenSpace(screen)
-        let toastView = MacClippyCopyToastView(
-            title: title,
-            showsShadow: !isFullScreen
-        )
+        let toastView = MacClippyCopyToastView(title: title)
         let hostingView = NSHostingView(rootView: toastView)
         hostingView.wantsLayer = true
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
