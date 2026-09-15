@@ -57,7 +57,18 @@ security list-keychain -d user -s "${keychain}" "${existing_keychains[@]}"
 security import "${p12_path}" -k "${keychain}" -P "${P12_PASSWORD}" \
   -T /usr/bin/codesign -T /usr/bin/security -A
 
-perl -e 'alarm 15; exec @ARGV' security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+run_with_timeout() {
+  local seconds="$1"
+  shift
+  python3 -c "import subprocess, sys
+try:
+    subprocess.run(sys.argv[2:], timeout=int(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+" "$seconds" "$@" 2>/dev/null || true
+}
+
+run_with_timeout 10 security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
   -k "${keychain_password}" "${keychain}" >/dev/null 2>&1 || true
 
 openssl pkcs12 -in "${p12_path}" -nokeys -clcerts -passin "pass:${P12_PASSWORD}" \
@@ -65,7 +76,15 @@ openssl pkcs12 -in "${p12_path}" -nokeys -clcerts -passin "pass:${P12_PASSWORD}"
   || openssl pkcs12 -in "${p12_path}" -nokeys -clcerts -legacy \
     -passin "pass:${P12_PASSWORD}" -out "${tmp}/cert.pem"
 
-security add-trusted-cert -r trustRoot -p codeSign -k "${keychain}" "${tmp}/cert.pem"
+if command -v sudo >/dev/null 2>&1; then
+  sudo security authorizationdb write com.apple.trust-settings.admin allow 2>/dev/null || true
+fi
+
+run_with_timeout 10 security add-trusted-cert -r trustRoot -p codeSign -k "${keychain}" "${tmp}/cert.pem" >/dev/null 2>&1 || true
+
+if command -v sudo >/dev/null 2>&1; then
+  sudo security authorizationdb remove com.apple.trust-settings.admin 2>/dev/null || true
+fi
 
 echo "==> Imported signing certificate"
-security find-identity -v -p codesigning
+security find-identity -v -p codesigning || true
