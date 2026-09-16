@@ -25,20 +25,24 @@ enum MacClippyTestWait {
         MacClippyMainHop.setCaptureForTesting(true)
         defer {
             MacClippyMainHop.flushCapturedWork()
-            MacClippyMainHop.setCaptureForTesting(false)
         }
         let deadline = Date().addingTimeInterval(timeout)
         neutralizeWindowAnimations()
         while Date() < deadline {
             MacClippyMainHop.flushCapturedWork()
+            _ = RunLoop.current.run(mode: .default, before: Date())
+            MacClippyMainHop.flushCapturedWork()
             if condition() {
-                Thread.sleep(forTimeInterval: 0.01)
+                Thread.sleep(forTimeInterval: 0.002)
+                _ = RunLoop.current.run(mode: .default, before: Date())
                 MacClippyMainHop.flushCapturedWork()
                 return
             }
-            _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.005))
+            Thread.sleep(forTimeInterval: 0.002)
+            _ = RunLoop.current.run(mode: .default, before: Date())
             MacClippyMainHop.flushCapturedWork()
         }
+        _ = RunLoop.current.run(mode: .default, before: Date())
         MacClippyMainHop.flushCapturedWork()
         if failOnTimeout, !condition() {
             XCTFail("Timed out waiting for condition", file: file, line: line)
