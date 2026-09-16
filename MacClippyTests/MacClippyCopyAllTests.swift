@@ -279,6 +279,7 @@ final class MacClippyCopyAllTests: XCTestCase {
         model.reload()
         wait { model.historyItems.count == 1 }
 
+        model.beginSession()
         model.focusSelection(at: 0)
         var completionCalled = false
         model.copyFocused(plain: false, completion: {

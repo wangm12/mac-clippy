@@ -23,7 +23,12 @@ enum MacClippyTestWait {
         line: UInt = #line
     ) {
         MacClippyMainHop.setCaptureForTesting(true)
+        defer {
+            MacClippyMainHop.flushCapturedWork()
+            MacClippyMainHop.setCaptureForTesting(false)
+        }
         let deadline = Date().addingTimeInterval(timeout)
+        neutralizeWindowAnimations()
         while Date() < deadline {
             MacClippyMainHop.flushCapturedWork()
             if condition() {
@@ -31,7 +36,6 @@ enum MacClippyTestWait {
                 MacClippyMainHop.flushCapturedWork()
                 return
             }
-            neutralizeWindowAnimations()
             _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.005))
             MacClippyMainHop.flushCapturedWork()
         }
@@ -44,19 +48,11 @@ enum MacClippyTestWait {
     private static func neutralizeWindowAnimations() {
         guard Thread.isMainThread else { return }
         MainActor.assumeIsolated {
-            NSAnimationContext.beginGrouping()
-            NSAnimationContext.current.duration = 0
-            NSAnimationContext.current.allowsImplicitAnimation = false
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
             for window in NSApp.windows {
                 window.animationBehavior = .none
                 window.animations = [:]
                 window.contentView?.layer?.removeAllAnimations()
             }
-            CATransaction.commit()
-            CATransaction.flush()
-            NSAnimationContext.endGrouping()
         }
     }
 }
