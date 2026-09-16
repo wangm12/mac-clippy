@@ -53,7 +53,7 @@ public enum MacClippyCipher {
 public typealias Cipher = MacClippyCipher
 public typealias Envelope = MacClippyEnvelope
 
-public protocol MacClippyKeychainBackend: AnyObject {
+public protocol MacClippyKeychainBackend: AnyObject, Sendable {
     func get(_ account: String) throws -> Data?
     func set(_ data: Data, for account: String) throws
     func delete(_ account: String) throws
@@ -66,7 +66,7 @@ public enum MacClippyKeychainError: Error, Sendable {
     case missingKey
 }
 
-public final class MacClippySystemKeychain: MacClippyKeychainBackend {
+public final class MacClippySystemKeychain: MacClippyKeychainBackend, Sendable {
     public static let service = "com.macallyouneed.macclippy.device-key"
     private let service: String
 
@@ -113,7 +113,7 @@ public final class MacClippySystemKeychain: MacClippyKeychainBackend {
     }
 }
 
-public final class MacClippyInMemoryKeychain: MacClippyKeychainBackend {
+public final class MacClippyInMemoryKeychain: MacClippyKeychainBackend, @unchecked Sendable {
     public static let shared = MacClippyInMemoryKeychain()
     private var values: [String: Data] = [:]
     private let lock = NSLock()
