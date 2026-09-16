@@ -32,7 +32,7 @@ enum MacClippyTestWait {
                 return
             }
             neutralizeWindowAnimations()
-            RunLoop.current.run(until: Date().addingTimeInterval(0.005))
+            _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.005))
             MacClippyMainHop.flushCapturedWork()
         }
         MacClippyMainHop.flushCapturedWork()

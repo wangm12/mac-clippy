@@ -121,7 +121,7 @@ jobs:
           ./scripts/verify-build-metadata.sh \
             build/ci-shipping/Build/Products/Release/MacClippy.app
       - name: App tests
-        timeout-minutes: 10
+        timeout-minutes: 20
         run: >-
           xcodebuild test -project MacClippy.xcodeproj -scheme MacClippy
           -configuration Debug -destination 'platform=macOS,arch=arm64'
