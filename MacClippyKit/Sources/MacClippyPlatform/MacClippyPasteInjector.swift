@@ -295,12 +295,6 @@ public final class MacClippyPasteInjector: @unchecked Sendable {
     }
 
     private func postPasteKeystrokeNotification(_ name: Notification.Name) {
-        if Thread.isMainThread {
-            NotificationCenter.default.post(name: name, object: self)
-        } else {
-            DispatchQueue.main.sync {
-                NotificationCenter.default.post(name: name, object: self)
-            }
-        }
+        NotificationCenter.default.post(name: name, object: self)
     }
 }
