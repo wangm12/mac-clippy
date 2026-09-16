@@ -78,7 +78,8 @@ public final class MacClippySystemKeychain: MacClippyKeychainBackend {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: account
+            kSecAttrAccount as String: account,
+            kSecUseDataProtectionKeychain as String: true
         ]
     }
 
@@ -113,6 +114,7 @@ public final class MacClippySystemKeychain: MacClippyKeychainBackend {
 }
 
 public final class MacClippyInMemoryKeychain: MacClippyKeychainBackend {
+    public static let shared = MacClippyInMemoryKeychain()
     private var values: [String: Data] = [:]
     private let lock = NSLock()
 

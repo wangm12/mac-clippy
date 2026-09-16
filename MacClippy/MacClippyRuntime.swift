@@ -156,7 +156,7 @@ final class MacClippyRuntime: @unchecked Sendable {
 
     init(
         paths: MacClippyPaths? = nil,
-        keychain: MacClippyKeychainBackend = MacClippySystemKeychain(),
+        keychain: MacClippyKeychainBackend? = nil,
         observer: PasteboardObserver? = nil,
         pasteInjector: MacClippyPasteInjector? = nil,
         ocrRecognizer: @escaping @Sendable (Data) async throws -> String = { data in
@@ -177,7 +177,7 @@ final class MacClippyRuntime: @unchecked Sendable {
         let hasExistingStorage = storageURLs.contains {
             FileManager.default.fileExists(atPath: $0.path)
         }
-        let key = try MacClippyDeviceKey(keychain: keychain).deviceKey(
+        let key = try MacClippyDeviceKey(keychain: keychain ?? Self.defaultKeychain(paths: paths)).deviceKey(
             requireExistingStorage: hasExistingStorage
         )
         let deviceID = DeviceID.generate()

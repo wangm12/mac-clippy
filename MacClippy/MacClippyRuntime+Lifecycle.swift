@@ -253,4 +253,11 @@ extension MacClippyRuntime {
             snippetExpander.stop()
         }
     }
+
+    static func defaultKeychain(paths: MacClippyPaths?) -> MacClippyKeychainBackend {
+        if paths != nil || NSClassFromString("XCTestCase") != nil {
+            return MacClippyInMemoryKeychain.shared
+        }
+        return MacClippySystemKeychain()
+    }
 }
