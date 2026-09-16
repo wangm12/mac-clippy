@@ -196,20 +196,28 @@ extension MacClippyRuntime {
     }
 
     func armOCRScheduleTimerIfNeeded() {
-        guard ocrScheduleTimer == nil else { return }
+        MacClippyRuntimeTimerLock.lock.lock()
+        guard ocrScheduleTimer == nil else {
+            MacClippyRuntimeTimerLock.lock.unlock()
+            return
+        }
         let timer = DispatchSource.makeTimerSource(queue: captureQueue)
         timer.schedule(deadline: .now() + 1, repeating: 1)
         timer.setEventHandler { [weak self] in
             self?.startDeferredOCRIfReady()
         }
         ocrScheduleTimer = timer
+        MacClippyRuntimeTimerLock.lock.unlock()
         timer.resume()
     }
 
     func cancelOCRScheduleTimer() {
-        ocrScheduleTimer?.setEventHandler {}
-        ocrScheduleTimer?.cancel()
+        MacClippyRuntimeTimerLock.lock.lock()
+        let timer = ocrScheduleTimer
         ocrScheduleTimer = nil
+        MacClippyRuntimeTimerLock.lock.unlock()
+        timer?.setEventHandler {}
+        timer?.cancel()
     }
 
     private func enqueueOCROperation(

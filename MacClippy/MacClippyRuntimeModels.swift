@@ -321,3 +321,7 @@ final class MacClippyStorageDegradedReasons: @unchecked Sendable {
         lock.unlock()
     }
 }
+
+enum MacClippyRuntimeTimerLock {
+    static let lock = NSLock()
+}

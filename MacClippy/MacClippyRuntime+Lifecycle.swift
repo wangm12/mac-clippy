@@ -223,14 +223,19 @@ extension MacClippyRuntime {
         timer.setEventHandler { [weak self] in
             self?.applyCapturePausePreference()
         }
+        MacClippyRuntimeTimerLock.lock.lock()
         capturePauseTimer = timer
+        MacClippyRuntimeTimerLock.lock.unlock()
         timer.resume()
     }
 
     func cancelCapturePauseTimer() {
-        capturePauseTimer?.setEventHandler {}
-        capturePauseTimer?.cancel()
+        MacClippyRuntimeTimerLock.lock.lock()
+        let timer = capturePauseTimer
         capturePauseTimer = nil
+        MacClippyRuntimeTimerLock.lock.unlock()
+        timer?.setEventHandler {}
+        timer?.cancel()
     }
 
     func refreshPermissionDependentFeatures() {
