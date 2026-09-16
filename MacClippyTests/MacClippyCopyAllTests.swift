@@ -19,25 +19,19 @@ final class MacClippyCopyAllTests: XCTestCase {
     private var runtime: MacClippyRuntime!
 
     override func setUpWithError() throws {
-        fputs("==> [MacClippyCopyAllTests] setUp enter\n", stderr)
+        fputs("==> [MacClippyCopyAllTests] setUp 1: enter\n", stderr)
         tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
             "MacClippyCopyAllTests-\(UUID().uuidString)",
             isDirectory: true
         )
+        fputs("==> [MacClippyCopyAllTests] setUp 2: createDirectory\n", stderr)
         try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
-
-        // A named pasteboard isolates the test from NSPasteboard.general and
-        // from any other test running concurrently. The recording injector
-        // writes here and the assertions read here.
+        fputs("==> [MacClippyCopyAllTests] setUp 3: pasteboard\n", stderr)
         pasteboard = NSPasteboard(name: NSPasteboard.Name("MacClippyCopyAll-\(UUID().uuidString)"))
         postedEventCount = 0
-
+        fputs("==> [MacClippyCopyAllTests] setUp 4: paths\n", stderr)
         let paths = try MacClippyPaths(rootURL: tempRoot)
-        // Custom injector: trusted so `inject` would proceed to post events if
-        // it were ever called; the postEvents closure counts posts so a
-        // regression that routes Copy all through inject is observable. There
-        // is no writeSentinel here because the runtime is never started (the
-        // observer never polls), so recapture suppression is irrelevant.
+        fputs("==> [MacClippyCopyAllTests] setUp 5: injector\n", stderr)
         let injector = MacClippyPasteInjector(
             pasteboard: pasteboard,
             isProcessTrusted: { true },
@@ -45,8 +39,9 @@ final class MacClippyCopyAllTests: XCTestCase {
                 self?.postedEventCount &+= 1
             }
         )
+        fputs("==> [MacClippyCopyAllTests] setUp 6: runtime\n", stderr)
         runtime = try MacClippyRuntime(paths: paths, pasteInjector: injector)
-        fputs("==> [MacClippyCopyAllTests] setUp exit\n", stderr)
+        fputs("==> [MacClippyCopyAllTests] setUp 7: exit\n", stderr)
     }
 
     override func tearDownWithError() throws {
