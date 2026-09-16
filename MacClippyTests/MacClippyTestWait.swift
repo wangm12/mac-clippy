@@ -5,16 +5,6 @@ import XCTest
 @testable import MacClippy
 
 enum MacClippyTestWait {
-    /// Drain dock/runtime completions without leaving leftover window
-    /// animations on the default run loop.
-    ///
-    /// Background pasteboard work can `dispatch_sync` onto main, so this still
-    /// pumps the run loop. It first disables window animations because the
-    /// MacClippy test host crashes in `_NSWindowTransformAnimation` dealloc
-    /// after earlier tests have ordered panels on screen.
-    ///
-    /// Does not fail on timeout: several tests use `wait` only to let a stale
-    /// completion drain, then assert that nothing happened.
     static func until(
         _ condition: () -> Bool,
         timeout: TimeInterval = 2.0,
@@ -22,15 +12,18 @@ enum MacClippyTestWait {
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
+        fputs("==> [MacClippyTestWait] until called (timeout=\(timeout))\n", stderr)
         MacClippyMainHop.setCaptureForTesting(true)
         defer {
             MacClippyMainHop.flushCapturedWork()
         }
         let deadline = Date().addingTimeInterval(timeout)
-        neutralizeWindowAnimations()
+        var iteration = 0
         while Date() < deadline {
+            iteration += 1
             MacClippyMainHop.flushCapturedWork()
             if condition() {
+                fputs("==> [MacClippyTestWait] condition matched (iteration=\(iteration))\n", stderr)
                 Thread.sleep(forTimeInterval: 0.002)
                 MacClippyMainHop.flushCapturedWork()
                 return
@@ -38,20 +31,10 @@ enum MacClippyTestWait {
             Thread.sleep(forTimeInterval: 0.005)
             MacClippyMainHop.flushCapturedWork()
         }
+        fputs("==> [MacClippyTestWait] timed out after \(iteration) iterations\n", stderr)
         MacClippyMainHop.flushCapturedWork()
         if failOnTimeout, !condition() {
             XCTFail("Timed out waiting for condition", file: file, line: line)
-        }
-    }
-
-    private static func neutralizeWindowAnimations() {
-        guard Thread.isMainThread else { return }
-        MainActor.assumeIsolated {
-            for window in NSApp.windows {
-                window.animationBehavior = .none
-                window.animations = [:]
-                window.contentView?.layer?.removeAllAnimations()
-            }
         }
     }
 }

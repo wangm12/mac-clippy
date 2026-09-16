@@ -19,6 +19,7 @@ final class MacClippyCopyAllTests: XCTestCase {
     private var runtime: MacClippyRuntime!
 
     override func setUpWithError() throws {
+        fputs("==> [MacClippyCopyAllTests] setUp enter\n", stderr)
         tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
             "MacClippyCopyAllTests-\(UUID().uuidString)",
             isDirectory: true
@@ -45,15 +46,18 @@ final class MacClippyCopyAllTests: XCTestCase {
             }
         )
         runtime = try MacClippyRuntime(paths: paths, pasteInjector: injector)
+        fputs("==> [MacClippyCopyAllTests] setUp exit\n", stderr)
     }
 
     override func tearDownWithError() throws {
+        fputs("==> [MacClippyCopyAllTests] tearDown enter\n", stderr)
         runtime?.closeForTesting()
         runtime = nil
         pasteboard = nil
         if let tempRoot {
             try? FileManager.default.removeItem(at: tempRoot)
         }
+        fputs("==> [MacClippyCopyAllTests] tearDown exit\n", stderr)
     }
 
     // MARK: - Runtime copyOrdered
@@ -274,22 +278,33 @@ final class MacClippyCopyAllTests: XCTestCase {
 
     @MainActor
     func testCopyFocusedInvokesCompletionAfterSuccessfulCopy() throws {
+        fputs("==> [testCopyFocused] 1 enter\n", stderr)
         let model = MacClippyDockModel(runtime: runtime)
+        fputs("==> [testCopyFocused] 2 model created\n", stderr)
         _ = try runtime.appendTestRecord(.text("copy and close"))
+        fputs("==> [testCopyFocused] 3 record appended\n", stderr)
         model.reload()
+        fputs("==> [testCopyFocused] 4 reload called, waiting for historyItems\n", stderr)
         wait { model.historyItems.count == 1 }
+        fputs("==> [testCopyFocused] 5 historyItems count == 1 ready\n", stderr)
 
         model.beginSession()
+        fputs("==> [testCopyFocused] 6 beginSession done\n", stderr)
         model.focusSelection(at: 0)
+        fputs("==> [testCopyFocused] 7 focusSelection(at: 0) done\n", stderr)
         var completionCalled = false
         model.copyFocused(plain: false, completion: {
+            fputs("==> [testCopyFocused] 8 completion called\n", stderr)
             completionCalled = true
         })
+        fputs("==> [testCopyFocused] 9 copyFocused returned, waiting for completionCalled\n", stderr)
 
         wait { completionCalled }
+        fputs("==> [testCopyFocused] 10 wait completionCalled returned, completionCalled=\(completionCalled)\n", stderr)
 
         XCTAssertTrue(completionCalled)
         XCTAssertEqual(pasteboard.string(forType: .string), "copy and close")
+        fputs("==> [testCopyFocused] 11 exit\n", stderr)
     }
 
     // MARK: - Helpers
