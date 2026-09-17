@@ -20,7 +20,7 @@ XCODEBUILD_FLAGS := \
 	-skipPackagePluginValidation \
 	CODE_SIGNING_ALLOWED=NO
 
-.PHONY: generate build test test-scale test-stress test-tsan test-app-tsan lint ci ci-fast ci-full dmg signing-cert release build-release-unsigned verify-build-metadata archive-signed verify-signed notarize clean
+.PHONY: generate build test test-scale test-stress test-tsan test-app-tsan lint ci ci-fast ci-full dmg signing-cert release release-local build-release-unsigned verify-build-metadata archive-signed verify-signed notarize clean
 
 generate:
 	xcodegen generate
@@ -83,7 +83,10 @@ dmg:
 		./scripts/package-dmg.sh; \
 	fi
 
-release: archive-signed verify-signed
+release:
+	@./scripts/release.sh $(VERSION)
+
+release-local: archive-signed verify-signed
 	@test -n "$${DEVELOPER_IDENTITY:-}" || { echo "error: DEVELOPER_IDENTITY is required for release" >&2; exit 2; }
 	@test -n "$${DEVELOPMENT_TEAM:-}" || { echo "error: DEVELOPMENT_TEAM is required for release" >&2; exit 2; }
 	@test -n "$${NOTARY_PROFILE:-}" || { echo "error: NOTARY_PROFILE is required for release" >&2; exit 2; }

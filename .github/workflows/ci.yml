@@ -40,6 +40,7 @@ jobs:
           test -x scripts/make-signing-cert.sh
           test -x scripts/import-signing-cert.sh
           test -x scripts/resolve-dmg-signing.sh
+          test -x scripts/release.sh
           test -f MacClippyKit/Package.resolved
           test -f MacClippy.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
       - name: Show toolchain

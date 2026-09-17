@@ -75,7 +75,8 @@ jobs:
               gh release create "$tag" "${files[@]}" \
                 --title "Mac Clippy ${tag#v}" \
                 --generate-notes \
-                --verify-tag
+                --verify-tag \
+                --latest
             fi
             exit 0
           fi
