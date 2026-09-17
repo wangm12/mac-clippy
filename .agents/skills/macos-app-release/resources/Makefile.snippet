@@ -1,0 +1,13 @@
+# ------------------------------------------------------------------------------
+# Release & Packaging Targets (provided by macos-app-release skill)
+# ------------------------------------------------------------------------------
+.PHONY: dmg release clean-dist
+
+dmg:
+	./scripts/package-dmg.sh
+
+release:
+	@./scripts/release.sh $(VERSION)
+
+clean-dist:
+	rm -rf dist .build/*-dmg-staging

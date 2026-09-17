@@ -1,0 +1,112 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  release:
+    name: Build & Release
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Import code signing certificate (optional)
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          if [[ -f ./scripts/import-signing-cert.sh ]]; then
+            ./scripts/import-signing-cert.sh
+          fi
+
+      - name: Package Release DMG and ZIP
+        run: |
+          if grep -q "^dmg:" Makefile 2>/dev/null; then
+            make dmg
+          else
+            ./scripts/package-dmg.sh
+          fi
+
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-installers
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - name: Publish to GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          short_sha="${GITHUB_SHA::7}"
+          
+          # Find generated installer files
+          files=(dist/*.dmg dist/*.zip)
+          if [[ -f dist/SHA256SUMS.txt ]]; then
+            files+=(dist/SHA256SUMS.txt)
+          fi
+
+          echo "Files to publish:"
+          ls -lh "${files[@]}"
+
+          # Extract app name from DMG file
+          dmg_file="$(ls dist/*.dmg | head -n 1)"
+          app_name="$(basename "${dmg_file}" .dmg)"
+
+          # Case 1: Tag Push -> Official Stable Release
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            tag="${GITHUB_REF_NAME}"
+            version="${tag#v}"
+            if gh release view "$tag" >/dev/null 2>&1; then
+              echo "==> Updating existing release $tag..."
+              gh release upload "$tag" "${files[@]}" --clobber
+            else
+              echo "==> Creating stable release $tag..."
+              gh release create "$tag" "${files[@]}" \
+                --title "${app_name} ${version}" \
+                --generate-notes \
+                --verify-tag \
+                --latest
+            fi
+            exit 0
+          fi
+
+          # Case 2: Branch Push -> Rolling Nightly Pre-release
+          notes="Rolling build from commit ${GITHUB_SHA} on branch ${GITHUB_REF_NAME}."
+          if gh release view nightly >/dev/null 2>&1; then
+            echo "==> Updating rolling nightly release..."
+            gh release upload nightly "${files[@]}" --clobber
+            gh release edit nightly \
+              --title "${app_name} nightly (${short_sha})" \
+              --notes "$notes" \
+              --prerelease \
+              --latest=false \
+              --target "${GITHUB_SHA}"
+          else
+            echo "==> Creating rolling nightly release..."
+            gh release create nightly "${files[@]}" \
+              --title "${app_name} nightly (${short_sha})" \
+              --notes "$notes" \
+              --prerelease \
+              --latest=false \
+              --target "${GITHUB_SHA}"
+          fi
