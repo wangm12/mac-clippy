@@ -10,6 +10,7 @@ public enum MacClippyLoginItemPolicy {
         bundlePath.contains("/DerivedData/")
             || bundlePath.contains("/.build/")
             || bundlePath.contains("/Build/Products/Debug/")
+            || bundlePath.contains("/build/")
     }
 
     public static func warningMessage(

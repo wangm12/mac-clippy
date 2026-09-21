@@ -74,31 +74,52 @@ public final class MacClippySystemKeychain: MacClippyKeychainBackend, Sendable {
         self.service = service
     }
 
-    private func query(account: String) -> [String: Any] {
-        [
+    private func query(account: String, useDataProtection: Bool = true) -> [String: Any] {
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecUseDataProtectionKeychain as String: true
+            kSecAttrAccount as String: account
         ]
+        if useDataProtection {
+            query[kSecUseDataProtectionKeychain as String] = true
+        }
+        return query
     }
 
     public func get(_ account: String) throws -> Data? {
-        var request = query(account: account)
+        var request = query(account: account, useDataProtection: true)
         request[kSecReturnData as String] = true
         request[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
         let status = SecItemCopyMatching(request as CFDictionary, &item)
-        if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess, let data = item as? Data else {
+        if status == errSecSuccess, let data = item as? Data {
+            return data
+        }
+        if status != errSecItemNotFound {
             throw MacClippyKeychainError.read(status)
         }
-        return data
+
+        var legacyRequest = query(account: account, useDataProtection: false)
+        legacyRequest[kSecReturnData as String] = true
+        legacyRequest[kSecMatchLimit as String] = kSecMatchLimitOne
+        var legacyItem: CFTypeRef?
+        let legacyStatus = SecItemCopyMatching(legacyRequest as CFDictionary, &legacyItem)
+        if legacyStatus == errSecItemNotFound { return nil }
+        guard legacyStatus == errSecSuccess, let legacyData = legacyItem as? Data else {
+            throw MacClippyKeychainError.read(legacyStatus)
+        }
+
+        // Opportunistically cache in modern Data Protection Keychain without touching legacy item
+        var dpRequest = query(account: account, useDataProtection: true)
+        dpRequest[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        dpRequest[kSecValueData as String] = legacyData
+        _ = SecItemAdd(dpRequest as CFDictionary, nil)
+        return legacyData
     }
 
     public func set(_ data: Data, for account: String) throws {
         try delete(account)
-        var request = query(account: account)
+        var request = query(account: account, useDataProtection: true)
         request[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         request[kSecValueData as String] = data
         let status = SecItemAdd(request as CFDictionary, nil)
@@ -106,7 +127,7 @@ public final class MacClippySystemKeychain: MacClippyKeychainBackend, Sendable {
     }
 
     public func delete(_ account: String) throws {
-        let status = SecItemDelete(query(account: account) as CFDictionary)
+        let status = SecItemDelete(query(account: account, useDataProtection: true) as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw MacClippyKeychainError.delete(status)
         }

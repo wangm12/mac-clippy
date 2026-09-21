@@ -96,6 +96,7 @@ targets:
       - path: MacClippy/MacClippySearchFieldCaretAnchor.swift
       - path: MacClippy/MacClippyAppKitSearchField.swift
       - path: MacClippy/MacClippyDockView+FilterDrop.swift
+      - path: MacClippy/MacClippyDockView+DropActions.swift
       - path: MacClippy/MacClippyDockView+CarouselModal.swift
       - path: MacClippy/MacClippyDockCard.swift
       - path: MacClippy/MacClippyClipboardCardLabel.swift
@@ -143,6 +144,11 @@ targets:
       properties:
         NSAccessibilityUsageDescription: Mac Clippy uses Accessibility access to paste clipboard items into the active app and expand Snippets.
         NSInputMonitoringUsageDescription: Mac Clippy uses Input Monitoring to detect the global clipboard shortcut and Snippet trigger keystrokes.
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: com.macallyouneed.macclippy.record-id
+            UTTypeDescription: MacClippy Record ID
+            UTTypeConformsTo:
+              - public.data
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.macallyouneed.macclippy

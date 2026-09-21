@@ -107,4 +107,11 @@ extension MacClippyRuntime {
             try pinboardStore.addItem(recordID, to: pinboardID)
         }
     }
+
+    func unpin(recordID: RecordID, from pinboardID: RecordID) throws {
+        try withStoreLock {
+            _ = try pinboardStore.fetch(id: pinboardID)
+            try pinboardStore.removeItem(recordID, from: pinboardID)
+        }
+    }
 }

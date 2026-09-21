@@ -1,4 +1,7 @@
 SHELL := /bin/bash
+export PATH := /opt/homebrew/bin:/usr/local/bin:$(PATH)
+.DEFAULT_GOAL := build
+
 
 PROJECT := MacClippy.xcodeproj
 SCHEME := MacClippy
@@ -127,6 +130,7 @@ notarize:
 
 run: build
 	@test -d "$(DEBUG_APP)" || { echo "error: expected app at $(DEBUG_APP)" >&2; exit 1; }
+	@killall MacClippy 2>/dev/null || true
 	open -n "$(DEBUG_APP)"
 
 clean:

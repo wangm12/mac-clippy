@@ -22,5 +22,18 @@
 	<string>Mac Clippy uses Accessibility access to paste clipboard items into the active app and expand Snippets.</string>
 	<key>NSInputMonitoringUsageDescription</key>
 	<string>Mac Clippy uses Input Monitoring to detect the global clipboard shortcut and Snippet trigger keystrokes.</string>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>MacClippy Record ID</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.macallyouneed.macclippy.record-id</string>
+		</dict>
+	</array>
 </dict>
 </plist>

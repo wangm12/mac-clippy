@@ -146,15 +146,31 @@ extension MacClippyClipboardStore {
     // id is not present so the runtime never reindexes a row that was deleted
     // concurrently.
     @discardableResult
-    public func setCustomLabel(id: RecordID, label: String?, now: Date = Date()) throws -> ClipboardItemMeta {
+    public func setCustomLabel(id: RecordID, label: String?) throws -> ClipboardItemMeta {
+        try setCustomLabelInternal(id: id, label: label, now: nil)
+    }
+
+    @discardableResult
+    public func setCustomLabel(id: RecordID, label: String?, now: Date) throws -> ClipboardItemMeta {
+        try setCustomLabelInternal(id: id, label: label, now: now)
+    }
+
+    private func setCustomLabelInternal(id: RecordID, label: String?, now: Date?) throws -> ClipboardItemMeta {
         let trimmed = label?.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalized = (trimmed?.isEmpty ?? true) ? nil : trimmed
-        let milliseconds = Self.milliseconds(now)
         try database.queue.write { connection in
-            try connection.execute(
-                sql: "UPDATE clipboard_records SET custom_label = ?, modified = ? WHERE id = ?",
-                arguments: [normalized, milliseconds, id.rawValue]
-            )
+            if let now {
+                let milliseconds = Self.milliseconds(now)
+                try connection.execute(
+                    sql: "UPDATE clipboard_records SET custom_label = ?, modified = ? WHERE id = ?",
+                    arguments: [normalized, milliseconds, id.rawValue]
+                )
+            } else {
+                try connection.execute(
+                    sql: "UPDATE clipboard_records SET custom_label = ? WHERE id = ?",
+                    arguments: [normalized, id.rawValue]
+                )
+            }
             // changesCount is the row count touched by the UPDATE that just
             // ran. A zero count means the id was not present; surface
             // recordNotFound so the runtime never reindexes a row that was

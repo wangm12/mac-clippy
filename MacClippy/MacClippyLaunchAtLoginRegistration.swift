@@ -57,6 +57,11 @@ enum MacClippyLaunchAtLoginRegistration {
         let current = URL(fileURLWithPath: currentPath).standardizedFileURL.path
         return NSWorkspace.shared.urlsForApplications(withBundleIdentifier: bundleIdentifier)
             .map { $0.standardizedFileURL.path }
-            .filter { $0 != current }
+            .filter { path in
+                path != current
+                    && !path.hasPrefix("/Volumes/")
+                    && !path.contains("/.Trash/")
+                    && !MacClippyLoginItemPolicy.isDevelopmentBuildPath(path)
+            }
     }
 }

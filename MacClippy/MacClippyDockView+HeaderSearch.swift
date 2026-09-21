@@ -11,12 +11,7 @@ struct MacClippyDockSearchFieldWell<Content: View>: View {
 
     @State private var hoveredSearch = false
 
-    init(
-        isSearchFocused: Bool,
-        highContrast: Bool,
-        reduceMotion: Bool,
-        @ViewBuilder content: () -> Content
-    ) {
+    init(isSearchFocused: Bool, highContrast: Bool, reduceMotion: Bool, @ViewBuilder content: () -> Content) {
         self.isSearchFocused = isSearchFocused
         self.highContrast = highContrast
         self.reduceMotion = reduceMotion
@@ -32,15 +27,10 @@ struct MacClippyDockSearchFieldWell<Content: View>: View {
             .overlay {
                 Capsule()
                     .inset(by: MacClippyDockTheme.pillBorderInset)
-                    .stroke(
-                        searchStrokeColor,
-                        lineWidth: searchStrokeWidth
-                    )
+                    .stroke(searchStrokeColor, lineWidth: searchStrokeWidth)
             }
             .shadow(
-                color: isSearchFocused && !highContrast
-                    ? MacClippyDockTheme.searchFocusGlow
-                    : .clear,
+                color: isSearchFocused && !highContrast ? MacClippyDockTheme.searchFocusGlow : .clear,
                 radius: 0
             )
             .onContinuousHover { phase in
@@ -60,16 +50,11 @@ struct MacClippyDockSearchFieldWell<Content: View>: View {
         if highContrast {
             return isSearchFocused ? MacClippyDockTheme.textColor : MacClippyDockTheme.lineColor
         }
-        if isSearchFocused {
-            return MacClippyDockTheme.searchFocusRing
-        }
-        return MacClippyDockTheme.searchFieldEdge
+        return isSearchFocused ? MacClippyDockTheme.searchFocusRing : MacClippyDockTheme.searchFieldEdge
     }
 
     private var searchStrokeWidth: CGFloat {
-        if highContrast {
-            return isSearchFocused ? 2 : 1
-        }
+        if highContrast { return isSearchFocused ? 2 : 1 }
         return isSearchFocused ? MacClippyDockTheme.searchFocusRingWidth : 1
     }
 }
@@ -121,7 +106,14 @@ extension MacClippyDockView {
                             model.copySelectedAll()
                         }
                         .staggeredAppearance(index: 2, appeared: actionBarAppeared, reduceMotion: reduceMotion)
-                        if model.batchPinTarget != nil {
+                        if case let .pinboard(boardID) = model.selectedTab,
+                           let board = model.pinboards.first(where: { $0.id == boardID }) {
+                            SelectionBarButton("Remove from list", systemImage: "pin.slash") {
+                                model.unpinSelected()
+                            }
+                            .help("Remove selected items from \(board.name)")
+                            .staggeredAppearance(index: 3, appeared: actionBarAppeared, reduceMotion: reduceMotion)
+                        } else if model.batchPinTarget != nil {
                             SelectionBarButton("Pin", systemImage: "pin") {
                                 model.pinSelected()
                             }
@@ -185,14 +177,8 @@ extension MacClippyDockView {
         .onDisappear { actionBarAppeared = false }
     }
 
-    // Single horizontal top row: the search field takes about 42% of the
-    // available row width, the category/tag pills share the same row to its
-    // right. Cmd+K focuses the SwiftUI search field (wired in the dock
-    // controller); the field no longer auto-focuses on dock show — the dock
-    // is keyboard-first and the first card is focusable. Settings opens via
-    // a direct gear button. GeometryReader sizes the search field to ~42% of
-    // the row width (clamped so it stays usable on very narrow and very wide
-    // screens) without animating width on screen changes.
+    // Single horizontal top row: smart lists & snippets on left, centered search field,
+    // and All filter + search chips + user category pills (+ New) on the right.
     var topRow: some View {
         GeometryReader { proxy in
             let available = proxy.size.width
@@ -200,10 +186,11 @@ extension MacClippyDockView {
             let searchRight = (available + searchWidth) / 2
 
             ZStack(alignment: .leading) {
-                // 1. Far Left: default filters (All, URL, Image, Snippets)
+                // 1. Far Left: default filters (URL, Image, Snippets)
                 HStack(spacing: 0) {
                     defaultFilterPillsContainer(maxWidth: max(100, (available - searchWidth) / 2 - 16))
                     Spacer()
+                        .allowsHitTesting(false)
                 }
 
                 // 2. Exact Center: search field (stays centered)
@@ -211,18 +198,22 @@ extension MacClippyDockView {
                     .frame(width: searchWidth)
                     .frame(maxWidth: .infinity, alignment: .center)
 
-                // 3. Right of Search Bar: active filter chips (if any) + user created categories (+ New)
+                // 3. Right of Search Bar: All tag, active filter chips, user created categories (+ New)
                 HStack(spacing: 8) {
                     Spacer()
                         .frame(width: searchRight + 8)
+                        .allowsHitTesting(false)
+                    allFilterPill
                     searchFilterChipRow
-                    userCategoryPillsContainer(maxWidth: max(60, available - searchRight - 8 - 48))
+                    userCategoryPillsContainer(maxWidth: max(60, available - searchRight - 8 - 48 - 60))
                     Spacer()
+                        .allowsHitTesting(false)
                 }
 
                 // 4. Far Right: Settings
                 HStack(spacing: 0) {
                     Spacer()
+                        .allowsHitTesting(false)
                     headerTrailingButtons
                 }
             }
@@ -395,16 +386,10 @@ extension MacClippyDockView {
 
 private extension View {
     func macClippySearchFieldWell(
-        isSearchFocused: Bool,
-        highContrast: Bool,
-        reduceMotion: Bool
+        isSearchFocused: Bool, highContrast: Bool, reduceMotion: Bool
     ) -> some View {
         MacClippyDockSearchFieldWell(
-            isSearchFocused: isSearchFocused,
-            highContrast: highContrast,
-            reduceMotion: reduceMotion
-        ) {
-            self
-        }
+            isSearchFocused: isSearchFocused, highContrast: highContrast, reduceMotion: reduceMotion
+        ) { self }
     }
 }

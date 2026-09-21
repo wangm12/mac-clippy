@@ -326,7 +326,7 @@ final class MacClippyDockPanel: NSPanel {
     private var customFieldEditorInstance: MacClippyDockFieldEditor?
 
     override func fieldEditor(_ createFlag: Bool, for object: Any?) -> NSText? {
-        if object is NSTextField {
+        if object is MacClippyIMESearchField {
             if customFieldEditorInstance == nil, createFlag {
                 customFieldEditorInstance = MacClippyDockFieldEditor()
             }

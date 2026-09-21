@@ -78,4 +78,22 @@ final class MacClippyDockFieldEditorTests: XCTestCase {
         XCTAssertGreaterThan(notFoundRect.origin.y, 0)
         XCTAssertGreaterThan(notFoundRect.size.height, 0)
     }
+
+    @MainActor
+    func testFieldEditorOnlyReturnedForMacClippyIMESearchField() {
+        let panel = MacClippyDockPanel(contentRect: NSRect(x: 200, y: 300, width: 600, height: 100))
+        let searchField = MacClippyIMESearchField()
+        let customEditor = panel.fieldEditor(true, for: searchField)
+        XCTAssertTrue(
+            customEditor is MacClippyDockFieldEditor,
+            "IME search field must receive MacClippyDockFieldEditor"
+        )
+
+        let standardField = NSTextField()
+        let standardEditor = panel.fieldEditor(true, for: standardField)
+        XCTAssertFalse(
+            standardEditor is MacClippyDockFieldEditor,
+            "Generic NSTextField must NOT receive MacClippyDockFieldEditor"
+        )
+    }
 }

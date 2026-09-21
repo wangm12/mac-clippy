@@ -54,10 +54,10 @@ struct MacClippyDockChromeIconButton: View {
 struct MacClippyDockFilterPill: View {
     let title: String
     let selected: Bool
-    var systemImage: String? = nil
+    var systemImage: String?
     var isDropTarget = false
     var isDropConfirmed = false
-    var accentHex: String? = nil
+    var accentHex: String?
     let reduceMotion: Bool
     let highContrast: Bool
     let action: () -> Void
@@ -66,9 +66,8 @@ struct MacClippyDockFilterPill: View {
 
     var body: some View {
         let accentColor = accentHex.map { Color(macClippyHex: $0) }
-        let dropScale = reduceMotion ? 1 :
-            (isDropConfirmed ? 1.08 : (isDropTarget ? 1.05 : 1))
-        let ringWidth: CGFloat = highContrast ? 2 : (isDropConfirmed ? 2.5 : (isDropTarget ? 2 : MacClippyDockTheme.pillBorderWidth))
+        let ringWidth: CGFloat = highContrast ? 2 :
+            (isDropConfirmed ? 2.5 : (isDropTarget ? 2 : MacClippyDockTheme.pillBorderWidth))
         let ringColor = isDropConfirmed ? (accentColor ?? MacClippyDockTheme.accentColor) :
             (isDropTarget ? MacClippyDockTheme.interactiveStrongBorder :
                 (isHovered ? MacClippyDockTheme.interactiveFocusBorder : MacClippyDockTheme.pillRestBorder))
@@ -97,7 +96,7 @@ struct MacClippyDockFilterPill: View {
             .contentShape(Capsule())
         }
         .macClippyFilterChipStyle(
-            selected: selected || isDropConfirmed,
+            selected: selected || isDropConfirmed || isDropTarget,
             hovered: isHovered,
             tint: accentColor ?? MacClippyDockTheme.accentColor
         )
@@ -109,7 +108,6 @@ struct MacClippyDockFilterPill: View {
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityValue(selected ? "Selected" : "")
         .contentShape(Capsule())
-        .scaleEffect(dropScale)
         .animation(
             MacClippyMotion.animation(MacClippyMotion.hoverAnimation, reduceMotion: reduceMotion),
             value: isDropTarget
@@ -121,7 +119,7 @@ struct MacClippyDockFilterPill: View {
         .animation(nil, value: selected)
         .animation(nil, value: isHovered)
         .transaction { transaction in
-            if !isDropTarget && !isDropConfirmed {
+            if reduceMotion {
                 transaction.animation = nil
             }
         }
@@ -132,14 +130,17 @@ struct MacClippyDockFilterPill: View {
 }
 
 extension MacClippyDockView {
+    var allFilterPill: some View {
+        filterPill(
+            title: "All",
+            selected: model.isAllFilterSelected
+        ) {
+            model.selectAllFilter()
+        }
+    }
+
     var defaultFilterPillsOnly: some View {
         HStack(spacing: 6) {
-            filterPill(
-                title: "All",
-                selected: model.isAllFilterSelected
-            ) {
-                model.selectAllFilter()
-            }
             ForEach(model.visibleSmartLists) { list in
                 filterPill(
                     title: list.title,
@@ -164,7 +165,7 @@ extension MacClippyDockView {
                 model.selectSnippetsFilter()
             }
             .onDrop(
-                of: [clipboardRecordDragType],
+                of: clipboardRecordDragTypes,
                 isTargeted: Binding(
                     get: { dropTargetSnippets },
                     set: { isTargeted in
@@ -201,7 +202,7 @@ extension MacClippyDockView {
                 }
                 .contextMenu { pinboardContextMenu(pinboard) }
                 .onDrop(
-                    of: [clipboardRecordDragType],
+                    of: clipboardRecordDragTypes,
                     isTargeted: Binding(
                         get: { dropTargetPinboardID == pinboard.id },
                         set: { isTargeted in
@@ -231,6 +232,7 @@ extension MacClippyDockView {
 
     var filterPillsOnly: some View {
         HStack(spacing: 6) {
+            allFilterPill
             defaultFilterPillsOnly
             userCategoryPillsOnly
         }
@@ -320,82 +322,14 @@ extension MacClippyDockView {
     }
 
     var clipboardRecordDragType: UTType {
-        UTType(exportedAs: MacClippyCardDragPolicy.recordTypeIdentifier)
+        UTType(exportedAs: MacClippyCardDragPolicy.recordTypeIdentifier, conformingTo: .data)
     }
 
-    func handleDrop(_ providers: [NSItemProvider], on pinboard: MacClippyPinboardEntry) -> Bool {
-        let expectedSession = model.currentSessionGeneration
-        guard let typeIdentifier = MacClippyClipboardDropPolicy.preferredTypeIdentifier(
-            among: providers.flatMap(\.registeredTypeIdentifiers)
-        ),
-        let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(typeIdentifier) }) else {
-            return false
+    var clipboardRecordDragTypes: [UTType] {
+        var types: [UTType] = [clipboardRecordDragType]
+        if let type = UTType(MacClippyCardDragPolicy.recordTypeIdentifier), !types.contains(type) {
+            types.append(type)
         }
-        provider.loadDataRepresentation(forTypeIdentifier: typeIdentifier) { data, _ in
-            guard let data,
-                  let payload = String(data: data, encoding: .utf8),
-                  let recordID = MacClippyClipboardDropPolicy.recordID(from: payload) else { return }
-            DispatchQueue.main.async {
-                model.pin(recordID: recordID, to: pinboard, expectedSession: expectedSession) { success in
-                    guard success, model.currentSessionGeneration == expectedSession else { return }
-                    dropConfirmationGeneration &+= 1
-                    let confirmationGeneration = dropConfirmationGeneration
-                    dropConfirmedPinboardID = pinboard.id
-                    Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: UInt64(MacClippyMotion.dropConfirmationLifetime * 1_000_000_000))
-                        guard dropConfirmationGeneration == confirmationGeneration,
-                              dropConfirmedPinboardID == pinboard.id,
-                              model.currentSessionGeneration == expectedSession else { return }
-                        dropConfirmedPinboardID = nil
-                    }
-                }
-            }
-        }
-        return true
-    }
-
-    func handleSnippetDrop(_ providers: [NSItemProvider]) -> Bool {
-        let expectedSession = model.currentSessionGeneration
-        guard let typeIdentifier = MacClippyClipboardDropPolicy.preferredTypeIdentifier(
-            among: providers.flatMap(\.registeredTypeIdentifiers)
-        ),
-        let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(typeIdentifier) }) else {
-            return false
-        }
-
-        provider.loadDataRepresentation(forTypeIdentifier: typeIdentifier) { data, _ in
-            guard let data,
-                  let payload = String(data: data, encoding: .utf8),
-                  let recordID = MacClippyClipboardDropPolicy.recordID(from: payload) else { return }
-            DispatchQueue.main.async {
-                model.createSnippet(from: recordID, expectedSession: expectedSession) { success in
-                    guard success, model.currentSessionGeneration == expectedSession else { return }
-                    dropConfirmationGeneration &+= 1
-                    let confirmationGeneration = dropConfirmationGeneration
-                    dropConfirmedSnippets = true
-                    Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: UInt64(MacClippyMotion.dropConfirmationLifetime * 1_000_000_000))
-                        guard dropConfirmationGeneration == confirmationGeneration,
-                              dropConfirmedSnippets,
-                              model.currentSessionGeneration == expectedSession else { return }
-                        dropConfirmedSnippets = false
-                    }
-                }
-            }
-        }
-        return true
-    }
-
-    func actionFeedbackView(_ feedback: MacClippyDockActionFeedback) -> some View {
-        Label(feedback.title, systemImage: feedback.systemImage)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(MacClippyDockTheme.textColor)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(MacClippyDockTheme.panelStrongColor, in: Capsule())
-            .pillBorder(MacClippyDockTheme.pillRestBorder)
-            .shadow(color: .black.opacity(0.14), radius: 14, y: 6)
-            .lineLimit(1)
-            .allowsHitTesting(false)
+        return types
     }
 }

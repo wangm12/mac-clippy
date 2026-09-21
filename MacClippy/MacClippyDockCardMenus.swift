@@ -67,6 +67,23 @@ extension MacClippyDockView {
             model.focus(item)
             model.presentRenameItem(for: item)
         }
+        let pinnedBoards = model.pinboards.filter { model.isPinned(item.id, in: $0) }
+        if case let .pinboard(boardID) = model.selectedTab,
+           let currentBoard = model.pinboards.first(where: { $0.id == boardID }) {
+            Button("Remove from \(currentBoard.name)") {
+                model.focus(item)
+                model.unpin(item.id, from: currentBoard.id)
+            }
+        } else if !pinnedBoards.isEmpty {
+            Menu("Remove from list") {
+                ForEach(pinnedBoards) { board in
+                    Button(board.name) {
+                        model.focus(item)
+                        model.unpin(item.id, from: board.id)
+                    }
+                }
+            }
+        }
         if !model.pinboards.isEmpty {
             itemPinboardMenu(item)
         }
@@ -99,13 +116,18 @@ extension MacClippyDockView {
     private func itemPinboardMenu(_ item: MacClippyHistoryEntry) -> some View {
         Menu("Pin to list") {
             ForEach(model.pinboards) { pinboard in
+                let isPinned = model.isPinned(item.id, in: pinboard)
                 Button {
                     model.focus(item)
-                    model.togglePinFocused(in: pinboard.id)
+                    if isPinned {
+                        model.unpin(item.id, from: pinboard.id)
+                    } else {
+                        model.pin(recordID: item.id, to: pinboard)
+                    }
                 } label: {
                     Label(
                         pinboard.name,
-                        systemImage: model.isPinned(item.id, in: pinboard) ? "checkmark" : "pin"
+                        systemImage: isPinned ? "checkmark" : "pin"
                     )
                 }
             }

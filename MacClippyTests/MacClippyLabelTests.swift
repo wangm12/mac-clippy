@@ -112,6 +112,18 @@ final class MacClippyLabelTests: XCTestCase {
         }
     }
 
+    func testSetCustomLabelPreservesOriginalHistoryOrder() throws {
+        let first = try runtime.appendTestRecord(.text("first older"))
+        let second = try runtime.appendTestRecord(.text("second newer"))
+
+        let beforeRename = try runtime.history(limit: 10, query: "")
+        XCTAssertEqual(beforeRename.map(\.id), [second.id, first.id])
+
+        _ = try runtime.setCustomLabel(id: first.id, label: "Renamed first")
+        let afterRename = try runtime.history(limit: 10, query: "")
+        XCTAssertEqual(afterRename.map(\.id), [second.id, first.id])
+    }
+
     func testDetailsSnapshotAndTextEditKeepSelectionIdentityAndSearchIndex() throws {
         let meta = try runtime.appendTestRecord(.text("before details"))
         let snapshot = try runtime.details(id: meta.id)

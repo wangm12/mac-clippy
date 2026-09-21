@@ -10,22 +10,27 @@ import MacClippyCore
 // runtime-level search/index preservation is covered by the app test target
 // (MacClippyLabelTests) because it needs the runtime's private search store.
 final class MacClippyLabelCoreTests: XCTestCase {
-    func testSetCustomLabelTrimsPersistsAndBumpsModified() throws {
+    func testSetCustomLabelTrimsPersistsAndPreservesModified() throws {
         let store = try clipboardStore()
         let created = Date(timeIntervalSince1970: 1_000)
         let original = try store.append(.text("body text"), now: created)
 
-        let editTime = Date(timeIntervalSince1970: 2_000)
-        let meta = try store.setCustomLabel(id: original.id, label: "  My Label  ", now: editTime)
+        // Without explicit now, modified is preserved so renaming a card does not change history order.
+        let meta = try store.setCustomLabel(id: original.id, label: "  My Label  ")
 
         XCTAssertEqual(meta.customLabel, "My Label")
         XCTAssertEqual(meta.id, original.id)
-        // modified is bumped so ordering by modified DESC stays meaningful.
-        XCTAssertEqual(meta.modified, editTime)
+        XCTAssertEqual(meta.modified, created)
 
         // Persisted: a fresh read returns the trimmed label.
         let reloaded = try store.metas(for: [original.id]).first
         XCTAssertEqual(reloaded?.customLabel, "My Label")
+        XCTAssertEqual(reloaded?.modified, created)
+
+        // When explicitly provided, modified is updated (used for retention revalidation).
+        let editTime = Date(timeIntervalSince1970: 2_000)
+        let explicitMeta = try store.setCustomLabel(id: original.id, label: "Updated", now: editTime)
+        XCTAssertEqual(explicitMeta.modified, editTime)
     }
 
     func testSetCustomLabelBlankClearsTheStoredLabel() throws {
