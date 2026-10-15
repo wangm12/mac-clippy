@@ -92,6 +92,17 @@ jobs:
           ./scripts/release-script-test.sh
           PATH=/usr/bin:/bin:/usr/sbin:/sbin ./scripts/package-dmg-path-guard-test.sh
           python3 -m unittest scripts.e2e.test_macclippy_phase5
+      - name: Native chrome cold-start regression (TSan)
+        timeout-minutes: 10
+        run: >-
+          xcodebuild test -project MacClippy.xcodeproj -scheme MacClippy
+          -configuration Debug -destination 'platform=macOS,arch=arm64'
+          -derivedDataPath build/ci-app-tsan
+          -resultBundlePath build/ci-chrome-tsan.xcresult
+          -parallel-testing-enabled NO -maximum-parallel-testing-workers 1
+          -only-testing:MacClippyTests/MacClippyChromeHitTargetTests
+          -enableThreadSanitizer YES -skipPackagePluginValidation
+          CODE_SIGNING_ALLOWED=NO
       - name: Package tests
         run: swift test --package-path MacClippyKit
       - name: Strict concurrency package tests

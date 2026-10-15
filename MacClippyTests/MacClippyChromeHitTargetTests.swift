@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 import SwiftUI
 import XCTest
 
@@ -9,7 +10,9 @@ final class MacClippyChromeHitTargetTests: XCTestCase {
     func testVisibleChromeCircleRespondsAtCenterAndEdges() async throws {
         for symbol in ["line.3.horizontal.decrease", "gearshape"] {
             var clicks = 0
-            let host = NSHostingView(rootView: ChromeFixture(symbol: symbol) { clicks += 1 })
+            var mounted = false
+            let host = NSHostingView(rootView: ChromeFixture(
+                symbol: symbol, action: { clicks += 1 }, onReady: { mounted = true }))
             let window = MacClippyDockPanel(contentRect: NSRect(x: 100, y: 100, width: 100, height: 80))
             window.contentView = host
             NSApp.activate(ignoringOtherApps: true)
@@ -17,10 +20,15 @@ final class MacClippyChromeHitTargetTests: XCTestCase {
             defer { window.close() }
             host.layoutSubtreeIfNeeded()
             window.displayIfNeeded()
-            let ready = await waitUntil { NSApp.isActive && window.isKeyWindow && host.window === window }
+            let ready = await waitUntil {
+                mounted && NSApp.isActive && window.isKeyWindow && host.window === window
+            }
             guard ready else {
                 return XCTFail("Chrome fixture did not become ready for mouse input")
             }
+            host.layoutSubtreeIfNeeded()
+            window.displayIfNeeded()
+            CATransaction.flush()
 
             // These points are inside the visible 36pt circle, but outside
             // the SF Symbol's painted pixels. Testing only its center misses
@@ -29,7 +37,7 @@ final class MacClippyChromeHitTargetTests: XCTestCase {
                                       .init(x: 0, y: -14), .init(x: 0, y: 14)]
             for (index, offset) in offsets.enumerated() {
                 let point = NSPoint(x: 50 + offset.x, y: 40 + offset.y)
-                try await sendClick(to: window, at: point)
+                try sendClick(to: window, at: point)
                 let received = await waitUntil { clicks >= index + 1 }
                 guard received else {
                     return XCTFail("One click at \(offset) did not activate \(symbol); received \(clicks) actions")
@@ -40,19 +48,19 @@ final class MacClippyChromeHitTargetTests: XCTestCase {
     }
 
     @MainActor
-    private func sendClick(to window: NSWindow, at point: NSPoint) async throws {
+    private func sendClick(to window: NSWindow, at point: NSPoint) throws {
+        let timestamp = ProcessInfo.processInfo.systemUptime
+        let eventNumber = Int(timestamp * 1_000_000) & 0x7FFF_FFFE
         for type: NSEvent.EventType in [.leftMouseDown, .leftMouseUp] {
+            let isRelease = type == .leftMouseUp
             let event = try XCTUnwrap(NSEvent.mouseEvent(
                 with: type, location: point, modifierFlags: [],
                 timestamp: ProcessInfo.processInfo.systemUptime,
                 windowNumber: window.windowNumber, context: nil,
-                eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
-            window.sendEvent(event)
-            if type == .leftMouseDown {
-                // Let SwiftUI install its tracking state before the matching
-                // release, as a physical click does on supported macOS versions.
-                try await Task.sleep(nanoseconds: 50_000_000)
-            }
+                eventNumber: eventNumber + (isRelease ? 1 : 0), clickCount: 1, pressure: isRelease ? 0 : 1))
+            // Route through NSApplication so SwiftUI sees the matching
+            // currentEvent and AppKit tracking state on every supported SDK.
+            NSApp.postEvent(event, atStart: false)
         }
     }
 
@@ -70,6 +78,7 @@ final class MacClippyChromeHitTargetTests: XCTestCase {
 private struct ChromeFixture: View {
     let symbol: String
     let action: () -> Void
+    let onReady: () -> Void
     @Namespace private var namespace
 
     var body: some View {
@@ -80,5 +89,6 @@ private struct ChromeFixture: View {
                 accessibilityLabel: "Test", accessibilityIdentifier: "test", help: "Test", action: action)
         }
         .frame(width: 100, height: 80)
+        .onAppear(perform: onReady)
     }
 }
