@@ -11,7 +11,7 @@ final class MacClippyChromeHitTargetTests: XCTestCase {
         for symbol in ["line.3.horizontal.decrease", "gearshape"] {
             var clicks = 0
             var mounted = false
-            let host = NSHostingView(rootView: ChromeFixture(
+            let host = MacClippyDockHostingView(rootView: ChromeFixture(
                 symbol: symbol, action: { clicks += 1 }, onReady: { mounted = true }))
             let window = MacClippyDockPanel(contentRect: NSRect(x: 100, y: 100, width: 100, height: 80))
             window.contentView = host
@@ -29,6 +29,16 @@ final class MacClippyChromeHitTargetTests: XCTestCase {
             host.layoutSubtreeIfNeeded()
             window.displayIfNeeded()
             CATransaction.flush()
+            var receivedEvents: [String] = []
+            let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { event in
+                MainActor.assumeIsolated {
+                    if event.windowNumber == window.windowNumber {
+                        receivedEvents.append("\(event.type.rawValue)@\(event.locationInWindow)")
+                    }
+                }
+                return event
+            }
+            defer { if let monitor { NSEvent.removeMonitor(monitor) } }
 
             // These points are inside the visible 36pt circle, but outside
             // the SF Symbol's painted pixels. Testing only its center misses
@@ -40,11 +50,35 @@ final class MacClippyChromeHitTargetTests: XCTestCase {
                 try sendClick(to: window, at: point)
                 let received = await waitUntil { clicks >= index + 1 }
                 guard received else {
-                    return XCTFail("One click at \(offset) did not activate \(symbol); received \(clicks) actions")
+                    let hit = host.hitTest(host.convert(point, from: nil))
+                    return XCTFail("One click at \(offset) did not activate \(symbol); received \(clicks) actions; "
+                        + "events=\(receivedEvents), host=\(host.frame), hit=\(String(describing: hit)), "
+                        + "firstMouse=\(host.acceptsFirstMouse(for: nil)), key=\(window.isKeyWindow)")
                 }
                 XCTAssertEqual(clicks, index + 1, "One click at \(offset) must activate \(symbol)")
             }
         }
+    }
+
+    @MainActor
+    func testNativeClickHarnessDeliversOneClickToAppKit() async throws {
+        let target = ChromeClickTarget()
+        let button = NSButton(frame: NSRect(x: 32, y: 22, width: 36, height: 36))
+        button.title = "Test"
+        button.target = target
+        button.action = #selector(ChromeClickTarget.clicked)
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 100, height: 80))
+        content.addSubview(button)
+        let window = MacClippyDockPanel(contentRect: NSRect(x: 100, y: 100, width: 100, height: 80))
+        window.contentView = content
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        let ready = await waitUntil { NSApp.isActive && window.isKeyWindow }
+        guard ready else { return XCTFail("Native control did not become ready for mouse input") }
+        try sendClick(to: window, at: NSPoint(x: 50, y: 40))
+        let received = await waitUntil { target.clicks == 1 }
+        XCTAssertTrue(received, "AppKit did not receive exactly one action from one mouse down/up pair")
     }
 
     @MainActor
@@ -73,6 +107,12 @@ final class MacClippyChromeHitTargetTests: XCTestCase {
         }
         return predicate()
     }
+}
+
+@MainActor
+private final class ChromeClickTarget: NSObject {
+    var clicks = 0
+    @objc func clicked() { clicks += 1 }
 }
 
 private struct ChromeFixture: View {

@@ -46,7 +46,7 @@ final class MacClippyDockPanelContentView: NSView {
     }
 }
 
-final class MacClippyDockHostingView: NSHostingView<MacClippyDockView> {
+final class MacClippyDockHostingView<Content: View>: NSHostingView<Content> {
     // NSHostingView is the actual hit-tested view for most SwiftUI controls,
     // so the content container's first-mouse policy alone is not sufficient.
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
