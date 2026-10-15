@@ -117,7 +117,7 @@ if [[ ! -f "$REPO/dist/MacClippy.dmg" || ! -f "$REPO/dist/MacClippy.zip" || ! -f
   exit 1
 fi
 for command_name in xcodegen xcodebuild hdiutil ditto shasum; do
-  if ! rg -q "^${command_name} " "$COMMAND_LOG"; then
+  if ! grep -q "^${command_name} " "$COMMAND_LOG"; then
     echo "FAIL: normal packaging did not reach stub ${command_name}" >&2
     cat "$COMMAND_LOG" >&2
     exit 1

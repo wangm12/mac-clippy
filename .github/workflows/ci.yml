@@ -90,7 +90,7 @@ jobs:
           ./scripts/verify-build-metadata-test.sh
           ./scripts/assert-opt-in-xctest-log-test.sh
           ./scripts/release-script-test.sh
-          ./scripts/package-dmg-path-guard-test.sh
+          PATH=/usr/bin:/bin:/usr/sbin:/sbin ./scripts/package-dmg-path-guard-test.sh
           python3 -m unittest scripts.e2e.test_macclippy_phase5
       - name: Package tests
         run: swift test --package-path MacClippyKit
