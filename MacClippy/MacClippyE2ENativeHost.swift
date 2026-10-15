@@ -11,9 +11,14 @@ final class MacClippyE2ENativeHost {
 
     init() {
         MacClippyE2EUIInteractionProbe.shared.start()
-        window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 800, height: 440),
-            styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        let panelCanary = ProcessInfo.processInfo.environment["MACCLIPPY_E2E_INPUT_PANEL"] == "1"
+        if panelCanary {
+            window = MacClippyDockPanel(contentRect: NSRect(x: 0, y: 0, width: 800, height: 440))
+        } else {
+            window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 800, height: 440),
+                styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        }
         window.title = "MacClippy E2E Recipient"
         window.isReleasedWhenClosed = false
         window.animationBehavior = .none
@@ -33,12 +38,15 @@ final class MacClippyE2ENativeHost {
         window.contentView = scrollView
         if ProcessInfo.processInfo.environment["MACCLIPPY_E2E_INPUT_CANARY"] == "1" {
             let content = NSView(frame: scrollView.frame)
-            let hosting = NSHostingView(rootView: MacClippyE2EInputCanary())
+            let hosting = NSHostingView(rootView: MacClippyE2EInputCanary(
+                styled: ProcessInfo.processInfo.environment["MACCLIPPY_E2E_INPUT_STYLED"] == "1"))
             hosting.frame = NSRect(x: 0, y: 120, width: 800, height: 280)
             content.addSubview(hosting)
             let button = MacClippyE2EInputCanaryButton(frame: NSRect(x: 300, y: 40, width: 200, height: 32))
             content.addSubview(button)
-            window.contentView = content
+            window.contentView = panelCanary
+                && ProcessInfo.processInfo.environment["MACCLIPPY_E2E_INPUT_BARE"] != "1"
+                ? MacClippyDockPanelContentView(foregroundView: content) : content
         }
         window.center()
     }
@@ -64,13 +72,23 @@ final class MacClippyE2ENativeHost {
 }
 
 private struct MacClippyE2EInputCanary: View {
+    let styled: Bool
     @State private var plainCount = 0
     @State private var borderedCount = 0
 
     var body: some View {
         VStack(spacing: 24) {
-            Button("Plain SwiftUI") { plainCount += 1 }
-                .buttonStyle(.plain)
+            if styled {
+                MacClippyGlassContainer {
+                    MacClippyDockFilterPill(
+                        title: "Plain SwiftUI", selected: false, reduceMotion: false, highContrast: false
+                    ) { plainCount += 1 }
+                }
+                .macClippyNavContainerShape()
+            } else {
+                Button("Plain SwiftUI") { plainCount += 1 }
+                    .buttonStyle(.plain)
+            }
             Text("Plain count: \(plainCount)")
             Button("Bordered SwiftUI") { borderedCount += 1 }
                 .buttonStyle(.bordered)

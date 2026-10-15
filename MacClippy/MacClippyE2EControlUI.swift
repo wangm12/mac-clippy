@@ -13,12 +13,25 @@ extension AppDelegate {
         }
         MacClippyE2EUIInteractionProbe.shared.start()
         if activateApplication { activateE2EForVisibleUI(controller) }
+        if ProcessInfo.processInfo.environment["MACCLIPPY_E2E_REDUCE_MOTION"] == "1" {
+            controller.reduceMotionOverride = true
+        }
         controller.show()
+        if let width = ProcessInfo.processInfo.environment["MACCLIPPY_E2E_PANEL_WIDTH"].flatMap(Double.init),
+           width >= 800, width <= 1_440, let panel = controller.panel {
+            var frame = panel.frame
+            frame.size.width = width
+            panel.setFrame(frame, display: true)
+        }
         guard await waitForE2EPanel(controller) else {
             return MacClippyE2EControlResponse(isOK: false, errorCode: "panel-interactive-timeout")
         }
         if ProcessInfo.processInfo.environment["MACCLIPPY_E2E_SOLID_BACKDROP"] == "1" {
             controller.panelContentView?.backdropView.applyTransparencyPolicy(reduceTransparency: true)
+            await flushE2EPanelRendering(controller)
+        }
+        if ProcessInfo.processInfo.environment["MACCLIPPY_E2E_HOST_RESPONDER"] == "1" {
+            controller.panel?.makeFirstResponder(controller.hostingView)
             await flushE2EPanelRendering(controller)
         }
         let completed = DispatchTime.now().uptimeNanoseconds

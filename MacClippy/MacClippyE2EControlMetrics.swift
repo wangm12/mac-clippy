@@ -64,6 +64,8 @@ extension AppDelegate {
             "visible": controller.panel?.isVisible == true,
             "glassBackdrop": controller.panelContentView?.backdropView.isShowingGlass == true,
             "keyWindow": controller.panel?.isKeyWindow == true,
+            "hostingFirstResponder": controller.hostingView != nil
+                && controller.panel?.firstResponder === controller.hostingView,
             "initialPaint": controller.model.hasCompletedInitialPaint,
             "loading": controller.model.isLoading,
             "detailsSaving": controller.model.isDetailsSaving,

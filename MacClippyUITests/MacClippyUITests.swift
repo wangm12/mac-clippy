@@ -9,7 +9,24 @@ final class MacClippyUITests: XCTestCase {
     }
 
     func testNativeInputCanary() throws {
-        let application = try launchIsolatedApplication(inputCanary: true)
+        try exerciseInputCanary(panel: false)
+    }
+
+    func testDockPanelInputCanary() throws {
+        try exerciseInputCanary(panel: true)
+    }
+
+    func testBareDockPanelInputCanary() throws {
+        try exerciseInputCanary(panel: true, bare: true)
+    }
+
+    func testStyledNativeInputCanary() throws {
+        try exerciseInputCanary(panel: false, styled: true)
+    }
+
+    private func exerciseInputCanary(panel: Bool, bare: Bool = false, styled: Bool = false) throws {
+        let application = try launchIsolatedApplication(
+            inputCanary: true, inputPanel: panel, inputBare: bare, inputStyled: styled)
         defer { application.terminate() }
         application.activate()
         _ = try controlRequest("native-host-show")
@@ -73,9 +90,26 @@ final class MacClippyUITests: XCTestCase {
         try exerciseNativeNavigation(held: false, solidBackdrop: true)
     }
 
-    private func exerciseNativeNavigation(held: Bool, solidBackdrop: Bool = false) throws {
+    func testNativeNavigationAtCompactWidth() throws {
+        try exerciseNativeNavigation(held: false, panelWidth: 1_024)
+    }
+
+    func testNativeNavigationWithReducedMotion() throws {
+        try exerciseNativeNavigation(held: false, reduceMotion: true)
+    }
+
+    func testNativeNavigationWithHostingResponder() throws {
+        try exerciseNativeNavigation(held: false, hostResponder: true)
+    }
+
+    private func exerciseNativeNavigation(
+        held: Bool, solidBackdrop: Bool = false, panelWidth: Int? = nil,
+        reduceMotion: Bool = false, hostResponder: Bool = false
+    ) throws {
         continueAfterFailure = false
-        let application = try launchIsolatedApplication(solidBackdrop: solidBackdrop)
+        let application = try launchIsolatedApplication(
+            solidBackdrop: solidBackdrop, panelWidth: panelWidth,
+            reduceMotion: reduceMotion, hostResponder: hostResponder)
         defer { application.terminate() }
         try showPanel(in: application)
         if solidBackdrop {
@@ -157,7 +191,9 @@ final class MacClippyUITests: XCTestCase {
     }
 
     private func launchIsolatedApplication(
-        solidBackdrop: Bool = false, inputCanary: Bool = false
+        solidBackdrop: Bool = false, inputCanary: Bool = false, inputPanel: Bool = false,
+        inputBare: Bool = false, inputStyled: Bool = false, panelWidth: Int? = nil,
+        reduceMotion: Bool = false, hostResponder: Bool = false
     ) throws -> XCUIApplication {
         let environment = ProcessInfo.processInfo.environment
         guard let root = environment["MACCLIPPY_E2E_ROOT"],
@@ -176,6 +212,12 @@ final class MacClippyUITests: XCTestCase {
         application.launchEnvironment["MACCLIPPY_E2E_RUN_ID"] = runID
         if solidBackdrop { application.launchEnvironment["MACCLIPPY_E2E_SOLID_BACKDROP"] = "1" }
         if inputCanary { application.launchEnvironment["MACCLIPPY_E2E_INPUT_CANARY"] = "1" }
+        if inputPanel { application.launchEnvironment["MACCLIPPY_E2E_INPUT_PANEL"] = "1" }
+        if inputBare { application.launchEnvironment["MACCLIPPY_E2E_INPUT_BARE"] = "1" }
+        if inputStyled { application.launchEnvironment["MACCLIPPY_E2E_INPUT_STYLED"] = "1" }
+        if let panelWidth { application.launchEnvironment["MACCLIPPY_E2E_PANEL_WIDTH"] = String(panelWidth) }
+        if reduceMotion { application.launchEnvironment["MACCLIPPY_E2E_REDUCE_MOTION"] = "1" }
+        if hostResponder { application.launchEnvironment["MACCLIPPY_E2E_HOST_RESPONDER"] = "1" }
         application.launch()
 
         // The isolated app starts as a background accessory. Foreground state

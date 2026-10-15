@@ -40,9 +40,10 @@ extension MacClippyDockView {
                 available: proxy.size.width, captureStatusWidth: statusWidth)
             let searchWidth = MacClippyDockHeaderLayoutPolicy.searchWidth(
                 available: proxy.size.width, captureStatusWidth: statusWidth)
-            HStack(spacing: 0) {
+            HStack(spacing: MacClippyDockHeaderLayoutPolicy.groupSpacing) {
                 rangeNavigation(width: width).frame(width: width, alignment: .leading)
-                Spacer(minLength: 0)
+                searchField(chipWidth: MacClippyDockHeaderLayoutPolicy.chipWidth(searchWidth: searchWidth))
+                    .frame(width: searchWidth)
                 HStack(spacing: MacClippyDockHeaderLayoutPolicy.controlSpacing) {
                     if let captureStatusText {
                         Text(captureStatusText)
@@ -56,12 +57,9 @@ extension MacClippyDockView {
                     utilitiesMenu
                     settingsButton
                 }
+                .frame(width: width, alignment: .trailing)
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
-            .overlay {
-                searchField(chipWidth: MacClippyDockHeaderLayoutPolicy.chipWidth(searchWidth: searchWidth))
-                    .frame(width: searchWidth)
-            }
         }
         .onChange(of: model.searchFocusRequest) { _, _ in
             guard model.searchFocusIsRequested else { return }
