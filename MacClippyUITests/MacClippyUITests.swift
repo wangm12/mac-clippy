@@ -15,26 +15,28 @@ final class MacClippyUITests: XCTestCase {
         let offsets: [CGVector] = [.zero, .init(dx: -14, dy: 0), .init(dx: 14, dy: 0),
                                    .init(dx: 0, dy: -14), .init(dx: 0, dy: 14)]
         for offset in offsets {
-            try showPanel()
+            try showPanel(in: application)
             clickOnce("macClippy.searchFiltersButton", offset: offset, in: application)
             let filters = application.staticTexts["Filters"]
-            XCTAssertTrue(filters.waitForExistence(timeout: 5), "One filter click at \(offset) must open filters")
+            XCTAssertTrue(filters.waitForExistence(timeout: 5),
+                          "One filter click at \(offset) must open filters\n\(failureContext(application))")
             application.typeKey(.escape, modifierFlags: [])
             waitForDismissal(filters)
 
-            try showPanel()
+            try showPanel(in: application)
             clickOnce("macClippy.moreActionsButton", offset: offset, in: application)
             let menuItem = application.menuItems["New Pinboard…"]
-            XCTAssertTrue(menuItem.waitForExistence(timeout: 5), "One More click at \(offset) must open its menu")
+            XCTAssertTrue(menuItem.waitForExistence(timeout: 5),
+                          "One More click at \(offset) must open its menu\n\(failureContext(application))")
             application.typeKey(.escape, modifierFlags: [])
             waitForDismissal(menuItem)
 
-            try showPanel()
+            try showPanel(in: application)
             clickOnce("macClippy.settingsButton", offset: offset, in: application)
             let settings = application.windows.containing(
                 .any, identifier: "macClippy.settings.sidebar.general").firstMatch
             XCTAssertTrue(settings.waitForExistence(timeout: 5),
-                          "One Settings click at \(offset) must open settings\n\(application.debugDescription)")
+                          "One Settings click at \(offset) must open settings\n\(failureContext(application))")
             settings.buttons[XCUIIdentifierCloseWindow].click()
             waitForDismissal(settings)
         }
@@ -56,7 +58,19 @@ final class MacClippyUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
     }
 
-    private func showPanel() throws {
+    private func showPanel(in application: XCUIApplication) throws {
+        // Coordinate clicks do not establish application activation. Make the
+        // fixture's foreground state explicit before testing its hit regions.
+        application.activate()
+        _ = try controlRequest("panel-show")
+    }
+
+    private func failureContext(_ application: XCUIApplication) -> String {
+        let metrics = (try? controlRequest("metrics")) ?? "Metrics unavailable"
+        return "\(application.debugDescription)\n\(metrics)"
+    }
+
+    private func controlRequest(_ command: String) throws -> String {
         let environment = ProcessInfo.processInfo.environment
         let root = try XCTUnwrap(environment["MACCLIPPY_E2E_ROOT"])
         let runID = try XCTUnwrap(environment["MACCLIPPY_E2E_RUN_ID"])
@@ -65,14 +79,16 @@ final class MacClippyUITests: XCTestCase {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
         process.arguments = [driver.path, "request", "--root", root, "--run-id", runID,
-                             "--control-command", "panel-show", "--socket-timeout", "30"]
+                             "--control-command", command, "--socket-timeout", "30"]
         let output = Pipe()
         process.standardOutput = output
         process.standardError = output
         try process.run()
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        XCTAssertEqual(process.terminationStatus, 0, String(data: data, encoding: .utf8) ?? "Invalid control response")
+        let response = String(data: data, encoding: .utf8) ?? "Invalid control response"
+        XCTAssertEqual(process.terminationStatus, 0, response)
+        return response
     }
 
     private func launchIsolatedApplication() throws -> XCUIApplication {
