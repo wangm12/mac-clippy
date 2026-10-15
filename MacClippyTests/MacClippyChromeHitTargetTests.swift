@@ -47,7 +47,7 @@ final class MacClippyChromeHitTargetTests: XCTestCase {
                                       .init(x: 0, y: -14), .init(x: 0, y: 14)]
             for (index, offset) in offsets.enumerated() {
                 let point = NSPoint(x: 50 + offset.x, y: 40 + offset.y)
-                try sendClick(to: window, at: point)
+                try await sendClick(to: window, at: point)
                 let received = await waitUntil { clicks >= index + 1 }
                 guard received else {
                     let hit = host.hitTest(host.convert(point, from: nil))
@@ -76,15 +76,34 @@ final class MacClippyChromeHitTargetTests: XCTestCase {
         defer { window.close() }
         let ready = await waitUntil { NSApp.isActive && window.isKeyWindow }
         guard ready else { return XCTFail("Native control did not become ready for mouse input") }
-        try sendClick(to: window, at: NSPoint(x: 50, y: 40))
+        try await sendClick(to: window, at: NSPoint(x: 50, y: 40))
         let received = await waitUntil { target.clicks == 1 }
         XCTAssertTrue(received, "AppKit did not receive exactly one action from one mouse down/up pair")
     }
 
     @MainActor
-    private func sendClick(to window: NSWindow, at point: NSPoint) throws {
+    private func sendClick(to window: NSWindow, at point: NSPoint) async throws {
         let timestamp = ProcessInfo.processInfo.systemUptime
         let eventNumber = Int(timestamp * 1_000_000) & 0x7FFF_FFFE
+        var deliveredDowns = 0
+        // AppKit 26 can reconstitute a posted mouse-down with screen coordinates
+        // in locationInWindow (even NSButton then misses it). Normalize only our
+        // dedicated fixture window's mouse-down after dequeue, retaining the
+        // requested point. AppKit can also replace the synthetic event number.
+        let monitor = try XCTUnwrap(NSEvent.addLocalMonitorForEvents(
+            matching: .leftMouseDown) { event in
+                var normalized = event
+                MainActor.assumeIsolated {
+                    guard event.windowNumber == window.windowNumber else { return }
+                    deliveredDowns += 1
+                    normalized = NSEvent.mouseEvent(
+                        with: event.type, location: point, modifierFlags: event.modifierFlags,
+                        timestamp: event.timestamp, windowNumber: window.windowNumber, context: nil,
+                        eventNumber: event.eventNumber, clickCount: 1, pressure: event.pressure) ?? event
+                }
+                return normalized
+            })
+        defer { NSEvent.removeMonitor(monitor) }
         for type: NSEvent.EventType in [.leftMouseDown, .leftMouseUp] {
             let isRelease = type == .leftMouseUp
             let event = try XCTUnwrap(NSEvent.mouseEvent(
@@ -92,10 +111,12 @@ final class MacClippyChromeHitTargetTests: XCTestCase {
                 timestamp: ProcessInfo.processInfo.systemUptime,
                 windowNumber: window.windowNumber, context: nil,
                 eventNumber: eventNumber + (isRelease ? 1 : 0), clickCount: 1, pressure: isRelease ? 0 : 1))
-            // Route through NSApplication so SwiftUI sees the matching
-            // currentEvent and AppKit tracking state on every supported SDK.
+            // Posting only to this application preserves AppKit tracking and
+            // currentEvent without moving the system pointer or posting globally.
             NSApp.postEvent(event, atStart: false)
         }
+        let deliveredDown = await waitUntil { deliveredDowns == 1 }
+        XCTAssertTrue(deliveredDown, "One mouse-down must traverse AppKit's native queue exactly once")
     }
 
     @MainActor
