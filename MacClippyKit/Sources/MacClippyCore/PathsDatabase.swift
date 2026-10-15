@@ -42,42 +42,13 @@ public struct MacClippyDatabaseMigration: Sendable {
     }
 }
 
-public enum MacClippyDatabaseHealthStatus: String, Codable, Sendable, Equatable {
-    case healthy
-    case degraded
-    case repairable
-    case unrecoverable
-}
-
-public enum MacClippyDatabaseHealthCheckMode: Sendable, Equatable {
-    case bounded
-    case full
-}
-
-public struct MacClippyDatabaseHealthReport: Codable, Sendable, Equatable {
-    public let status: MacClippyDatabaseHealthStatus
-    public let quickCheckPassed: Bool
-    public let foreignKeyViolationCount: Int
-    public let missingTables: [String]
-    public let issues: [String]
-
-    public init(
-        status: MacClippyDatabaseHealthStatus,
-        quickCheckPassed: Bool,
-        foreignKeyViolationCount: Int,
-        missingTables: [String],
-        issues: [String]
-    ) {
-        self.status = status
-        self.quickCheckPassed = quickCheckPassed
-        self.foreignKeyViolationCount = foreignKeyViolationCount
-        self.missingTables = missingTables
-        self.issues = issues
-    }
-}
-
 public final class MacClippyDatabase {
+    public let url: URL
     public let queue: DatabaseQueue
+    private let healthReaderCondition = NSCondition()
+    private var activeIndependentReaderCount = 0
+    private var refusesIndependentReaders = false
+    private var closedForReplacement = false
 
     deinit {
         // GRDB's DatabaseQueue does not close its writer connection from
@@ -96,22 +67,30 @@ public final class MacClippyDatabase {
         }
     }
 
-    public init(url: URL, migrations: [MacClippyDatabaseMigration] = []) throws {
+    public init(
+        url: URL,
+        readOnly: Bool = false,
+        migrations: [MacClippyDatabaseMigration] = []
+    ) throws {
+        self.url = url
         var configuration = Configuration()
-        configuration.prepareDatabase { database in
-            try database.execute(sql: "PRAGMA journal_mode = WAL")
-            try database.execute(sql: "PRAGMA synchronous = NORMAL")
-            try database.execute(sql: "PRAGMA foreign_keys = ON")
-            try database.execute(sql: "PRAGMA busy_timeout = 5000")
+        configuration.readonly = readOnly
+        if !readOnly {
+            configuration.prepareDatabase { database in
+                try database.execute(sql: "PRAGMA journal_mode = WAL")
+                try database.execute(sql: "PRAGMA synchronous = NORMAL")
+                try database.execute(sql: "PRAGMA foreign_keys = ON")
+                try database.execute(sql: "PRAGMA busy_timeout = 5000")
+            }
         }
         let isMemory = url.path == ":memory:" || url.lastPathComponent == ":memory:"
-        if !isMemory {
+        if !isMemory && !readOnly {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         }
         queue = try isMemory
             ? DatabaseQueue(configuration: configuration)
             : DatabaseQueue(path: url.path, configuration: configuration)
-        try migrate(migrations)
+        if !readOnly { try migrate(migrations) }
     }
 
     public func migrate(_ migrations: [MacClippyDatabaseMigration]) throws {
@@ -123,79 +102,196 @@ public final class MacClippyDatabase {
         try migrator.migrate(queue)
     }
 
-    /// Runs a bounded, read-only integrity check. The report deliberately
-    /// contains only schema/integrity facts, never row values or clipboard
-    /// content, so it can safely be used by diagnostics and recovery UI.
+    /// Runs a read-only schema probe or explicit full integrity scan. The
+    /// report contains no row values or clipboard content.
     public func healthCheck(
         requiredTables: Set<String> = [],
-        mode: MacClippyDatabaseHealthCheckMode = .bounded
+        mode: MacClippyDatabaseHealthCheckMode = .bounded,
+        shouldContinue: () -> Bool = { true }
     ) -> MacClippyDatabaseHealthReport {
+        var completedReport: MacClippyDatabaseHealthReport?
         do {
-            return try queue.read { connection in
-                let quickCheckSQL = mode == .bounded ? "PRAGMA quick_check(1)" : "PRAGMA quick_check"
-                let quickCheck = try String.fetchAll(connection, sql: quickCheckSQL)
-                let foreignKeyViolations: [Row]
-                if mode == .bounded {
-                    // The table-valued pragma lets the UI/startup check stop
-                    // after a small sample. Backup validation explicitly uses
-                    // .full so it still proves the complete foreign-key set.
-                    do {
-                        foreignKeyViolations = try Row.fetchAll(
-                            connection,
-                            sql: "SELECT * FROM pragma_foreign_key_check LIMIT 64"
-                        )
-                    } catch {
-                        // Older SQLite builds do not expose table-valued
-                        // pragmas. Keep the check correct on those builds;
-                        // the app's supported macOS builds use the bounded
-                        // form above.
-                        foreignKeyViolations = try Row.fetchAll(connection, sql: "PRAGMA foreign_key_check")
-                    }
-                } else {
-                    foreignKeyViolations = try Row.fetchAll(connection, sql: "PRAGMA foreign_key_check")
-                }
-                let existingTables = Set(try String.fetchAll(
+            return try withIndependentReadOnlyConnection { connection in
+                guard shouldContinue() else { throw CancellationError() }
+                let report = try MacClippyMaintenanceDatabaseHealth.inspect(
                     connection,
-                    sql: "SELECT name FROM sqlite_master WHERE type IN ('table', 'view')"
-                ))
-                let missingTables = requiredTables.subtracting(existingTables).sorted()
-                let quickCheckPassed = quickCheck.count == 1 && quickCheck[0].lowercased() == "ok"
-                var issues: [String] = []
-                if !quickCheckPassed { issues.append("sqlite-quick-check-failed") }
-                if !foreignKeyViolations.isEmpty { issues.append("foreign-key-violations") }
-                if mode == .bounded, foreignKeyViolations.count == 64 {
-                    issues.append("foreign-key-violations-truncated")
-                }
-                if !missingTables.isEmpty { issues.append("missing-required-tables") }
-
-                let status: MacClippyDatabaseHealthStatus
-                if !quickCheckPassed || !missingTables.isEmpty {
-                    status = .unrecoverable
-                } else if !foreignKeyViolations.isEmpty {
-                    status = .repairable
-                } else {
-                    status = .healthy
-                }
-                return MacClippyDatabaseHealthReport(
-                    status: status,
-                    quickCheckPassed: quickCheckPassed,
-                    foreignKeyViolationCount: foreignKeyViolations.count,
-                    missingTables: missingTables,
-                    issues: issues
+                    requiredTables: requiredTables,
+                    mode: mode,
+                    shouldContinue: shouldContinue
                 )
+                completedReport = report
+                return report
             }
+        } catch is CancellationError {
+            return healthCancelledReport()
+        } catch MacClippyDatabaseReaderError.closing {
+            return healthCancelledReport()
         } catch {
+            if mode == .full, let completedReport {
+                return completedReport
+            }
             // Do not surface SQLite's raw message: it can contain a local
             // path. A failed integrity query is itself an unrecoverable
             // health result until a backup/restore path is attempted.
-            return MacClippyDatabaseHealthReport(
-                status: .unrecoverable,
-                quickCheckPassed: false,
-                foreignKeyViolationCount: 0,
-                missingTables: [],
-                issues: ["database-health-query-failed"]
-            )
+            return healthUnavailableReport()
         }
+    }
+
+    /// Runs a caller-supplied inspection on a separate read-only connection
+    /// and reserves the database against replacement for the closure's full
+    /// lifetime. Callers should use this for exhaustive health work outside
+    /// the Runtime store lock.
+    public func withIndependentReadOnlyConnection<T>(
+        _ body: (Database) throws -> T
+    ) throws -> T {
+        let readerLease = try beginIndependentReader()
+        defer { readerLease.release() }
+
+        let writerIsOpen = try queue.read { connection in
+            connection.sqliteConnection != nil
+        }
+        guard writerIsOpen else { throw MacClippyDatabaseReaderError.unavailable }
+        guard !isInMemoryDatabase else { return try queue.read(body) }
+
+        var configuration = Configuration()
+        configuration.readonly = true
+        let reader = try DatabaseQueue(path: url.path, configuration: configuration)
+        defer {
+            do {
+                try reader.close()
+            } catch {
+                MacClippyLog.record(
+                    category: .storage,
+                    code: .databaseHealthFailed,
+                    operation: "health_reader_close",
+                    recoveryAction: "retry_on_next_launch",
+                    impact: "database_health_reader_close_failed"
+                )
+            }
+        }
+        return try reader.read(body)
+    }
+
+    /// Opens a pinned backup read snapshot while holding a reader reservation
+    /// against `closeForReplacement()`. Snapshot copying can then continue
+    /// after the Runtime releases its global store lock.
+    public func beginBackupReadSnapshot(name: String) throws -> MacClippyBackupReadSnapshot {
+        let readerLease: MacClippyDatabaseReaderLease
+        do {
+            readerLease = try beginIndependentReader()
+        } catch {
+            throw MacClippyBackupError.databaseCopyFailed(name)
+        }
+        do {
+            let writerIsOpen = try queue.read { connection in
+                connection.sqliteConnection != nil
+            }
+            guard writerIsOpen else { throw MacClippyBackupError.databaseCopyFailed(name) }
+            if isInMemoryDatabase {
+                let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+                    "MacClippyBackupReadSnapshot-\(UUID().uuidString)",
+                    isDirectory: true
+                )
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                let snapshotURL = directory.appendingPathComponent("\(name).sqlite")
+                do {
+                    try MacClippyBackup.backup(queue, to: snapshotURL)
+                    return try MacClippyBackupReadSnapshot(
+                        name: name,
+                        databaseURL: snapshotURL,
+                        databaseLease: readerLease,
+                        temporarySnapshotURL: directory
+                    )
+                } catch {
+                    try? FileManager.default.removeItem(at: directory)
+                    throw error
+                }
+            }
+            return try MacClippyBackupReadSnapshot(name: name, databaseURL: url, databaseLease: readerLease)
+        } catch {
+            readerLease.release()
+            throw error
+        }
+    }
+
+    /// Stops new independent readers and waits for active readers before the
+    /// Runtime replaces this database's files. Direct callers of
+    /// `queue.close()` remain supported; later health queries fail their
+    /// writer-open check instead of reopening the path.
+    public func closeForReplacement() throws {
+        healthReaderCondition.lock()
+        while refusesIndependentReaders && !closedForReplacement {
+            healthReaderCondition.wait()
+        }
+        guard !closedForReplacement else {
+            healthReaderCondition.unlock()
+            return
+        }
+        refusesIndependentReaders = true
+        while activeIndependentReaderCount > 0 {
+            healthReaderCondition.wait()
+        }
+        healthReaderCondition.unlock()
+        do {
+            try queue.close()
+            healthReaderCondition.lock()
+            closedForReplacement = true
+            refusesIndependentReaders = true
+            healthReaderCondition.broadcast()
+            healthReaderCondition.unlock()
+        } catch {
+            healthReaderCondition.lock()
+            refusesIndependentReaders = false
+            healthReaderCondition.broadcast()
+            healthReaderCondition.unlock()
+            throw error
+        }
+    }
+
+    private func beginIndependentReader() throws -> MacClippyDatabaseReaderLease {
+        healthReaderCondition.lock()
+        defer { healthReaderCondition.unlock() }
+        guard !refusesIndependentReaders else {
+            throw closedForReplacement ? MacClippyDatabaseReaderError.unavailable : .closing
+        }
+        activeIndependentReaderCount += 1
+        return MacClippyDatabaseReaderLease(database: self)
+    }
+
+    func finishIndependentReader() {
+        healthReaderCondition.lock()
+        activeIndependentReaderCount = max(0, activeIndependentReaderCount - 1)
+        healthReaderCondition.broadcast()
+        healthReaderCondition.unlock()
+    }
+
+    private func healthUnavailableReport() -> MacClippyDatabaseHealthReport {
+        MacClippyDatabaseHealthReport(
+            status: .unrecoverable,
+            quickCheckPassed: false,
+            // If the connection could not be opened or the initial probe
+            // failed, the full scan did not run. Failed scan queries return a
+            // completed inspection report with `false` instead.
+            fullIntegrityCheckPassed: nil,
+            foreignKeyCheckPerformed: nil,
+            foreignKeyViolationCount: 0,
+            missingTables: [],
+            issues: ["database-health-query-failed"]
+        )
+    }
+
+    private func healthCancelledReport() -> MacClippyDatabaseHealthReport {
+        MacClippyDatabaseHealthReport(
+            status: .degraded,
+            quickCheckPassed: false,
+            foreignKeyViolationCount: 0,
+            missingTables: [],
+            issues: ["database-health-check-cancelled"]
+        )
+    }
+
+    private var isInMemoryDatabase: Bool {
+        url.path == ":memory:" || url.lastPathComponent == ":memory:"
     }
 
     public func tableRowCount(_ table: String) throws -> Int64? {

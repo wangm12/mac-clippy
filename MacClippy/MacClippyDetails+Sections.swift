@@ -13,14 +13,11 @@ extension MacClippyDetailsView {
                 Text("Name").foregroundStyle(.secondary)
                 Spacer()
                 if editing == .name {
-                    TextField("Name", text: $nameDraft)
+                    TextField("Name", text: $editSession.nameDraft)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 220)
                         .focused($focusedField, equals: .name)
-                        .onSubmit { onSaveName(nameDraft) }
-                    Button("Save") { onSaveName(nameDraft) }
-                        .keyboardShortcut(.defaultAction)
-                    Button("Cancel", action: onCancelEdit)
+                        .onSubmit { submitEdit(.save) }
                 } else {
                     Text(details.customLabel ?? "Not set")
                         .lineLimit(1)
@@ -59,15 +56,7 @@ extension MacClippyDetailsView {
     }
 
     func resetDrafts(for editing: MacClippyDetailsEditing) {
-        switch editing {
-        case .content:
-            contentDraft = details.textContent ?? ""
-        case .name:
-            nameDraft = details.customLabel ?? ""
-        case .none:
-            contentDraft = details.textContent ?? ""
-            nameDraft = details.customLabel ?? ""
-        }
+        editSession.resetDrafts()
     }
 
     var representationsSection: some View {
@@ -84,7 +73,7 @@ extension MacClippyDetailsView {
                                 : "exclamationmark.circle"
                         )
                             .foregroundStyle(representation.isAvailable ? .green : .orange)
-                        Text(representation.uti)
+                        Text("Item \(representation.itemIndex + 1) · \(representation.uti)")
                             .font(.caption.monospaced())
                             .lineLimit(1)
                         Spacer()
@@ -106,30 +95,57 @@ extension MacClippyDetailsView {
     }
 
     var footer: some View {
-        HStack(spacing: 8) {
-            Button("Copy", action: onCopy)
-            if let onPlainCopy { Button("Plain Text", action: onPlainCopy) }
-            if editing == .none {
-                Button("Paste", action: onPaste)
-                    .keyboardShortcut(.defaultAction)
-            } else {
-                Button("Paste", action: onPaste)
+        VStack(alignment: .leading, spacing: 8) {
+            if let error = editSession.errorMessage {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            if let onTransformCopy, let onTransformPaste {
-                Menu("Transform") {
-                    ForEach(TextTransform.allCases, id: \.self) { transform in
-                        Menu(transform.displayName) {
-                            Button("Copy transformed") { onTransformCopy(transform) }
-                            Button("Paste transformed") { onTransformPaste(transform) }
-                        }
+            HStack(spacing: 8) {
+                if editing != .none {
+                    Button("Cancel", action: onCancelEdit)
+                    Spacer()
+                    if editSession.isSaving { ProgressView().controlSize(.small) }
+                    Button("Save") { submitEdit(.save) }
+                        .keyboardShortcut("s", modifiers: .command)
+                    Button("Save & Paste") { submitEdit(.saveAndPaste) }
+                        .keyboardShortcut(.return, modifiers: .command)
+                        .buttonStyle(.borderedProminent)
+                } else {
+                    Button("Copy", action: onCopy)
+                    Button("Paste", action: onPaste).keyboardShortcut(.defaultAction)
+                    if details.isEditable {
+                        Button("Edit", action: onEdit).keyboardShortcut("e", modifiers: .command)
                     }
+                    Menu("More") {
+                        if let onPlainCopy { Button("Copy plain text", action: onPlainCopy) }
+                        if let onTransformCopy, let onTransformPaste {
+                            Menu("Transform") {
+                                ForEach(TextTransform.allCases, id: \.self) { transform in
+                                    Menu(transform.displayName) {
+                                        Button("Copy transformed") { onTransformCopy(transform) }
+                                        Button("Paste transformed") { onTransformPaste(transform) }
+                                    }
+                                }
+                            }
+                        }
+                        Button("Pin", action: onPin)
+                        Button("Delete permanently", role: .destructive, action: onDelete)
+                    }
+                    Spacer()
                 }
             }
-            Button("Pin", action: onPin)
-            Spacer()
-            Button("Delete", role: .destructive, action: onDelete)
         }
         .padding(14)
+    }
+
+    private func submitEdit(_ intent: MacClippyDetailsSaveIntent) {
+        guard !editSession.isSaving else { return }
+        if editing == .name {
+            onSaveName(editSession.nameDraft, intent)
+        } else {
+            onSaveContent(editSession.contentDraft, intent)
+        }
     }
 
     var contentDisplay: String {

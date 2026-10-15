@@ -15,6 +15,7 @@ public struct MacClippySearchDocument: Sendable, Equatable {
 
 public enum MacClippySearchRepairError: Error, Equatable {
     case cancelled
+    case concurrentProjectionFailure
     case documentKindMismatch
     case duplicateDocument
 }

@@ -51,7 +51,7 @@ final class MacClippyDockModel: ObservableObject {
         didSet {
             guard oldValue != query else { return }
             applySearchQuery(query)
-            if !selection.isEmpty || allSelectedRecordIDs != nil {
+            if !selection.isEmpty || allSelectedRecordIDs != nil || !selectionIsReady {
                 invalidateAllSelectionScope()
             }
             scheduleSnippetFilter()
@@ -77,6 +77,7 @@ final class MacClippyDockModel: ObservableObject {
 
     @Published var historyItems: [MacClippyHistoryEntry] = []
     @Published var snippets: [MacClippySnippetEntry] = []
+    var snippetUpdateHandler: (@MainActor (RecordID) -> Void)?
     @Published var filteredSnippets: [MacClippySnippetEntry] = []
     @Published var pinboards: [MacClippyPinboardEntry] = [] {
         didSet {
@@ -89,6 +90,7 @@ final class MacClippyDockModel: ObservableObject {
     // change. Recomputed only when the visible list changes (reload/tab switch).
     @Published var dedupRunCounts: [RecordID: Int] = [:]
     @Published var selectedTab: MacClippyDockTab = .history
+    var historySearchClauses: [MacClippySearchGrammar.Clause] = []
     @Published var hiddenSmartListIDs: Set<String> = []
     @Published var isLoading = false
     @Published var hasCompletedInitialPaint = false
@@ -97,7 +99,11 @@ final class MacClippyDockModel: ObservableObject {
     @Published var historyLoadError: String?
     @Published var pageError: String?
     @Published var previewError: String?
-    @Published var actionError: String?
+    @Published var actionError: String? {
+        didSet { actionErrorHandler?(actionError) }
+    }
+    var actionErrorHandler: (@MainActor (String?) -> Void)?
+    @Published var isDetailsSaving = false
 
     /// Compatibility/readout surface used for accessibility announcements and
     /// diagnostics. Views should render the scoped error instead of this
@@ -151,9 +157,19 @@ final class MacClippyDockModel: ObservableObject {
     // Toggled by the controller when the preview shows/hides.
     @Published var isPreviewVisible = false
     @Published var actionFeedback: MacClippyDockActionFeedback?
+    var actionToastHandler: (@MainActor (MacClippyDockActionFeedback) -> Void)?
+    @Published var captureStatus = MacClippyCaptureStatus()
+    var captureStatusObserver: MacClippyNotificationToken?
     @Published var queuePasteProgress: (done: Int, total: Int)?
     @Published var modal: MacClippyDockModal?
+    var pinboardCreation: (session: UInt, modalToken: UInt)?
+    var isCreatingPinboard: Bool {
+        guard case let .createCategory(token)? = modal else { return false }
+        return pinboardCreation?.session == sessionGeneration && pinboardCreation?.modalToken == token
+    }
+    @Published var isFilterPopoverPresented = false
     @Published var searchFocusRequest = 0
+    @Published var searchFocusIsRequested = false
     @Published var searchQueryProgrammaticWriteToken = 0
     // Picker-mode typing writes `query` before the search field becomes first
     // responder. Stay false until a real key / non-empty field edit or an
@@ -193,7 +209,7 @@ final class MacClippyDockModel: ObservableObject {
     var displayedSearchText: String {
         MacClippyDockSearchQueryWritePolicy.displayedSearchText(
             committedQuery: query,
-            excludingTokens: visibleSmartListTokens
+            excludingTokens: Set(searchFilterChips.map(\.token))
         )
     }
     let workQueue = DispatchQueue(label: "com.macallyouneed.macclippy.dock", qos: .userInitiated)
@@ -240,6 +256,10 @@ final class MacClippyDockModel: ObservableObject {
     // focus/navigation remain bounded to rendered cards while batch actions
     // still receive the complete selection.
     var allSelectedRecordIDs: [RecordID]?
+    var pasteTargetProcessIdentifier: Int32?
+    @Published var isSelectingAllMatches = false
+    @Published var allSelectionFailed = false
+    var allSelectionCanMerge = false
     var allSelectedRecordIDSet: Set<RecordID>?
     var selectAllWorkItem: MacClippyDispatchWorkItem?
     var selectAllCancellationToken: MacClippyCancellationToken?
@@ -300,88 +320,18 @@ final class MacClippyDockModel: ObservableObject {
             }
         }
         historyChangeObserver = MacClippyNotificationToken(observer)
-    }
-
-    func presentCreateCategory() {
-        modalPresentationToken &+= 1
-        modal = .createCategory(token: modalPresentationToken)
-    }
-
-    func presentRenameItem(for entry: MacClippyHistoryEntry) {
-        modalPresentationToken &+= 1
-        modal = .renameItem(recordID: entry.id, initialName: entry.customLabel, token: modalPresentationToken)
-    }
-
-    func presentRenameCategory(for pinboard: MacClippyPinboardEntry) {
-        modalPresentationToken &+= 1
-        modal = .renameCategory(pinboardID: pinboard.id, token: modalPresentationToken)
-    }
-
-    func presentConfirmDeleteCategory(for pinboard: MacClippyPinboardEntry) {
-        modalPresentationToken &+= 1
-        modal = .confirmDeleteCategory(pinboardID: pinboard.id, name: pinboard.name, token: modalPresentationToken)
-    }
-
-    func dismissModal() {
-        modal = nil
-    }
-
-    func removeSearchFilter(token: String) {
-        query = MacClippySearchFilterChipPolicy.removing(token: token, from: query)
-    }
-
-    func appendSearchFilter(token: String) {
-        query = MacClippySearchFilterChipPolicy.appending(token: token, to: query)
-    }
-
-    func toggleSmartList(_ list: MacClippySmartList) {
-        applyEmptyOverwriteEvent(.programmaticQueryWrite)
-        if MacClippySmartListPolicy.isActive(list, in: query), selectedTab == .history {
-            query = ""
-        } else {
-            query = list.query
+        let captureObserver = NotificationCenter.default.addObserver(
+            forName: .macClippyCaptureStatusDidChange, object: runtime.observer, queue: .main
+        ) { [weak self] notification in
+            guard let status = notification.userInfo?["status"] as? MacClippyCaptureStatus else { return }
+            MainActor.assumeIsolated { self?.captureStatus = status }
         }
-        searchQueryProgrammaticWriteToken += 1
-        if selectedTab != .history {
-            selectTab(.history)
+        captureStatusObserver = MacClippyNotificationToken(captureObserver)
+        runtime.observer.readCaptureStatus { [weak self] status in
+            MacClippyMainHop.async {
+                MainActor.assumeIsolated { self?.captureStatus = status }
+            }
         }
-    }
-
-    func selectAllFilter() {
-        applyEmptyOverwriteEvent(.explicitClear)
-        let shouldReloadHistory = MacClippyDockSessionOpenPolicy.shouldReloadHistoryForAllFilter(
-            historyQuery: historyQuery,
-            query: ""
-        )
-        query = ""
-        searchQueryProgrammaticWriteToken += 1
-        if selectedTab != .history {
-            selectTab(.history)
-        }
-        if shouldReloadHistory, selectedTab == .history {
-            reload(includeStaticData: false)
-        }
-    }
-
-    func selectSnippetsFilter() {
-        applyEmptyOverwriteEvent(.explicitClear)
-        // Switch the tab before clearing History filters. Clearing `query`
-        // first leaves one History frame on an empty type:image snapshot
-        // ("No matches") and that hard-cut is the Snippets flash.
-        if selectedTab != .snippets {
-            selectTab(.snippets)
-        }
-        query = ""
-        searchQueryProgrammaticWriteToken += 1
-        scheduleSnippetFilter()
-    }
-
-    func hideSmartList(_ list: MacClippySmartList) {
-        if MacClippySmartListPolicy.isActive(list, in: query) {
-            query = MacClippySmartListPolicy.apply(list, to: query)
-        }
-        hiddenSmartListIDs = MacClippySmartListPolicy.hiding(list, in: hiddenSmartListIDs)
-        MacClippySmartListPolicy.persist(hiddenIDs: hiddenSmartListIDs, to: defaults)
     }
 
     private func applySearchQuery(_ query: String) {
@@ -393,6 +343,7 @@ final class MacClippyDockModel: ObservableObject {
 
     deinit {
         historyChangeObserver?.remove()
+        captureStatusObserver?.remove()
         actionFeedbackTask?.cancel()
         reloadTask?.cancel()
         reloadWorkItem?.cancel()

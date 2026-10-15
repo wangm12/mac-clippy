@@ -49,7 +49,7 @@ public struct MacClippyIndexedRecordID: Equatable, Sendable {
 public typealias SearchHit = MacClippySearchHit
 
 public final class MacClippySearchStore {
-    private static let sqliteIDBatchSize = 500
+    static let sqliteIDBatchSize = 500
 
     public static let migrations: [MacClippyDatabaseMigration] = [
         MacClippyDatabaseMigration(identifier: "001-search-core") { database in
@@ -84,6 +84,13 @@ public final class MacClippySearchStore {
                 INSERT OR IGNORE INTO macclippy_search_state(key, value)
                     VALUES ('source_projection_version', 0);
             """)
+        },
+        MacClippySearchStore.maintenanceIndexMigration,
+        MacClippyDatabaseMigration(identifier: "006-search-repair-epoch") { database in
+            try database.execute(sql: """
+                INSERT OR IGNORE INTO macclippy_search_state(key, value)
+                    VALUES ('repair_epoch', 0);
+                """)
         }
     ]
 
@@ -95,39 +102,6 @@ public final class MacClippySearchStore {
     public init(database: MacClippyDatabase) throws {
         self.database = database
         try database.migrate(Self.migrations)
-    }
-
-    public func databaseHealth() -> MacClippyDatabaseHealthReport {
-        let base = database.healthCheck(requiredTables: [
-            "macclippy_search_index",
-            "macclippy_search_keys",
-            "macclippy_search_state",
-            "grdb_migrations"
-        ])
-        guard base.status == .healthy else { return base }
-
-        do {
-            let integrityIssues = try ftsIntegrityIssues()
-            guard !integrityIssues.isEmpty else { return base }
-            return MacClippyDatabaseHealthReport(
-                status: .repairable,
-                quickCheckPassed: base.quickCheckPassed,
-                foreignKeyViolationCount: base.foreignKeyViolationCount,
-                missingTables: base.missingTables,
-                issues: base.issues + integrityIssues
-            )
-        } catch {
-            // A failed integrity query is itself a storage failure. Do not
-            // report a healthy search database when the consistency check
-            // could not run.
-            return MacClippyDatabaseHealthReport(
-                status: .unrecoverable,
-                quickCheckPassed: false,
-                foreignKeyViolationCount: base.foreignKeyViolationCount,
-                missingTables: base.missingTables,
-                issues: base.issues + ["fts-integrity-query-failed"]
-            )
-        }
     }
 
     public func databaseRowCount() throws -> Int64? {
@@ -142,6 +116,9 @@ public final class MacClippySearchStore {
             try connection.execute(
                 sql: "UPDATE macclippy_search_state SET value = 1 WHERE key = 'repair_needed'"
             )
+            try connection.execute(
+                sql: "UPDATE macclippy_search_state SET value = value + 1 WHERE key = 'repair_epoch'"
+            )
         }
     }
 
@@ -150,6 +127,43 @@ public final class MacClippySearchStore {
             try connection.execute(
                 sql: "UPDATE macclippy_search_state SET value = 0 WHERE key = 'repair_needed'"
             )
+        }
+    }
+
+    /// Changes only when a writer reports that its incremental projection was
+    /// not committed. A repair snapshots this value and may clear the marker
+    /// only if no later writer raised it.
+    public func repairEpoch() throws -> Int64 {
+        try database.queue.read { connection in
+            try Int64.fetchOne(
+                connection,
+                sql: "SELECT value FROM macclippy_search_state WHERE key = 'repair_epoch'"
+            ) ?? 0
+        }
+    }
+
+    /// Completes a repair atomically with its projection-version update. A
+    /// concurrent FTS failure leaves the repair marker set for another pass.
+    @discardableResult
+    public func completeRepair(expectedEpoch: Int64, sourceProjectionVersion: Int64) throws -> Bool {
+        try database.queue.write { connection in
+            let currentEpoch = try Int64.fetchOne(
+                connection,
+                sql: "SELECT value FROM macclippy_search_state WHERE key = 'repair_epoch'"
+            ) ?? 0
+            guard currentEpoch == expectedEpoch else { return false }
+            try connection.execute(
+                sql: "UPDATE macclippy_search_state SET value = 0 WHERE key = 'repair_needed'"
+            )
+            try connection.execute(
+                sql: """
+                    INSERT INTO macclippy_search_state(key, value)
+                    VALUES ('source_projection_version', ?)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                    """,
+                arguments: [sourceProjectionVersion]
+            )
+            return true
         }
     }
 
@@ -296,175 +310,6 @@ public final class MacClippySearchStore {
                 }
                 return SearchHit(kind: kind, id: id, snippet: row["snippet"], rank: rank, rowID: rowID)
             }
-        }
-    }
-
-    // Returns every record_id currently indexed for the given kind. Used by
-    // startup reconciliation to detect FTS rows whose clipboard record has
-    // been deleted (orphan FTS rows). Kept narrow so the public API surface
-    // does not grow beyond what reconciliation needs.
-    public func indexedRecordIDs(kind: RecordKind = .clipboardItem) throws -> [RecordID] {
-        try database.queue.read { connection in
-            try Row.fetchAll(
-                connection,
-                sql: "SELECT record_id FROM macclippy_search_keys WHERE kind = ? ORDER BY rowid ASC",
-                arguments: [kind.rawValue]
-            ).map { row in
-                guard let id = RecordID(rawValue: row["record_id"]) else {
-                    throw MacClippyStoreError.invalidStoredRecord
-                }
-                return id
-            }
-        }
-    }
-
-    /// Reads indexed IDs in bounded pages for maintenance and reconciliation.
-    /// The unpaged overload remains for callers that explicitly need a full
-    /// export, while startup cleanup avoids materializing the complete index.
-    public func indexedRecordIDs(
-        kind: RecordKind = .clipboardItem,
-        limit: Int,
-        offset: Int = 0
-    ) throws -> [RecordID] {
-        guard limit > 0 else { return [] }
-        return try database.queue.read { connection in
-            try Row.fetchAll(
-                connection,
-                sql: "SELECT record_id FROM macclippy_search_keys WHERE kind = ? ORDER BY rowid ASC LIMIT ? OFFSET ?",
-                arguments: [kind.rawValue, limit, max(0, offset)]
-            ).map { row in
-                guard let id = RecordID(rawValue: row["record_id"]) else {
-                    throw MacClippyStoreError.invalidStoredRecord
-                }
-                return id
-            }
-        }
-    }
-
-    /// Reads the maintenance index in rowid order without OFFSET. A caller
-    /// can keep the last rowID and safely continue after deleting rows from
-    /// the current page; later rowids do not shift left.
-    public func indexedRecordIDPage(
-        kind: RecordKind = .clipboardItem,
-        afterRowID: Int64? = nil,
-        limit: Int
-    ) throws -> [MacClippyIndexedRecordID] {
-        guard limit > 0 else { return [] }
-        return try database.queue.read { connection in
-            var sql = "SELECT record_id, rowid FROM macclippy_search_keys WHERE kind = ?"
-            var arguments: [Any] = [kind.rawValue]
-            if let afterRowID {
-                sql += " AND rowid > ?"
-                arguments.append(afterRowID)
-            }
-            sql += " ORDER BY rowid ASC LIMIT ?"
-            arguments.append(limit)
-            guard let statementArguments = StatementArguments(arguments) else {
-                throw MacClippyStoreError.invalidStoredRecord
-            }
-            return try Row.fetchAll(
-                connection,
-                sql: sql,
-                arguments: statementArguments
-            ).map { row in
-                guard let id = RecordID(rawValue: row["record_id"]),
-                      let rowID: Int64 = row["rowid"] else {
-                    throw MacClippyStoreError.invalidStoredRecord
-                }
-                return MacClippyIndexedRecordID(id: id, rowID: rowID)
-            }
-        }
-    }
-
-    /// Returns the indexed subset of a bounded caller-provided ID page. This
-    /// keeps reconciliation from materializing every indexed ID in one global
-    /// Set while still using batched SQL rather than one query per record.
-    public func indexedRecordIDs(
-        kind: RecordKind = .clipboardItem,
-        matching ids: [RecordID]
-    ) throws -> Set<RecordID> {
-        guard !ids.isEmpty else { return [] }
-        var result = Set<RecordID>()
-        for start in stride(from: 0, to: ids.count, by: Self.sqliteIDBatchSize) {
-            let batch = Array(ids[start ..< min(start + Self.sqliteIDBatchSize, ids.count)])
-            let placeholders = Array(repeating: "?", count: batch.count).joined(separator: ",")
-            let rows = try database.queue.read { connection in
-                try Row.fetchAll(
-                    connection,
-                    sql: "SELECT record_id FROM macclippy_search_keys WHERE kind = ? AND record_id IN (\(placeholders))",
-                    arguments: StatementArguments([kind.rawValue] + batch.map(\.rawValue))
-                )
-            }
-            for row in rows {
-                guard let rawID: String = row["record_id"], let id = RecordID(rawValue: rawID) else {
-                    throw MacClippyStoreError.invalidStoredRecord
-                }
-                result.insert(id)
-            }
-        }
-        return result
-    }
-
-    /// Checks both sides of the FTS projection. SQLite's integrity pragmas
-    /// validate the database file, but they cannot detect a missing key row,
-    /// a dangling key rowid, or a virtual-table row that has no projection
-    /// key. Use existence queries rather than materializing the index.
-    private func ftsIntegrityIssues() throws -> [String] {
-        try database.queue.read { connection in
-            var issues: [String] = []
-            if try Row.fetchOne(
-                connection,
-                sql: """
-                    SELECT 1
-                    FROM macclippy_search_keys AS keys
-                    LEFT JOIN macclippy_search_index AS index_rows ON index_rows.rowid = keys.rowid
-                    WHERE index_rows.rowid IS NULL
-                    LIMIT 1
-                """
-            ) != nil {
-                issues.append("fts-key-dangling-rowid")
-            }
-            if try Row.fetchOne(
-                connection,
-                sql: """
-                    SELECT 1
-                    FROM macclippy_search_index AS index_rows
-                    LEFT JOIN macclippy_search_keys AS keys ON keys.rowid = index_rows.rowid
-                    WHERE keys.rowid IS NULL
-                    LIMIT 1
-                """
-            ) != nil {
-                issues.append("fts-row-without-key")
-            }
-            if try Row.fetchOne(
-                connection,
-                sql: """
-                    SELECT 1
-                    FROM macclippy_search_keys
-                    WHERE kind NOT IN (?, ?, ?) OR record_id IS NULL OR trim(record_id) = ''
-                    LIMIT 1
-                """,
-                arguments: [
-                    RecordKind.clipboardItem.rawValue,
-                    RecordKind.pinboard.rawValue,
-                    RecordKind.snippet.rawValue
-                ]
-            ) != nil {
-                issues.append("fts-invalid-projection-key")
-            }
-            if try Row.fetchOne(
-                connection,
-                sql: """
-                    SELECT 1
-                    FROM macclippy_search_keys AS keys
-                    JOIN macclippy_search_index AS index_rows ON index_rows.rowid = keys.rowid
-                    WHERE keys.kind != index_rows.kind OR keys.record_id != index_rows.record_id
-                    LIMIT 1
-                """
-            ) != nil {
-                issues.append("fts-projection-key-mismatch")
-            }
-            return issues
         }
     }
 

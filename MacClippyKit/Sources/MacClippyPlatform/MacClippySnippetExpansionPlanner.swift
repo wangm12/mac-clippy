@@ -28,11 +28,15 @@ public struct MacClippySnippetExpansionPlanner {
     private static let maxBufferLength = 64
     private static let triggerStart: Character = ";"
     private static let tabKeyCode = UInt16(kVK_Tab)
-    private static let returnKeyCode = UInt16(kVK_Return)
 
     private var buffer = ""
     private let modeProvider: () -> MacClippySnippetExpansionMode
     private let lookup: Lookup
+
+    package var currentTrigger: String? {
+        guard let start = buffer.lastIndex(of: Self.triggerStart) else { return nil }
+        return String(buffer[start...])
+    }
 
     public init(
         mode: MacClippySnippetExpansionMode = MacClippySnippetExpansionSettings.defaultMode,
@@ -68,14 +72,19 @@ public struct MacClippySnippetExpansionPlanner {
 
         if mode == .confirmWithTab, keyCode == Self.tabKeyCode {
             defer { reset() }
-            return expansionPlan(suppressedDelimiterKeyCode: Self.tabKeyCode)
+            return expansionPlan(suppressedDelimiterKeyCode: Self.tabKeyCode, suppressDelimiter: true)
         }
 
         if character.isWhitespace || character.isNewline {
             defer { reset() }
-            guard mode == .autoExpand else { return nil }
-            let delimiterKeyCode = suppressedDelimiterKeyCode(for: character, keyCode: keyCode)
-            return expansionPlan(suppressedDelimiterKeyCode: delimiterKeyCode)
+            // Space confirms expansion. Return and Tab remain available to
+            // send messages and move focus unless Tab confirmation is chosen.
+            guard mode == .autoExpand, character == " " else { return nil }
+            return expansionPlan(
+                suppressedDelimiterKeyCode: nil,
+                suppressDelimiter: false,
+                includesDelimiter: true
+            )
         }
 
         buffer.append(character)
@@ -89,27 +98,18 @@ public struct MacClippySnippetExpansionPlanner {
         buffer.removeAll(keepingCapacity: true)
     }
 
-    private func suppressedDelimiterKeyCode(for character: Character, keyCode: UInt16?) -> UInt16? {
-        if keyCode == Self.tabKeyCode || character == "\t" {
-            return Self.tabKeyCode
-        }
-        if keyCode == Self.returnKeyCode || character.isNewline {
-            return Self.returnKeyCode
-        }
-        if character == " " {
-            return UInt16(kVK_Space)
-        }
-        return nil
-    }
-
-    private func expansionPlan(suppressedDelimiterKeyCode: UInt16?) -> MacClippySnippetExpansionPlan? {
+    private func expansionPlan(
+        suppressedDelimiterKeyCode: UInt16?,
+        suppressDelimiter: Bool,
+        includesDelimiter: Bool = false
+    ) -> MacClippySnippetExpansionPlan? {
         guard let start = buffer.lastIndex(of: Self.triggerStart) else { return nil }
         let candidate = String(buffer[start...])
         guard candidate.count >= 2, let body = lookup(candidate) else { return nil }
         return MacClippySnippetExpansionPlan(
             body: body,
-            charactersToDelete: candidate.count,
-            suppressCurrentEvent: true,
+            charactersToDelete: candidate.count + (includesDelimiter ? 1 : 0),
+            suppressCurrentEvent: suppressDelimiter,
             suppressedDelimiterKeyCode: suppressedDelimiterKeyCode
         )
     }

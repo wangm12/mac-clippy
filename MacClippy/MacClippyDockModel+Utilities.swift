@@ -14,19 +14,32 @@ extension MacClippyDockModel {
         plain: Bool? = nil,
         completion: @escaping @MainActor @Sendable () -> Void
     ) {
+        selectRecord(id: item.id, plain: plain, completion: completion)
+    }
+
+    func selectRecord(
+        id: RecordID,
+        plain: Bool? = nil,
+        completion: @escaping @MainActor @Sendable () -> Void
+    ) {
         guard !isSelecting else { return }
         let runtimeReference = runtime
+        let targetPID = pasteTargetProcessIdentifier
         let operation = beginUserOperation()
         let session = sessionGeneration
         let sideEffectGate = MacClippyPasteInjectionGate()
         self.sideEffectGate = sideEffectGate
         isSelecting = true
         clearActionError()
-        let pastePlain = plain ?? MacClippyRetentionPreferences.shouldPastePlain(shiftHeld: false)
+        let pastePlain = plain ?? MacClippyRetentionPreferences.shouldPastePlain(
+            shiftHeld: false,
+            defaults: defaults
+        )
 
         workQueue.async { [weak self, runtimeReference, sideEffectGate] in
             let result = Result {
-                try runtimeReference.paste(id: item.id, plain: pastePlain, sideEffectGate: sideEffectGate)
+                try runtimeReference.paste(
+                    id: id, plain: pastePlain, targetProcessIdentifier: targetPID, sideEffectGate: sideEffectGate)
             }
             MacClippyMainHop.async { [weak self] in
                 guard let self,
@@ -35,8 +48,18 @@ extension MacClippyDockModel {
                 self.isSelecting = false
                 switch result {
                 case let .success(pasteResult):
-                    self.showActionFeedback(.pasted(manual: pasteResult == .manualPasteRequired))
-                    completion()
+                    switch pasteResult {
+                    case .injected:
+                        self.showActionFeedback(.pasted(manual: false))
+                        completion()
+                    case .preparedForManualPaste:
+                        self.showActionFeedback(.pasted(manual: true))
+                        completion()
+                    case let .failed(failure):
+                        self.setActionError(failure.localizedDescription)
+                    case .cancelled:
+                        break
+                    }
                 case .failure:
                     self.setActionError(MacClippyUserFacingError.genericAction)
                 }
@@ -48,8 +71,13 @@ extension MacClippyDockModel {
         _ snippet: MacClippySnippetEntry,
         completion: @escaping @MainActor @Sendable () -> Void
     ) {
+        selectSnippet(id: snippet.id, completion: completion)
+    }
+
+    func selectSnippet(id: RecordID, completion: @escaping @MainActor @Sendable () -> Void) {
         guard !isSelecting else { return }
         let runtimeReference = runtime
+        let targetPID = pasteTargetProcessIdentifier
         let operation = beginUserOperation()
         let session = sessionGeneration
         let sideEffectGate = MacClippyPasteInjectionGate()
@@ -59,7 +87,9 @@ extension MacClippyDockModel {
 
         workQueue.async { [weak self, runtimeReference, sideEffectGate] in
             let result = Result {
-                try runtimeReference.paste(snippetID: snippet.id, sideEffectGate: sideEffectGate)
+                try runtimeReference.paste(
+                    snippetID: id, manualFallback: .prepareClipboard,
+                    targetProcessIdentifier: targetPID, sideEffectGate: sideEffectGate)
             }
             MacClippyMainHop.async { [weak self] in
                 guard let self,
@@ -68,8 +98,18 @@ extension MacClippyDockModel {
                 self.isSelecting = false
                 switch result {
                 case let .success(pasteResult):
-                    self.showActionFeedback(.pasted(manual: pasteResult == .manualPasteRequired))
-                    completion()
+                    switch pasteResult {
+                    case .injected:
+                        self.showActionFeedback(.pasted(manual: false))
+                        completion()
+                    case .preparedForManualPaste:
+                        self.showActionFeedback(.pasted(manual: true))
+                        completion()
+                    case let .failed(failure):
+                        self.setActionError(failure.localizedDescription)
+                    case .cancelled:
+                        break
+                    }
                 case .failure:
                     self.setActionError(MacClippyUserFacingError.genericAction)
                 }
@@ -143,7 +183,8 @@ extension MacClippyDockModel {
     func perform(
         _ operation: @escaping @Sendable () throws -> Bool,
         onSuccess: (@MainActor @Sendable () -> Void)? = nil,
-        onFailure: (@MainActor @Sendable () -> Void)? = nil
+        onFailure: (@MainActor @Sendable () -> Void)? = nil,
+        onStale: (@MainActor @Sendable () -> Void)? = nil
     ) {
         clearActionError()
         let userOperation = beginUserOperation()
@@ -155,9 +196,15 @@ extension MacClippyDockModel {
                 }
             }
             MacClippyMainHop.async { [weak self] in
-                guard let self,
-                      self.sessionGeneration == session,
-                      self.operationGeneration == userOperation else { return }
+                guard let self else {
+                    onStale?()
+                    return
+                }
+                guard self.sessionGeneration == session,
+                      self.operationGeneration == userOperation else {
+                    onStale?()
+                    return
+                }
                 switch result {
                 case .success:
                     onSuccess?()
@@ -203,6 +250,7 @@ extension MacClippyDockModel {
     }
 
     func showActionFeedback(_ feedback: MacClippyDockActionFeedback) {
+        if feedback.isScreenToastFeedback { actionToastHandler?(feedback) }
         actionFeedbackTask?.cancel()
         actionFeedback = feedback
         actionFeedbackTask = Task { @MainActor [weak self] in

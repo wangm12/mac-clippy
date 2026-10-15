@@ -75,7 +75,7 @@ extension MacClippyRuntime {
     func recordStartupHealthIfNeeded(
         health providedHealth: [String: MacClippyDatabaseHealthReport]? = nil
     ) {
-        let health = providedHealth ?? withStoreLock { storageHealthLocked() }
+        let health = providedHealth ?? storageHealth()
         for databaseName in ["clipboard", "search", "pinboards", "snippets"] {
             guard let report = health[databaseName], report.status != .healthy else { continue }
             let impact = report.status == .unrecoverable

@@ -70,6 +70,7 @@ public extension MacClippyCaptureDedupPolicy {
             primary: primary,
             representations: representations.map { representation in
                 MacClippyCaptureDedupRepresentation(
+                    itemIndex: representation.itemIndex,
                     uti: representation.uti,
                     payloadState: representation.payloadState.rawValue,
                     payloadBytes: representation.payloadBytes
@@ -130,14 +131,14 @@ public enum MacClippyCaptureMapper {
     // URLs) is irrelevant here because the mapper never decodes strings; raw
     // bytes are retained verbatim per UTI.
     public static func representations(for change: PasteboardChange) -> [MacClippyClipboardRepresentation] {
-        var seen = Set<String>()
+        var seenItemTypes = Set<String>()
         var ordered: [MacClippyClipboardRepresentation] = []
 
-        for item in change.items {
+        for (itemIndex, item) in change.items.enumerated() {
             for type in item.types {
                 let uti = type
-                guard !seen.contains(uti) else { continue }
-                seen.insert(uti)
+                let identity = "\(itemIndex)\u{0}\(uti)"
+                guard seenItemTypes.insert(identity).inserted else { continue }
 
                 let payloadState: MacClippyClipboardRepresentationPayloadState
                 let data: Data?
@@ -163,6 +164,7 @@ public enum MacClippyCaptureMapper {
                 }
 
                 ordered.append(MacClippyClipboardRepresentation(
+                    itemIndex: itemIndex,
                     uti: uti,
                     payloadBytes: data,
                     blobID: nil,

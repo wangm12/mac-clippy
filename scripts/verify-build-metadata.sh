@@ -3,6 +3,8 @@ set -euo pipefail
 
 APP_PATH="${1:-}"
 EXPECTED_BUNDLE_ID="${EXPECTED_BUNDLE_ID:-com.macallyouneed.macclippy}"
+EXPECTED_MARKETING_VERSION="${EXPECTED_MARKETING_VERSION:-}"
+EXPECTED_BUILD_VERSION="${EXPECTED_BUILD_VERSION:-}"
 
 if [[ -z "${APP_PATH}" || ! -d "${APP_PATH}" || "${APP_PATH}" != *.app ]]; then
   echo "usage: $0 /path/to/MacClippy.app" >&2
@@ -33,12 +35,20 @@ fi
 
 short_version="$(read_plist_value CFBundleShortVersionString)"
 build_version="$(read_plist_value CFBundleVersion)"
-if [[ ! "${short_version}" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+if [[ ! "${short_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "error: invalid CFBundleShortVersionString: ${short_version}" >&2
   exit 1
 fi
-if [[ ! "${build_version}" =~ ^[1-9][0-9]*$ ]]; then
+if [[ ! "${build_version}" =~ ^[1-9][0-9]{0,3}(\.[0-9]{1,2}){0,2}$ ]]; then
   echo "error: invalid CFBundleVersion: ${build_version}" >&2
+  exit 1
+fi
+if [[ -n "${EXPECTED_MARKETING_VERSION}" && "${short_version}" != "${EXPECTED_MARKETING_VERSION}" ]]; then
+  echo "error: expected CFBundleShortVersionString ${EXPECTED_MARKETING_VERSION}, found ${short_version}" >&2
+  exit 1
+fi
+if [[ -n "${EXPECTED_BUILD_VERSION}" && "${build_version}" != "${EXPECTED_BUILD_VERSION}" ]]; then
+  echo "error: expected CFBundleVersion ${EXPECTED_BUILD_VERSION}, found ${build_version}" >&2
   exit 1
 fi
 
@@ -73,4 +83,4 @@ if [[ -z "${executable}" || ! -x "${APP_PATH}/Contents/MacOS/${executable}" ]]; 
   exit 1
 fi
 
-echo "Application metadata passed for ${bundle_id}."
+echo "Application metadata passed for ${bundle_id} ${short_version} (${build_version})."

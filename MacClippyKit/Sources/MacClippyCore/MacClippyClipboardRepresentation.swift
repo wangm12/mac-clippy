@@ -35,6 +35,9 @@ public typealias ClipboardRepresentationPayloadState = MacClippyClipboardReprese
 // optional blob-store identifier used for oversized payloads, and an explicit
 // payloadState so a nil payloadBytes is never ambiguous.
 public struct MacClippyClipboardRepresentation: Codable, Equatable, Sendable {
+    // Zero-based native pasteboard item position. Old records and callers that
+    // only represented one item decode/default to zero.
+    public let itemIndex: Int
     public let uti: String
     // Encrypted payload bytes for in-table storage, or the blob-store
     // identifier when payloadBytes is nil and blobID references BlobStore.
@@ -45,7 +48,8 @@ public struct MacClippyClipboardRepresentation: Codable, Equatable, Sendable {
     public let blobID: String?
     public let payloadState: MacClippyClipboardRepresentationPayloadState
 
-    public init(uti: String, payloadBytes: Data?, blobID: String? = nil) {
+    public init(itemIndex: Int = 0, uti: String, payloadBytes: Data?, blobID: String? = nil) {
+        self.itemIndex = itemIndex
         self.uti = uti
         self.payloadBytes = payloadBytes
         self.blobID = blobID
@@ -62,11 +66,13 @@ public struct MacClippyClipboardRepresentation: Codable, Equatable, Sendable {
     // bytes. Callers must pass payloadBytes nil and blobID nil for
     // .unavailable, payloadBytes nil and a non-nil blobID for .spilled.
     public init(
+        itemIndex: Int = 0,
         uti: String,
         payloadBytes: Data?,
         blobID: String?,
         payloadState: MacClippyClipboardRepresentationPayloadState
     ) {
+        self.itemIndex = itemIndex
         self.uti = uti
         self.payloadBytes = payloadBytes
         self.blobID = blobID
@@ -76,22 +82,42 @@ public struct MacClippyClipboardRepresentation: Codable, Equatable, Sendable {
     public var isBlobBacked: Bool { blobID != nil }
     public var isUnavailable: Bool { payloadState == .unavailable }
     public var isOversized: Bool { payloadState == .oversized }
+
+    private enum CodingKeys: String, CodingKey {
+        case itemIndex
+        case uti
+        case payloadBytes
+        case blobID
+        case payloadState
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        itemIndex = try container.decodeIfPresent(Int.self, forKey: .itemIndex) ?? 0
+        uti = try container.decode(String.self, forKey: .uti)
+        payloadBytes = try container.decodeIfPresent(Data.self, forKey: .payloadBytes)
+        blobID = try container.decodeIfPresent(String.self, forKey: .blobID)
+        payloadState = try container.decode(MacClippyClipboardRepresentationPayloadState.self, forKey: .payloadState)
+    }
 }
 
 public typealias ClipboardRepresentation = MacClippyClipboardRepresentation
 
 public struct MacClippyClipboardRepresentationMetadata: Sendable, Equatable {
+    public let itemIndex: Int
     public let uti: String
     public let payloadState: MacClippyClipboardRepresentationPayloadState
     public let inlineByteCount: Int
     public let blobID: String?
 
     public init(
+        itemIndex: Int = 0,
         uti: String,
         payloadState: MacClippyClipboardRepresentationPayloadState,
         inlineByteCount: Int,
         blobID: String?
     ) {
+        self.itemIndex = itemIndex
         self.uti = uti
         self.payloadState = payloadState
         self.inlineByteCount = max(0, inlineByteCount)

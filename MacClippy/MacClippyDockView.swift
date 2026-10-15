@@ -83,10 +83,10 @@ struct MacClippyDockView: View {
     let onModalPresentationChange: (Bool) -> Void
     let onReduceMotionChange: (Bool) -> Void
     let onLayoutHeightChange: (Bool) -> Void
-    // Screen-level copy toast callback. When the model surfaces a .copied
-    // feedback, the view calls this so the controller can show a floating
-    // toast outside the dock instead of an in-panel overlay.
-    let onCopyToast: (String) -> Void
+    var onShowDetails: (RecordID, Bool) -> Void = { _, _ in }
+    var onPreviewTarget: (MacClippyDockPreviewTarget) -> Void = { _ in }
+    var onEditSnippet: (MacClippySnippetEntry) -> Void = { _ in }
+    var onOpenHelp: () -> Void = {}
     @Environment(\.accessibilityReduceMotion) var accessibilityReduceMotion
     @Environment(\.colorSchemeContrast) var colorSchemeContrast
     @Environment(\.accessibilityDifferentiateWithoutColor) var differentiateWithoutColor
@@ -107,6 +107,10 @@ struct MacClippyDockView: View {
     @State var actionBarAppeared = false
     @State var shouldRestoreSearchFocus = false
     @State var modalFocusGeneration: UInt = 0
+    @State var overlayFocusGeneration: UInt = 0
+    @State var overlaySearchSessionGeneration: UInt?
+    @State var overlaySearchFocusReset: Int?
+    @State var pendingSearchFocusReset: Int?
     @State var sourceResolveBatch = MacClippySourceResolveBatch()
     @State var sourceResolveCoalescer = MacClippyMainQueueCoalescer()
     @State var isCarouselScrolling = false
@@ -166,6 +170,7 @@ struct MacClippyDockView: View {
         }
         .clipShape(TopRoundedRectangle(radius: MacClippyDockBackdropHolePolicy.panelCornerRadius))
         .accessibilityHidden(model.modal != nil)
+        .disabled(model.isDetailsSaving || model.isSelecting)
         .overlay {
             modalOverlay
         }
@@ -173,7 +178,7 @@ struct MacClippyDockView: View {
             // In-panel feedback overlay skips .copied — copy confirmations get
             // a screen-level toast via onCopyToast instead, so the indicator
             // survives a dock close and reads like paste feedback.
-            if let actionFeedback = model.actionFeedback, !actionFeedback.isCopyFeedback {
+            if let actionFeedback = model.actionFeedback, !actionFeedback.isScreenToastFeedback {
                 actionFeedbackView(actionFeedback)
                     .padding(.top, 56)
                     .padding(.trailing, 18)
@@ -230,9 +235,7 @@ struct MacClippyDockView: View {
             }
         }
         .onReceive(model.$actionFeedback) { feedback in
-            if let feedback, feedback.isCopyFeedback {
-                onCopyToast(feedback.title)
-            }
+            if feedback?.isScreenToastFeedback == true { return }
             if let feedback, let app = NSApp {
                 NSAccessibility.post(
                     element: app,
@@ -300,32 +303,11 @@ struct MacClippyDockView: View {
         .onChange(of: model.hasMultipleSelection) { _, hasMultipleSelection in
             onLayoutHeightChange(hasMultipleSelection)
         }
+        .onChange(of: model.modal != nil || model.isFilterPopoverPresented) { _, presented in
+            updateOverlaySearchFocus(presented: presented)
+        }
         .onChange(of: model.modal) { _, modal in
-            modalFocusGeneration &+= 1
-            let focusGeneration = modalFocusGeneration
-            // The modal is an in-panel overlay, so the search TextField can
-            // still be the AppKit first responder when the overlay appears.
-            // Release it before the modal editor requests focus; otherwise
-            // printable keys continue to land in the main search field.
-            if modal != nil {
-                shouldRestoreSearchFocus = isSearchFocused
-                isSearchFocused = false
-                onSearchModeChange(false)
-                DispatchQueue.main.async {
-                    guard modalFocusGeneration == focusGeneration, model.modal != nil else { return }
-                    modalAccessibilityFocused = true
-                }
-            } else {
-                modalAccessibilityFocused = false
-                if shouldRestoreSearchFocus {
-                    DispatchQueue.main.async {
-                        guard modalFocusGeneration == focusGeneration, model.modal == nil else { return }
-                        isSearchFocused = true
-                        shouldRestoreSearchFocus = false
-                    }
-                }
-            }
-            onModalPresentationChange(modal != nil)
+            updateModalAccessibilityFocus(presented: modal != nil)
         }
     }
 
@@ -345,73 +327,3 @@ struct MacClippyDockView: View {
 // without touching the store. The editor never writes to the pasteboard, so it
 // has no copy/paste side effects. The parent owns the actual model.renameItem
 // call so this view stays free of runtime dependencies.
-struct MacClippyRenameItemEditor: View {
-    enum Outcome {
-        case save(name: String?)
-        case cancel
-    }
-
-    let initialName: String?
-    let onComplete: (Outcome) -> Void
-    let onCancel: () -> Void
-
-    @FocusState private var isFieldFocused: Bool
-    @State private var text: String
-
-    init(initialName: String?, onComplete: @escaping (Outcome) -> Void, onCancel: @escaping () -> Void) {
-        self.initialName = initialName
-        self.onComplete = onComplete
-        self.onCancel = onCancel
-        // Prefill with the current trimmed name so the user edits in place;
-        // nil/blank becomes an empty field so Save removes the name.
-        let trimmed = initialName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        _text = State(initialValue: trimmed)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Rename")
-                .font(.headline)
-            TextField("Name", text: $text)
-                .textFieldStyle(.roundedBorder)
-                .focused($isFieldFocused)
-                .onSubmit(save)
-            Text("Leave blank to remove the name.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            HStack {
-                Spacer()
-                Button("Cancel") {
-                    onComplete(.cancel)
-                    onCancel()
-                }
-                    .keyboardShortcut(.cancelAction)
-                Button("Save", action: save)
-                    .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(20)
-        .frame(width: 320)
-        .background(MacClippyDockTheme.panelStrongColor, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(MacClippyDockTheme.lineColor, lineWidth: 1)
-        }
-        .shadow(color: .black.opacity(0.18), radius: 24, y: 10)
-        .onAppear { isFieldFocused = true }
-    }
-
-    private func save() {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Blank removes the name: pass nil so the model/runtime normalizes the
-        // stored value and rebuilds the index without the name term.
-        onComplete(.save(name: trimmed.isEmpty ? nil : trimmed))
-    }
-}
-
-struct MacClippyDockCardWell: View {
-    var body: some View {
-        TopRoundedRectangle(radius: MacClippyDockBackdropHolePolicy.panelCornerRadius)
-            .stroke(Color.primary.opacity(0.12), lineWidth: 1)
-    }
-}

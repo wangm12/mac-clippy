@@ -1,16 +1,17 @@
 import AppKit
-
 import MacClippyCore
 import MacClippyPlatform
 
 @MainActor
 extension AppDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !isIsolatedE2E else { return false }
         openSettingsWindow()
         return true
     }
 
     func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool {
+        guard !isIsolatedE2E else { return false }
         openSettingsWindow()
         return true
     }
@@ -24,7 +25,14 @@ extension AppDelegate {
             recoveryAction: "retry_startup",
             impact: "menu_bar_runtime_unavailable"
         )
-        clipboardHotKey.unregister()
+        if !isIsolatedE2E {
+            clipboardHotKey.unregister()
+        }
+
+        if isIsolatedE2E {
+            NSApp.terminate(nil)
+            return
+        }
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -42,11 +50,7 @@ extension AppDelegate {
     }
 
     func retryStartup() {
-        do {
-            try start()
-        } catch {
-            handleStartupFailure(error)
-        }
+        recoverPendingRestoreAndStart()
     }
 
     func refreshPermissionDependentFeatures() {
@@ -100,7 +104,7 @@ extension AppDelegate {
         }
         let generation = maintenanceGeneration
         DispatchQueue.global(qos: .utility).async {
-            let health = runtime.storageHealth()
+            let health = runtime.storageHealth(mode: .full)
             DispatchQueue.main.async {
                 guard self.maintenanceGeneration == generation, self.runtime === runtime else { return }
                 completion(health)
@@ -127,7 +131,12 @@ extension AppDelegate {
         DispatchQueue.global(qos: .utility).async {
             let result = Result {
                 let snapshot = try runtime.diagnosticsStorageSnapshot()
-                try MacClippyDiagnosticsExporter.export(to: url, storageSnapshot: snapshot)
+                try MacClippyDiagnosticsExporter.export(
+                    to: url,
+                    defaults: runtime.preferencesDefaults,
+                    paths: runtime.paths,
+                    storageSnapshot: snapshot
+                )
             }
             DispatchQueue.main.async {
                 guard self.maintenanceGeneration == generation, self.runtime === runtime else { return }
@@ -179,56 +188,29 @@ extension AppDelegate {
         from snapshotURL: URL,
         completion: @escaping @MainActor @Sendable (Result<MacClippyBackupValidation, Error>) -> Void
     ) {
+        guard let runtime else {
+            completion(.failure(MacClippyBackupError.keyRequired))
+            return
+        }
+        let keySource = runtime.clipboardStore.backupKeySource
         let generation = maintenanceGeneration
         DispatchQueue.global(qos: .utility).async {
-            let validationResult = Result { try MacClippyBackup.validate(at: snapshotURL) }
+            let validationResult = Result {
+                try MacClippyBackup.validate(at: snapshotURL, keySource: keySource)
+            }
             DispatchQueue.main.async {
                 guard self.maintenanceGeneration == generation else { return }
                 switch validationResult {
                 case let .success(validation):
                     guard MacClippyBackupSettingsPolicy.canRestore(validation) else {
-                        completion(.failure(MacClippyBackupError.invalidManifest))
+                        let error = validation.keyCompatible
+                            ? MacClippyBackupError.invalidManifest
+                            : MacClippyBackupError.keyMismatch
+                        completion(.failure(error))
                         return
                     }
-                    self.installValidatedBackup(from: snapshotURL, completion: completion)
+                    self.installValidatedBackup(from: snapshotURL, keySource: keySource, completion: completion)
                 case let .failure(error):
-                    completion(.failure(error))
-                }
-            }
-        }
-    }
-
-    private func installValidatedBackup(
-        from snapshotURL: URL,
-        completion: @escaping @MainActor @Sendable (Result<MacClippyBackupValidation, Error>) -> Void
-    ) {
-        rollbackStartup()
-        let generation = maintenanceGeneration
-        DispatchQueue.global(qos: .utility).async {
-            let installResult = Result {
-                let paths = try MacClippyPaths()
-                return try MacClippyBackup.installIntoLiveRoot(
-                    from: snapshotURL,
-                    liveRootURL: paths.rootURL
-                )
-            }
-            DispatchQueue.main.async {
-                guard self.maintenanceGeneration == generation else { return }
-                switch installResult {
-                case let .success(installed):
-                    do {
-                        try self.start()
-                        completion(.success(installed))
-                    } catch {
-                        self.handleStartupFailure(error)
-                        completion(.failure(error))
-                    }
-                case let .failure(error):
-                    do {
-                        try self.start()
-                    } catch {
-                        self.handleStartupFailure(error)
-                    }
                     completion(.failure(error))
                 }
             }

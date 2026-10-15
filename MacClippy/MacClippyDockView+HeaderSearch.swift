@@ -75,167 +75,7 @@ extension MacClippyDockView {
         .macClippyNavContainerShape()
     }
 
-    // Selection-mode header: count + Cancel on the right, action buttons
-    // centered in the row.
-    var selectionHeader: some View {
-        GeometryReader { proxy in
-            let available = proxy.size.width
-            let rightControlsWidth: CGFloat = 250
-            let maxActionsWidth = max(200, available - rightControlsWidth)
-
-            ZStack {
-                // Centered actions (Paste all, Queue paste, Copy all, Pin, Delete, Clear)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        SelectionBarButton("Paste all", systemImage: "arrow.down.doc", emphasis: .primary) {
-                            model.pasteSelectedAll(completion: { [weak model] in
-                                _ = model
-                                onClose()
-                            })
-                        }
-                        .macClippyGlassEffectID("paste-all", in: headerGlassNamespace, enabled: !reduceMotion)
-                        .staggeredAppearance(index: 0, appeared: actionBarAppeared, reduceMotion: reduceMotion)
-                        SelectionBarButton("Queue paste", systemImage: "list.number") {
-                            model.pasteQueued(completion: { [weak model] in
-                                _ = model
-                                onClose()
-                            })
-                        }
-                        .staggeredAppearance(index: 1, appeared: actionBarAppeared, reduceMotion: reduceMotion)
-                        SelectionBarButton("Copy all", systemImage: "doc.on.doc") {
-                            model.copySelectedAll()
-                        }
-                        .staggeredAppearance(index: 2, appeared: actionBarAppeared, reduceMotion: reduceMotion)
-                        if case let .pinboard(boardID) = model.selectedTab,
-                           let board = model.pinboards.first(where: { $0.id == boardID }) {
-                            SelectionBarButton("Remove from list", systemImage: "pin.slash") {
-                                model.unpinSelected()
-                            }
-                            .help("Remove selected items from \(board.name)")
-                            .staggeredAppearance(index: 3, appeared: actionBarAppeared, reduceMotion: reduceMotion)
-                        } else if model.batchPinTarget != nil {
-                            SelectionBarButton("Pin", systemImage: "pin") {
-                                model.pinSelected()
-                            }
-                            .staggeredAppearance(index: 3, appeared: actionBarAppeared, reduceMotion: reduceMotion)
-                        }
-                        SelectionBarButton("Delete", systemImage: "trash", role: .destructive) {
-                            model.deleteSelected()
-                        }
-                        .staggeredAppearance(index: 4, appeared: actionBarAppeared, reduceMotion: reduceMotion)
-                        SelectionBarButton("Clear", systemImage: "xmark", role: .destructive) {
-                            model.clearSelection()
-                        }
-                        .staggeredAppearance(index: 5, appeared: actionBarAppeared, reduceMotion: reduceMotion)
-                    }
-                    .padding(.horizontal, 2)
-                    .padding(.vertical, 4)
-                }
-                .frame(maxWidth: maxActionsWidth)
-                .frame(maxWidth: .infinity, alignment: .center)
-
-                // Right: count badge (with number flip) + Cancel/Esc.
-                HStack(spacing: 8) {
-                    Spacer()
-
-                    HStack(spacing: 4) {
-                        Text("\(model.selectionCount)")
-                            .id(model.selectionCount)
-                            .transition(MacClippyMotion.numberFlipTransition(reduceMotion: reduceMotion))
-                        Text("selected")
-                    }
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(MacClippyDockTheme.textColor)
-                    .padding(.horizontal, 14)
-                    .frame(height: 36)
-                    .contentShape(Capsule())
-                    .macClippyFilterChipStyle(
-                        selected: true,
-                        hovered: false,
-                        tint: MacClippyDockTheme.accentColor
-                    )
-                    .overlay(
-                        Capsule()
-                            .inset(by: MacClippyDockTheme.pillBorderInset)
-                            .stroke(
-                                MacClippyDockTheme.pillRestBorder,
-                                lineWidth: MacClippyDockTheme.pillBorderWidth
-                            )
-                    )
-                    .contentShape(Capsule())
-                    .animation(MacClippyMotion.animation(MacClippyMotion.focusAnimation, reduceMotion: reduceMotion), value: model.selectionCount)
-
-                    SelectionBarButton("Cancel", systemImage: "xmark") {
-                        model.clearSelection()
-                    }
-                    .help("Exit selection (Esc)")
-                }
-            }
-            .frame(width: available, height: proxy.size.height, alignment: .center)
-        }
-        .onAppear { actionBarAppeared = true }
-        .onDisappear { actionBarAppeared = false }
-    }
-
-    // Single horizontal top row: smart lists & snippets on left, centered search field,
-    // and All filter + search chips + user category pills (+ New) on the right.
-    var topRow: some View {
-        GeometryReader { proxy in
-            let available = proxy.size.width
-            let searchWidth = min(max(240, available * 0.28), 380)
-            let searchRight = (available + searchWidth) / 2
-
-            ZStack(alignment: .leading) {
-                // 1. Far Left: default filters (URL, Image, Snippets)
-                HStack(spacing: 0) {
-                    defaultFilterPillsContainer(maxWidth: max(100, (available - searchWidth) / 2 - 16))
-                    Spacer()
-                        .allowsHitTesting(false)
-                }
-
-                // 2. Exact Center: search field (stays centered)
-                searchField
-                    .frame(width: searchWidth)
-                    .frame(maxWidth: .infinity, alignment: .center)
-
-                // 3. Right of Search Bar: All tag, active filter chips, user created categories (+ New)
-                HStack(spacing: 8) {
-                    Spacer()
-                        .frame(width: searchRight + 8)
-                        .allowsHitTesting(false)
-                    allFilterPill
-                    searchFilterChipRow
-                    userCategoryPillsContainer(maxWidth: max(60, available - searchRight - 8 - 48 - 60))
-                    Spacer()
-                        .allowsHitTesting(false)
-                }
-
-                // 4. Far Right: Settings
-                HStack(spacing: 0) {
-                    Spacer()
-                        .allowsHitTesting(false)
-                    headerTrailingButtons
-                }
-            }
-            .frame(width: available, height: proxy.size.height, alignment: .center)
-        }
-        .onAppear {
-            // Keyboard-first: do not steal focus into the search field on
-            // launch. Reduce Motion is still reported to the controller.
-            onReduceMotionChange(accessibilityReduceMotion)
-        }
-        .onChange(of: model.searchFocusRequest) { _, token in
-            if MacClippyDockSearchQueryWritePolicy.shouldCollapseCaretAfterProgrammaticFocus(
-                query: model.query
-            ) {
-                searchCaretCollapseToken = token
-            }
-            isSearchFocused = true
-        }
-        .onChange(of: model.searchFocusReset) { _, _ in isSearchFocused = false }
-    }
-
-    var searchField: some View {
+    func searchField(chipWidth: CGFloat) -> some View {
         HStack(spacing: 8) {
             HStack(spacing: 8) {
                 // Plain magnifying-glass icon, no circular badge (reference).
@@ -246,32 +86,8 @@ extension MacClippyDockView {
                             ? MacClippyDockTheme.accentColor
                             : MacClippyDockTheme.muted2Color
                     )
-                MacClippyAppKitSearchField(
-                    committedQuery: model.displayedSearchText,
-                    isFocused: isSearchFocused,
-                    collapseToken: searchCaretCollapseToken,
-                    programmaticSyncToken: searchFieldProgrammaticSyncToken
-                        + model.searchQueryProgrammaticWriteToken,
-                    onCommit: { incoming in
-                        model.commitSearchFieldText(incoming, hasMarkedText: false)
-                    },
-                    onFocusChange: { focused in
-                        guard isSearchFocused != focused else { return }
-                        isSearchFocused = focused
-                        onSearchModeChange(focused)
-                    },
-                    onCompositionChange: { composing in
-                        onSearchCompositionChange(composing)
-                    },
-                    onSubmit: { model.reload() }
-                )
-                    .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
-                    .help(
-                        "Search clipboard history. Filter by source with app:Safari. Add clauses like "
-                            + "type:text, type:url, name:work, has:name, has:ocr, before:YYYY-MM-DD, "
-                            + "after:YYYY-MM-DD. Quote a phrase to keep it together. Bare words match any "
-                            + "continuous fragment (ss finds passport)."
-                    )
+                searchFilterChipRow(maxWidth: chipWidth)
+                nativeSearchField
                 searchClearButton
             }
             .contentShape(Capsule())
@@ -289,13 +105,43 @@ extension MacClippyDockView {
         }
     }
 
+    private var nativeSearchField: some View {
+    MacClippyAppKitSearchField(
+        committedQuery: model.displayedSearchText,
+        isFocused: isSearchFocused,
+        collapseToken: searchCaretCollapseToken,
+        programmaticSyncToken: searchFieldProgrammaticSyncToken
+            + model.searchQueryProgrammaticWriteToken,
+        onCommit: { incoming in
+            model.commitSearchFieldText(incoming, hasMarkedText: false)
+        },
+        onFocusChange: { focused in
+            // Native menus temporarily release the field editor. Search stays
+            // the intended keyboard destination until an explicit result or
+            // surface transition resets the model's focus request.
+            guard focused || !model.searchFocusIsRequested else { return }
+            guard isSearchFocused != focused else { return }
+            isSearchFocused = focused
+            onSearchModeChange(focused)
+        },
+        onCompositionChange: { composing in
+            onSearchCompositionChange(composing)
+        },
+        onSubmit: { focusCard() }
+    )
+        .frame(minWidth: 200, maxWidth: .infinity, minHeight: 22, alignment: .leading)
+        .help(
+            "Search clipboard history. Filter by source with app:Safari. Add clauses like "
+                + "type:text, type:url, name:work, has:name, has:ocr, before:YYYY-MM-DD, "
+                + "after:YYYY-MM-DD. Quote a phrase to keep it together. Bare words match any "
+                + "continuous fragment (ss finds passport)."
+        )
+    }
+
     private var mountedSearchFilterChips: [MacClippySearchFilterChip] {
         MacClippyDockSearchQueryWritePolicy.mountedSearchFilterChips(
             applied: model.searchFilterChips,
-            suggestions: [],
-            excludingTokens: MacClippySmartListPolicy.visibleListTokens(
-                hiddenIDs: model.hiddenSmartListIDs
-            )
+            suggestions: []
         )
     }
 
@@ -307,29 +153,40 @@ extension MacClippyDockView {
     }
 
     @ViewBuilder
-    var searchFilterChipRow: some View {
+    func searchFilterChipRow(maxWidth: CGFloat) -> some View {
         let chips = mountedSearchFilterChips
-        if chipRowVisible, !chips.isEmpty {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 4) {
-                    ForEach(chips) { chip in
-                        searchFilterChip(chip)
-                            .transition(MacClippyMotion.fadeTransition(reduceMotion: reduceMotion))
+        if chipRowVisible, let chip = chips.first, maxWidth > 0 {
+            Group {
+                if chips.count == 1 {
+                    searchFilterChip(chip, maximumTitleWidth: max(12, maxWidth - 28))
+                } else {
+                    Button {
+                        model.isFilterPopoverPresented = true
+                    } label: {
+                        Text("\(chips.count) filters")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(MacClippyDockTheme.textColor)
+                            .padding(.horizontal, 8)
+                            .frame(height: 22)
+                            .contentShape(Capsule())
                     }
+                    .buttonStyle(.plain)
+                    .background(MacClippyDockTheme.accentSoftColor, in: Capsule())
+                    .accessibilityLabel("Show all \(chips.count) search filters")
+                    .help(chips.map(\.title).joined(separator: ", "))
                 }
             }
-            .frame(maxWidth: MacClippyDockSearchQueryWritePolicy.chipRowMaxWidth(isVisible: true))
+            .fixedSize(horizontal: true, vertical: false)
             .animation(
                 MacClippyMotion.animation(MacClippyMotion.hoverAnimation, reduceMotion: reduceMotion),
                 value: chips.map(\.id)
             )
-            .accessibilityLabel("Search filters")
         }
     }
 
     @ViewBuilder
     var searchClearButton: some View {
-        if MacClippyDockSearchQueryWritePolicy.isClearButtonVisible(hasQuery: !model.displayedSearchText.isEmpty) {
+        if MacClippyDockSearchQueryWritePolicy.isClearButtonVisible(hasQuery: !model.query.isEmpty) {
             Button {
                 model.clearSearchQuery()
                 searchFieldProgrammaticSyncToken += 1
@@ -347,7 +204,9 @@ extension MacClippyDockView {
         }
     }
 
-    func searchFilterChip(_ chip: MacClippySearchFilterChip) -> some View {
+    func searchFilterChip(
+        _ chip: MacClippySearchFilterChip, maximumTitleWidth: CGFloat? = nil
+    ) -> some View {
         Button {
             if chip.isSuggestion {
                 model.appendSearchFilter(token: chip.token)
@@ -360,6 +219,9 @@ extension MacClippyDockView {
         } label: {
             HStack(spacing: 4) {
                 Text(chip.title)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: maximumTitleWidth, alignment: .leading)
                 if !chip.isSuggestion {
                     Image(systemName: "xmark")
                         .font(.system(size: 8, weight: .bold))

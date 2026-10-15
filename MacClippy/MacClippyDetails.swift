@@ -13,14 +13,15 @@ enum MacClippyDetailsFocusedField: Hashable {
     case name
 }
 
+@MainActor
 struct MacClippyDetailsView: View {
     let details: MacClippyItemDetails
     let editing: MacClippyDetailsEditing
     let onEditingChanged: (Bool) -> Void
     let onEdit: () -> Void
     let onRename: () -> Void
-    let onSaveContent: (String) -> Void
-    let onSaveName: (String) -> Void
+    let onSaveContent: (String, MacClippyDetailsSaveIntent) -> Void
+    let onSaveName: (String, MacClippyDetailsSaveIntent) -> Void
     let onCancelEdit: () -> Void
     let onPreview: () -> Void
     let onCopy: () -> Void
@@ -32,18 +33,18 @@ struct MacClippyDetailsView: View {
     let onDelete: () -> Void
     let onClose: () -> Void
 
-    @State var contentDraft: String
-    @State var nameDraft: String
+    @ObservedObject var editSession: MacClippyDetailsEditSession
     @FocusState var focusedField: MacClippyDetailsFocusedField?
 
     init(
         details: MacClippyItemDetails,
         editing: MacClippyDetailsEditing = .none,
+        editSession: MacClippyDetailsEditSession? = nil,
         onEditingChanged: @escaping (Bool) -> Void = { _ in },
         onEdit: @escaping () -> Void = {},
         onRename: @escaping () -> Void = {},
-        onSaveContent: @escaping (String) -> Void = { _ in },
-        onSaveName: @escaping (String) -> Void = { _ in },
+        onSaveContent: @escaping (String, MacClippyDetailsSaveIntent) -> Void = { _, _ in },
+        onSaveName: @escaping (String, MacClippyDetailsSaveIntent) -> Void = { _, _ in },
         onCancelEdit: @escaping () -> Void = {},
         onPreview: @escaping () -> Void = {},
         onCopy: @escaping () -> Void = {},
@@ -72,8 +73,7 @@ struct MacClippyDetailsView: View {
         self.onPin = onPin
         self.onDelete = onDelete
         self.onClose = onClose
-        _contentDraft = State(initialValue: details.textContent ?? "")
-        _nameDraft = State(initialValue: details.customLabel ?? "")
+        self.editSession = editSession ?? MacClippyDetailsEditSession(details: details)
     }
 
     var body: some View {
@@ -84,15 +84,20 @@ struct MacClippyDetailsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     contentSection
-                    metadataSection
-                    representationsSection
+                    if editing == .name { metadataSection }
+                    DisclosureGroup("Item information") {
+                        if editing != .name { metadataSection }
+                        representationsSection
+                    }
                 }
                 .padding(22)
             }
             .background(MacClippyDockTheme.cardColor)
+            .disabled(editSession.isSaving)
             Divider()
             footer
                 .macClippyFloatingGlass(in: Rectangle())
+                .disabled(editSession.isSaving)
         }
         .frame(minWidth: 320, minHeight: 360)
         .background(MacClippyDockTheme.cardColor)
@@ -125,12 +130,14 @@ struct MacClippyDetailsView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button("Preview", action: onPreview)
-                .buttonStyle(.bordered)
+            if editing == .none {
+                Button("Preview", action: onPreview).buttonStyle(.bordered)
+            }
             Button { onClose() } label: { Image(systemName: "xmark") }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Close details")
                 .keyboardShortcut(.cancelAction)
+                .disabled(editSession.isSaving)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
@@ -140,19 +147,14 @@ struct MacClippyDetailsView: View {
     private var contentSection: some View {
         section("Content") {
             if editing == .content && canEditContent {
-                TextEditor(text: $contentDraft)
+                TextEditor(text: $editSession.contentDraft)
                     .font(.body)
                     .frame(minHeight: 180)
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(.quaternary))
                     .focused($focusedField, equals: .content)
                     .accessibilityLabel("Clipboard content")
                     .accessibilityHint("Edit the saved clipboard content")
-                    HStack {
-                        Button("Cancel", action: onCancelEdit)
-                        Spacer()
-                        Button("Save") { onSaveContent(contentDraft) }
-                        .keyboardShortcut(.defaultAction)
-                }
+                    .disabled(editSession.isSaving)
             } else {
                 Text(contentDisplay)
                     .font(details.contentKind == .rtf ? .body : .system(.body, design: .monospaced))
@@ -219,7 +221,7 @@ final class MacClippyDetailsPanel: NSPanel {
     init(contentRect: NSRect) {
         super.init(
             contentRect: contentRect,
-            styleMask: [.borderless, .fullSizeContentView],
+            styleMask: [.borderless, .fullSizeContentView, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )

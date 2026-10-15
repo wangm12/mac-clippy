@@ -45,17 +45,23 @@ final class MacClippyRuntime: @unchecked Sendable {
     let observer: PasteboardObserver
     let snippetExpander: MacClippySnippetExpander
     let snippetLookupSnapshot: MacClippySnippetLookupSnapshot
+    let preferencesDefaults: UserDefaults
+    let retentionPolicyOverride: RetentionPolicy?
     let historyEntryCache = NSCache<NSString, MacClippyHistoryEntryCacheBox>()
-    private let storeLock = NSLock()
-    private static let storeLockHeldThreadKey = "MacClippy.storeLockHeld"
+    let storeLock = NSLock()
+    let searchScopeOwnerID = UUID()
+    static let storeLockHeldThreadKey = "MacClippy.storeLockHeld"
     #if DEBUG
-    private let storeLockMetricsLock = NSLock()
-    private var storeLockAcquisitionCountValue = 0
-    private var blobReadsWhileStoreLockHeldValue = 0
+    let storeLockMetricsLock = NSLock()
+    var storeLockAcquisitionCountValue = 0
+    var blobReadsWhileStoreLockHeldValue = 0
+    var afterImageBlobLeaseAcquiredForTesting: ((String) -> Void)?
+    // Set under storeLock. Allows update preflight reads to fail deterministically.
+    var snippetUpdateListForTesting: (() throws -> [Snippet])?
     #endif
     // Shared sentinel so Mac Clippy's own copy/paste/snippet writes are
     // suppressed by the observer without filtering any external content.
-    private let writeSentinel = MacClippyPasteboardWriteSentinel()
+    private let writeSentinel: MacClippyPasteboardWriteSentinel
     // Shared injector that stamps every copy/paste/snippet write with the
     // sentinel so the observer can skip recapture of Mac Clippy's own writes.
     // Injectable so regression tests can assert Copy all prepares the
@@ -69,7 +75,8 @@ final class MacClippyRuntime: @unchecked Sendable {
         label: "com.macallyouneed.macclippy.capture",
         qos: .userInitiated
     )
-    private let captureQueueKey = DispatchSpecificKey<Void>()
+    let captureQueueAdmission = MacClippyCaptureQueueAdmission()
+    let captureQueueKey = DispatchSpecificKey<Void>()
     // Storage reconciliation and retention are bounded, cancellable
     // maintenance work. Keep them off the capture queue so a large history or
     // FTS repair cannot delay the next pasteboard change.
@@ -77,7 +84,7 @@ final class MacClippyRuntime: @unchecked Sendable {
         label: "com.macallyouneed.macclippy.maintenance",
         qos: .utility
     )
-    private let maintenanceQueueKey = DispatchSpecificKey<Void>()
+    let maintenanceQueueKey = DispatchSpecificKey<Void>()
     // Vision is expensive and image capture can arrive in bursts. Keep only a
     // small amount of OCR work queued and run at most two recognizers at once;
     // OCR is an enrichment pass, so dropping excess work is safer than
@@ -91,9 +98,9 @@ final class MacClippyRuntime: @unchecked Sendable {
     }()
     var pendingOCRJobs = 0
     var pendingOCRBytes = 0
-    // Counts are kept per lifecycle generation so a late completion from a
-    // stopped runtime can retire its own job without touching a restarted
-    // runtime's active counter.
+    // These reservations cover retained OCR Data across every lifecycle
+    // generation. Cancellation does not release bytes until the deferred job
+    // drops its Data or the async operation actually returns.
     var pendingOCRJobsByGeneration: [UInt64: Int] = [:]
     var pendingOCRBytesByGeneration: [UInt64: Int] = [:]
     let maxPendingOCRJobs = MacClippyOCRSchedulePolicy.maxPendingJobs
@@ -123,11 +130,14 @@ final class MacClippyRuntime: @unchecked Sendable {
     var retentionDebounceWorkItem: DispatchWorkItem?
     var defaultsObserver: NSObjectProtocol?
     let usesRuntimeExclusionRules: Bool
+    let snippetExpansionEnabled: Bool
     let storageDegradedReasons = MacClippyStorageDegradedReasons()
     let recognizeOCR: @Sendable (Data) async throws -> String
     let recognizeOCRLayout: @Sendable (CGImage) async throws -> MacClippyOCRResult
     #if DEBUG
         var failNextOCRSearchUpsertForTesting = false
+        var beforeCaptureTransactionForTesting: (@Sendable () -> Void)?
+        var afterSelectionSearchBatchForTesting: (@Sendable (Int) -> Void)?
     #endif
 
     // `start`, `stop`, and permission-driven snippet changes touch AppKit
@@ -145,7 +155,7 @@ final class MacClippyRuntime: @unchecked Sendable {
     // separate from storeLock: ordinary UI reads/writes do not need to delay
     // lifecycle invalidation unless a lifecycle-bound commit is already in
     // progress.
-    private let lifecycleCommitLock = NSLock()
+    let lifecycleCommitLock = NSLock()
     let lifecycleStateLock = NSLock()
     var running = false
     var lifecycleGeneration: UInt64 = 0
@@ -159,6 +169,11 @@ final class MacClippyRuntime: @unchecked Sendable {
         keychain: MacClippyKeychainBackend? = nil,
         observer: PasteboardObserver? = nil,
         pasteInjector: MacClippyPasteInjector? = nil,
+        pasteboardWriteSentinel: MacClippyPasteboardWriteSentinel? = nil,
+        managesInjectedObserverPreferences: Bool = false,
+        retentionPolicyOverride: RetentionPolicy? = nil,
+        enableSnippetExpansion: Bool = true,
+        preferencesDefaults: UserDefaults = .standard,
         ocrRecognizer: @escaping @Sendable (Data) async throws -> String = { data in
             try await MacClippyOCRService().recognize(data: data)
         },
@@ -166,69 +181,58 @@ final class MacClippyRuntime: @unchecked Sendable {
             try await MacClippyOCRService().recognizeLayout(image: image)
         }
     ) throws {
-        let resolvedPaths = try paths ?? MacClippyPaths()
-        self.paths = resolvedPaths
-        let storageURLs = [
-            resolvedPaths.clipboardDatabaseURL,
-            resolvedPaths.searchDatabaseURL,
-            resolvedPaths.pinboardDatabaseURL,
-            resolvedPaths.snippetDatabaseURL
-        ]
-        let hasExistingStorage = storageURLs.contains {
-            FileManager.default.fileExists(atPath: $0.path)
-        }
-        let key = try MacClippyDeviceKey(keychain: keychain ?? Self.defaultKeychain(paths: paths)).deviceKey(
-            requireExistingStorage: hasExistingStorage
-        )
-        let deviceID = DeviceID.generate()
-        let clipboardDatabase = try MacClippyDatabase(url: resolvedPaths.clipboardDatabaseURL)
-        let searchDatabase = try MacClippyDatabase(url: resolvedPaths.searchDatabaseURL)
-        let pinboardDatabase = try MacClippyDatabase(url: resolvedPaths.pinboardDatabaseURL)
-        let snippetDatabase = try MacClippyDatabase(url: resolvedPaths.snippetDatabaseURL)
-        databases = [clipboardDatabase, searchDatabase, pinboardDatabase, snippetDatabase]
+        let storage = try MacClippyRuntimeStorage(paths: paths, keychain: keychain)
+        let resolvedWriteSentinel = pasteboardWriteSentinel ?? MacClippyPasteboardWriteSentinel()
+        writeSentinel = resolvedWriteSentinel
+        self.paths = storage.paths
+        databases = storage.databases
+        clipboardStore = storage.clipboardStore
+        searchStore = storage.searchStore
+        pinboardStore = storage.pinboardStore
+        snippetStore = storage.snippetStore
+        snippetLookupSnapshot = storage.snippetLookupSnapshot
+        blobStore = storage.blobStore
+        thumbnailDiskCache = storage.thumbnailDiskCache
+        self.retentionPolicyOverride = retentionPolicyOverride
 
-        clipboardStore = try ClipboardStore(database: clipboardDatabase, deviceKey: key, deviceID: deviceID)
-        searchStore = try SearchStore(database: searchDatabase)
-        pinboardStore = try PinboardStore(database: pinboardDatabase, deviceKey: key)
-        let snippetStore = try SnippetStore(database: snippetDatabase, deviceKey: key)
-        self.snippetStore = snippetStore
-        let snippetLookupSnapshot = MacClippySnippetLookupSnapshot()
-        self.snippetLookupSnapshot = snippetLookupSnapshot
-        snippetLookupSnapshot.replace(with: try snippetStore.list())
-        blobStore = try BlobStore(rootURL: resolvedPaths.blobsURL, key: key)
-        thumbnailDiskCache = MacClippyThumbnailDiskCache(
-            directoryURL: resolvedPaths.thumbnailsURL,
-            key: key
-        )
-
-        usesRuntimeExclusionRules = observer == nil
+        usesRuntimeExclusionRules = observer == nil || managesInjectedObserverPreferences
+        snippetExpansionEnabled = enableSnippetExpansion
+        self.preferencesDefaults = preferencesDefaults
         if let observer {
             self.observer = observer
         } else {
             self.observer = PasteboardObserver(
-                exclusionRules: MacClippyRetentionPreferences.exclusionRules(),
-                writeSentinel: writeSentinel
+                exclusionRules: MacClippyRetentionPreferences.exclusionRules(from: preferencesDefaults),
+                writeSentinel: resolvedWriteSentinel
             )
         }
 
-        let injector = pasteInjector ?? MacClippyPasteInjector(writeSentinel: writeSentinel)
+        let injector = pasteInjector ?? MacClippyPasteInjector(writeSentinel: resolvedWriteSentinel)
         self.pasteInjector = injector
         recognizeOCR = ocrRecognizer
         recognizeOCRLayout = ocrLayoutRecognizer
         historyEntryCache.totalCostLimit = 64 * 1024 * 1024
         historyEntryCache.countLimit = 500
+        let lookupSnapshot = snippetLookupSnapshot
         snippetExpander = MacClippySnippetExpander(
-            lookup: { snippetLookupSnapshot.body(for: $0) },
+            lookup: { lookupSnapshot.body(for: $0) },
             injector: injector
         )
         captureQueue.setSpecific(key: captureQueueKey, value: ())
         maintenanceQueue.setSpecific(key: maintenanceQueueKey, value: ())
+        captureQueueAdmission.setCapacityAvailableHandler { [weak self] in
+            self?.requestCaptureQueueRecoveryIfPossible()
+        }
+        blobStore.setDeferredDeleteHandler { [weak self] blobID in
+            self?.scheduleDeferredBlobDelete(blobID)
+        }
     }
 
     deinit {
         stop()
         drainCaptureQueueForShutdown()
         drainMaintenanceQueueForShutdown()
+        drainLifecycleCommitsForShutdown()
         databases.forEach { database in
             do {
                 try database.queue.close()
@@ -242,154 +246,6 @@ final class MacClippyRuntime: @unchecked Sendable {
                 )
             }
         }
-    }
-
-    func withStoreLock<T>(_ operation: () throws -> T) rethrows -> T {
-        storeLock.lock()
-        beginStoreLockOnCurrentThread()
-        defer {
-            endStoreLockOnCurrentThread()
-            storeLock.unlock()
-        }
-        return try operation()
-    }
-
-    var isStoreLockHeldOnCurrentThread: Bool {
-        ((Thread.current.threadDictionary[Self.storeLockHeldThreadKey] as? Int) ?? 0) > 0
-    }
-
-    private func beginStoreLockOnCurrentThread() {
-        let thread = Thread.current
-        let depth = (thread.threadDictionary[Self.storeLockHeldThreadKey] as? Int) ?? 0
-        thread.threadDictionary[Self.storeLockHeldThreadKey] = depth + 1
-        #if DEBUG
-        storeLockMetricsLock.lock()
-        storeLockAcquisitionCountValue += 1
-        storeLockMetricsLock.unlock()
-        #endif
-    }
-
-    private func endStoreLockOnCurrentThread() {
-        let thread = Thread.current
-        let depth = (thread.threadDictionary[Self.storeLockHeldThreadKey] as? Int) ?? 1
-        thread.threadDictionary[Self.storeLockHeldThreadKey] = max(0, depth - 1)
-    }
-
-    func readImageBlob(id: String, maxBytes: Int) throws -> Data {
-        #if DEBUG
-        if isStoreLockHeldOnCurrentThread {
-            storeLockMetricsLock.lock()
-            blobReadsWhileStoreLockHeldValue += 1
-            storeLockMetricsLock.unlock()
-        }
-        #endif
-        return try blobStore.read(id: id, maxBytes: maxBytes)
-    }
-
-    #if DEBUG
-    var storeLockAcquisitionCount: Int {
-        storeLockMetricsLock.lock()
-        defer { storeLockMetricsLock.unlock() }
-        return storeLockAcquisitionCountValue
-    }
-
-    var blobReadsWhileStoreLockHeld: Int {
-        storeLockMetricsLock.lock()
-        defer { storeLockMetricsLock.unlock() }
-        return blobReadsWhileStoreLockHeldValue
-    }
-
-    func resetStoreLockMetricsForTesting() {
-        storeLockMetricsLock.lock()
-        storeLockAcquisitionCountValue = 0
-        blobReadsWhileStoreLockHeldValue = 0
-        storeLockMetricsLock.unlock()
-    }
-    #endif
-
-    // Database queues are closed only after all work already submitted to the
-    // capture queue has reached a terminal state. The specific-value guard
-    // keeps this safe if teardown is ever initiated by a capture-queue task.
-    func drainCaptureQueueForShutdown() {
-        guard DispatchQueue.getSpecific(key: captureQueueKey) == nil else { return }
-        captureQueue.sync {}
-    }
-
-    func drainMaintenanceQueueForShutdown() {
-        guard DispatchQueue.getSpecific(key: maintenanceQueueKey) == nil else { return }
-        maintenanceQueue.sync {}
-    }
-
-    func activeLifecycleToken() -> MacClippyRuntimeLifecycleToken? {
-        withLifecycleStateLock {
-            guard running else { return nil }
-            return MacClippyRuntimeLifecycleToken(generation: lifecycleGeneration)
-        }
-    }
-
-    func isCurrentLifecycleToken(_ token: MacClippyRuntimeLifecycleToken) -> Bool {
-        withLifecycleStateLock { running && lifecycleGeneration == token.generation }
-    }
-
-    @discardableResult
-    func withCurrentLifecycleStoreLock<T>(
-        _ token: MacClippyRuntimeLifecycleToken,
-        _ operation: () throws -> T
-    ) rethrows -> T? {
-        lifecycleCommitLock.lock()
-        defer { lifecycleCommitLock.unlock() }
-        storeLock.lock()
-        beginStoreLockOnCurrentThread()
-        defer {
-            endStoreLockOnCurrentThread()
-            storeLock.unlock()
-        }
-        guard isCurrentLifecycleToken(token) else { return nil }
-        return try operation()
-    }
-
-    func performCurrentLifecycleCommit(
-        _ token: MacClippyRuntimeLifecycleToken,
-        _ operation: () throws -> Void
-    ) throws {
-        guard try withCurrentLifecycleStoreLock(token, operation) != nil else {
-            throw CancellationError()
-        }
-    }
-
-    func withLifecycleStateLock<T>(_ operation: () throws -> T) rethrows -> T {
-        lifecycleStateLock.lock()
-        defer { lifecycleStateLock.unlock() }
-        return try operation()
-    }
-
-    @discardableResult
-    func beginLifecycle() -> MacClippyRuntimeLifecycleToken? {
-        withLifecycleStateLock {
-            guard !running else { return nil }
-            running = true
-            lifecycleGeneration &+= 1
-            return MacClippyRuntimeLifecycleToken(generation: lifecycleGeneration)
-        }
-    }
-
-    func invalidateLifecycle() {
-        // Invalidate first so an admitted operation observes cancellation at
-        // its next checkpoint, then wait for the commit fence to drain. This
-        // keeps stop() responsive to cancellation while guaranteeing that no
-        // lifecycle-bound write can finish after stop() returns.
-        withLifecycleStateLock {
-            lifecycleGeneration &+= 1
-            running = false
-        }
-        lifecycleCommitLock.lock()
-        lifecycleCommitLock.unlock()
-    }
-
-    // This helper keeps the lifecycle transition state change explicit at
-    // call sites and avoids accidentally coupling cancellation to storage.
-    func isLifecycleRunning() -> Bool {
-        withLifecycleStateLock { running }
     }
 
     func measureDiagnosticMetric<T>(

@@ -144,4 +144,60 @@ extension MacClippyRuntime {
             return .files(urls)
         }
     }
+
+    func pasteboardContent(
+        for snapshot: MacClippyClipboardPlaybackSnapshot,
+        plain: Bool
+    ) throws -> MacClippyPasteboardContent {
+        if plain {
+            return try pasteboardContent(for: snapshot.record, plain: true)
+        }
+        guard !snapshot.representations.isEmpty else {
+            return try pasteboardContent(for: snapshot.record, plain: false)
+        }
+
+        struct ItemBuilder {
+            var types: [String] = []
+            var representations: [String: Data] = [:]
+        }
+        var builders: [Int: ItemBuilder] = [:]
+        for representation in snapshot.representations {
+            guard let bytes = try pasteboardBytes(for: representation) else { continue }
+            var item = builders[representation.itemIndex, default: ItemBuilder()]
+            guard item.representations[representation.uti] == nil else {
+                throw MacClippyStoreError.invalidStoredRecord
+            }
+            item.types.append(representation.uti)
+            item.representations[representation.uti] = bytes
+            builders[representation.itemIndex] = item
+        }
+        let items = builders.keys.sorted().compactMap { index -> PasteboardItem? in
+            guard let item = builders[index], !item.types.isEmpty else { return nil }
+            return PasteboardItem(types: item.types, representations: item.representations)
+        }
+        guard !items.isEmpty else { throw MacClippyStoreError.invalidStoredRecord }
+        return .items(items)
+    }
+
+    private func pasteboardBytes(
+        for representation: MacClippyClipboardRepresentation
+    ) throws -> Data? {
+        switch representation.payloadState {
+        case .present:
+            guard let payload = representation.payloadBytes, representation.blobID == nil else {
+                throw MacClippyStoreError.invalidStoredRecord
+            }
+            return payload
+        case .spilled:
+            guard let blobID = representation.blobID, representation.payloadBytes == nil else {
+                throw MacClippyStoreError.invalidStoredRecord
+            }
+            return try blobStore.read(
+                id: blobID,
+                maxBytes: MacClippyPasteboardInputLimits.default.maxRepresentationBytes
+            )
+        case .unavailable, .oversized:
+            return nil
+        }
+    }
 }

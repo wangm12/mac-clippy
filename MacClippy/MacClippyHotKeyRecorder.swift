@@ -240,7 +240,7 @@ private final class MacClippyHotKeyEventTap {
     }
 }
 
-private extension MacClippyGlobalHotKeyDescriptor {
+extension MacClippyGlobalHotKeyDescriptor {
     var symbolicDisplay: String {
         var result = ""
         if modifiers & UInt32(controlKey) != 0 { result += "⌃" }

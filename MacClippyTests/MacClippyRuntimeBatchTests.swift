@@ -6,21 +6,27 @@ import MacClippyPlatform
 
 final class MacClippyRuntimeBatchTests: XCTestCase {
     private var tempRoot: URL!
+    private var pasteboardEnvironment: MacClippyAppTestPasteboardEnvironment!
     private var runtime: MacClippyRuntime!
 
     override func setUpWithError() throws {
         tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent("MacClippyBatchTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
         let paths = try MacClippyPaths(rootURL: tempRoot)
-        // We never call start(), so the observer never polls. Constructing the
-        // runtime with its default observer is fine; we only exercise the
-        // batch store operations directly.
-        runtime = try MacClippyRuntime(paths: paths)
+        pasteboardEnvironment = MacClippyAppTestPasteboardEnvironment(label: "MacClippyBatchTests")
+        runtime = try MacClippyRuntime(
+            paths: paths,
+            observer: pasteboardEnvironment.observer,
+            pasteInjector: pasteboardEnvironment.injector,
+            enableSnippetExpansion: false,
+            preferencesDefaults: pasteboardEnvironment.preferencesDefaults
+        )
     }
 
     override func tearDownWithError() throws {
         runtime?.closeForTesting()
         runtime = nil
+        pasteboardEnvironment = nil
         if let tempRoot {
             try? FileManager.default.removeItem(at: tempRoot)
         }
@@ -36,10 +42,30 @@ final class MacClippyRuntimeBatchTests: XCTestCase {
             Set(manifest.databaseNames),
             Set(MacClippyBackupSettingsPolicy.requiredDatabaseNames)
         )
-        let validation = try MacClippyBackup.validate(at: snapshot)
+        let sidecars = manifest.databaseNames.flatMap { name in
+            ["-wal", "-shm", "-journal"].map { snapshot.appendingPathComponent(name + ".sqlite" + $0).path }
+        }.filter { FileManager.default.fileExists(atPath: $0) }
+        XCTAssertTrue(sidecars.isEmpty, "Backup contains SQLite sidecars: \(sidecars)")
+        let keySource = runtime.clipboardStore.backupKeySource
+        let validation = try MacClippyBackup.validate(at: snapshot, keySource: keySource)
         XCTAssertTrue(MacClippyBackupSettingsPolicy.canRestore(validation))
         XCTAssertEqual(validation.databaseRowCounts["clipboard"], 1)
         XCTAssertTrue(MacClippyBackupSettingsPolicy.containsManifest(at: snapshot))
+
+        let restoredRoot = tempRoot.appendingPathComponent("restored", isDirectory: true)
+        let restoredValidation = try MacClippyBackup.installIntoLiveRoot(
+            from: snapshot,
+            liveRootURL: restoredRoot,
+            keySource: keySource
+        )
+        XCTAssertTrue(MacClippyBackupSettingsPolicy.canRestore(restoredValidation))
+        let restoredPaths = try MacClippyPaths(rootURL: restoredRoot)
+        let restoredDatabase = try MacClippyDatabase(url: restoredPaths.clipboardDatabaseURL, readOnly: true)
+        defer { try? restoredDatabase.queue.close() }
+        XCTAssertEqual(
+            restoredDatabase.healthCheck(requiredTables: ["clipboard_records"], mode: .bounded).status,
+            .healthy
+        )
     }
 
     // MARK: - Batch delete
@@ -289,5 +315,32 @@ final class MacClippyRuntimeBatchTests: XCTestCase {
 
     private func wait(until condition: () -> Bool, timeout: TimeInterval = 2.0) {
         MacClippyTestWait.until(condition, timeout: timeout)
+    }
+}
+
+extension MacClippyRuntimeBatchTests {
+    func testRestoreShutdownExplicitlyClosesAllStorageQueues() throws {
+        let closed = expectation(description: "restore shutdown runs off the main thread")
+        let runtimeToClose = runtime!
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                try runtimeToClose.closeStorageForRestore()
+            } catch {
+                XCTFail("restore shutdown failed: \(error)")
+            }
+            closed.fulfill()
+        }
+        wait(for: [closed], timeout: 5)
+
+        for database in runtime.databases {
+            XCTAssertEqual(database.healthCheck().status, .unrecoverable)
+        }
+        XCTAssertThrowsError(
+            try runtime.thumbnailDiskCache.store(
+                Data([1, 2, 3]),
+                id: RecordID.generate(),
+                maxPixelSize: 32
+            )
+        )
     }
 }

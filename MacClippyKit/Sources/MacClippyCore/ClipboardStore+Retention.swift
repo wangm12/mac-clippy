@@ -9,6 +9,16 @@ private struct MacClippyStoredPayloadRow {
     let blobIDs: Set<String>
 }
 
+private struct MacClippyClipboardUpdatePlan {
+    let id: RecordID
+    let record: ClipboardRecord
+    let milliseconds: Int64
+    let contentHash: String?
+    let primaryBytes: Data?
+    let primaryUTIs: [String]
+    let preparedRepresentations: [MacClippyPreparedRepresentation]?
+}
+
 extension MacClippyClipboardStore {
     @discardableResult
     public func update(
@@ -18,7 +28,6 @@ extension MacClippyClipboardStore {
         contentHash: String? = nil,
         now: Date = Date()
     ) throws -> ClipboardItemMeta {
-        let envelope = try MacClippyCipher.seal(try encodedRecordData(record), with: key)
         let milliseconds = Self.milliseconds(now)
         let primaryBytes = Self.primaryRepresentationBytes(for: record)
         let primaryUTIs = Self.primaryRepresentationUTIs(for: record)
@@ -28,39 +37,141 @@ extension MacClippyClipboardStore {
         }
         let preparedRepresentations = try representations.map { try preparedRepresentationRows(from: $0) }
 
-        try database.queue.write { connection in
-            guard try Row.fetchOne(connection, sql: "SELECT id FROM clipboard_records WHERE id = ?", arguments: [id.rawValue]) != nil else {
-                throw MacClippyStoreError.recordNotFound
-            }
-            try connection.execute(sql: """
-                UPDATE clipboard_records
-                SET modified = ?, content_kind = ?, preview = ?, envelope = ?, content_hash = ?, primary_blob_id = ?
-                WHERE id = ?
-            """, arguments: [
-                milliseconds, record.contentKind.rawValue, Self.preview(for: record), envelope.combined, contentHash,
-                record.imageBlobID, id.rawValue
-            ])
-
-            if let preparedRepresentations {
-                try writeRepresentationRows(preparedRepresentations, for: id, on: connection)
-            } else if let primaryBytes,
-               let row = try Row.fetchOne(
-                   connection,
-                   sql: "SELECT uti FROM clipboard_representations WHERE record_id = ? AND uti IN (\(Array(repeating: "?", count: primaryUTIs.count).joined(separator: ","))) ORDER BY sort_order LIMIT 1",
-                   arguments: StatementArguments([id.rawValue] + primaryUTIs)
-               ) {
-                let uti: String = row["uti"]
-                let sealed = try MacClippyCipher.seal(primaryBytes, with: key)
-                try connection.execute(sql: """
-                    UPDATE clipboard_representations
-                    SET payload = ?, blob_id = NULL, payload_state = 'present'
-                    WHERE record_id = ? AND uti = ?
-                """, arguments: [sealed.combined, id.rawValue, uti])
-            }
-        }
+        try persistUpdate(MacClippyClipboardUpdatePlan(
+            id: id,
+            record: record,
+            milliseconds: milliseconds,
+            contentHash: contentHash,
+            primaryBytes: primaryBytes,
+            primaryUTIs: primaryUTIs,
+            preparedRepresentations: preparedRepresentations
+        ))
 
         guard let meta = try metas(for: [id]).first else { throw MacClippyStoreError.recordNotFound }
         return meta
+    }
+
+    private func persistUpdate(_ plan: MacClippyClipboardUpdatePlan) throws {
+        try database.queue.write { connection in
+            try updateRecord(plan, on: connection)
+        }
+    }
+
+    private func updateRecord(
+        _ plan: MacClippyClipboardUpdatePlan,
+        on connection: Database
+    ) throws {
+        let shouldWriteCurrentEnvelope = try needsCurrentEnvelope(
+            for: plan.id,
+            replacingRepresentations: plan.preparedRepresentations != nil,
+            on: connection
+        )
+        let data = try encodedRecordData(
+            plan.record,
+            requiresRepresentationRoster: shouldWriteCurrentEnvelope
+        )
+        let envelope = try MacClippyCipher.seal(data, with: key)
+        try connection.execute(sql: """
+            UPDATE clipboard_records
+            SET modified = ?, content_kind = ?, preview = ?, envelope = ?, content_hash = ?, primary_blob_id = ?
+            WHERE id = ?
+        """, arguments: [
+            plan.milliseconds,
+            plan.record.contentKind.rawValue,
+            Self.preview(for: plan.record),
+            envelope.combined,
+            plan.contentHash,
+            plan.record.imageBlobID,
+            plan.id.rawValue
+        ])
+
+        if let prepared = plan.preparedRepresentations {
+            try writeRepresentationRows(prepared, for: plan.id, on: connection)
+        } else if let bytes = plan.primaryBytes {
+            try updatePrimaryRepresentation(
+                bytes,
+                candidates: plan.primaryUTIs,
+                recordID: plan.id,
+                on: connection
+            )
+        }
+        if plan.preparedRepresentations != nil || shouldWriteCurrentEnvelope {
+            try persistAuthenticatedRepresentationRoster(for: plan.id, on: connection)
+            try markAttachmentReferenceIndexVerified(for: plan.id, on: connection)
+        }
+    }
+
+    private func updatePrimaryRepresentation(
+        _ bytes: Data,
+        candidates: [String],
+        recordID: RecordID,
+        on connection: Database
+    ) throws {
+        for uti in candidates {
+            guard let row = try Row.fetchOne(
+                connection,
+                sql: """
+                    SELECT item_index FROM clipboard_representations
+                    WHERE record_id = ? AND uti = ?
+                    ORDER BY sort_order, item_index LIMIT 1
+                    """,
+                arguments: [recordID.rawValue, uti]
+            ) else { continue }
+            let itemIndex: Int = row["item_index"]
+            let sealed = try MacClippyCipher.seal(bytes, with: key)
+            try connection.execute(sql: """
+                UPDATE clipboard_representations
+                SET payload = ?, blob_id = NULL, payload_state = 'present'
+                WHERE record_id = ? AND item_index = ? AND uti = ?
+            """, arguments: [sealed.combined, recordID.rawValue, itemIndex, uti])
+            break
+        }
+    }
+
+    private func needsCurrentEnvelope(
+        for id: RecordID,
+        replacingRepresentations: Bool,
+        on connection: Database
+    ) throws -> Bool {
+        guard let stored = try Row.fetchOne(
+            connection,
+            sql: """
+                SELECT envelope, content_kind, representation_refs_auth, blob_references_verified
+                FROM clipboard_records WHERE id = ?
+                """,
+            arguments: [id.rawValue]
+        ) else {
+            throw MacClippyStoreError.recordNotFound
+        }
+        guard let storedEnvelope: Data = stored["envelope"],
+              let storedContentKind: String = stored["content_kind"],
+              let storedContentKindValue = MacClippyContentKind(rawValue: storedContentKind),
+              let referenceMarker: Int = stored["blob_references_verified"],
+              referenceMarker == 0 || referenceMarker == 1 else {
+            throw MacClippyStoreError.invalidStoredRecord
+        }
+        let storedBody = try MacClippyClipboardRecordEnvelopeCodec.decode(
+            MacClippyCipher.open(MacClippyEnvelope(combined: storedEnvelope), with: key)
+        )
+        guard storedBody.record.contentKind == storedContentKindValue else {
+            throw MacClippyStoreError.invalidStoredRecord
+        }
+        let storedRoster: Data? = stored["representation_refs_auth"]
+        if let storedRoster {
+            try MacClippyRepresentationRosterCodec.validate(
+                recordID: id.rawValue,
+                envelope: storedRoster,
+                on: connection,
+                key: key,
+                maxRepresentations: inputLimits.maxRepresentationsPerRecord
+            )
+        } else if storedBody.requiresRepresentationRoster, !replacingRepresentations {
+            // A current-format record commits to an authenticated row-set
+            // roster. Updating only its body must not turn a missing proof
+            // into an apparently legacy record that backfill can trust.
+            throw MacClippyStoreError.invalidStoredRecord
+        }
+        return replacingRepresentations || referenceMarker == 1 || storedRoster != nil
     }
 
     // Batch body reads for pinboard/history projections. This keeps the SQL
@@ -103,10 +214,9 @@ extension MacClippyClipboardStore {
             )
         }
 
-        let decodedBody = try JSONDecoder().decode(
-            ClipboardRecord.self,
-            from: MacClippyCipher.open(MacClippyEnvelope(combined: stored.envelope), with: key)
-        )
+        let decodedBody = try MacClippyClipboardRecordEnvelopeCodec.decode(
+            MacClippyCipher.open(MacClippyEnvelope(combined: stored.envelope), with: key)
+        ).record
         guard decodedBody.contentKind.rawValue == stored.contentKind else {
             // A valid-but-wrong discriminator must never make a referenced
             // image Blob look orphaned during destructive retention work.

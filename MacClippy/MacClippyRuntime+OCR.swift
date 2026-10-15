@@ -9,109 +9,6 @@ struct MacClippyDeferredOCRJob {
     let lifecycleToken: MacClippyRuntimeLifecycleToken
 }
 
-// OperationQueue understands asynchronous Operation subclasses, so the queue
-// can enforce its concurrency limit without blocking a worker on an async OCR
-// task. Cancellation is propagated to the task and completion always marks the
-// operation finished for OperationQueue's accounting.
-private final class MacClippyAsyncOperation: Operation, @unchecked Sendable {
-    private let body: @Sendable () async -> Void
-    private let onFinish: @Sendable () -> Void
-    private let stateLock = NSLock()
-    private var executingState = false
-    private var finishedState = false
-    private var completionCalled = false
-    private var task: Task<Void, Never>?
-
-    init(
-        body: @escaping @Sendable () async -> Void,
-        onFinish: @escaping @Sendable () -> Void = {}
-    ) {
-        self.body = body
-        self.onFinish = onFinish
-    }
-
-    override var isAsynchronous: Bool { true }
-
-    override var isExecuting: Bool {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        return executingState
-    }
-
-    override var isFinished: Bool {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        return finishedState
-    }
-
-    override func start() {
-        willChangeValue(forKey: "isExecuting")
-        stateLock.lock()
-        let cancelledBeforeStart = isCancelled || finishedState
-        executingState = true
-        stateLock.unlock()
-        didChangeValue(forKey: "isExecuting")
-
-        if cancelledBeforeStart {
-            finish()
-            return
-        }
-
-        let body = self.body
-        let operationTask = Task.detached(priority: .utility) { [weak self] in
-            await body()
-            self?.finish()
-        }
-
-        // Keep task installation and cancellation under the same lock. A
-        // cancellation can race with OperationQueue starting this operation;
-        // the second cancellation check closes the window where cancel() saw
-        // a nil task before start() assigned the newly created one.
-        stateLock.lock()
-        let cancelTask = isCancelled || finishedState
-        if !cancelTask {
-            task = operationTask
-        }
-        stateLock.unlock()
-        if cancelTask {
-            operationTask.cancel()
-        }
-    }
-
-    override func cancel() {
-        super.cancel()
-        stateLock.lock()
-        let task = self.task
-        stateLock.unlock()
-        task?.cancel()
-    }
-
-    private func finish() {
-        stateLock.lock()
-        guard !finishedState else {
-            stateLock.unlock()
-            return
-        }
-        let wasExecuting = executingState
-        executingState = false
-        finishedState = true
-        task = nil
-        let shouldCallCompletion = !completionCalled
-        completionCalled = true
-        stateLock.unlock()
-
-        if wasExecuting {
-            willChangeValue(forKey: "isExecuting")
-            didChangeValue(forKey: "isExecuting")
-        }
-        willChangeValue(forKey: "isFinished")
-        didChangeValue(forKey: "isFinished")
-        if shouldCallCompletion {
-            onFinish()
-        }
-    }
-}
-
 extension MacClippyRuntime {
     func scheduleOCR(for data: Data, recordID: RecordID) {
         guard let lifecycleToken = activeLifecycleToken() else { return }
@@ -239,29 +136,32 @@ extension MacClippyRuntime {
                 self?.captureQueue.async { [weak self] in
                     guard let self else { return }
                     let generation = lifecycleToken.generation
-                    let remaining = max(0, (self.pendingOCRJobsByGeneration[generation] ?? 0) - 1)
-                    let remainingBytes = max(
-                        0,
-                        (self.pendingOCRBytesByGeneration[generation] ?? 0) - dataByteCount
-                    )
-                    if remaining == 0 {
-                        self.pendingOCRJobsByGeneration.removeValue(forKey: generation)
-                    } else {
-                        self.pendingOCRJobsByGeneration[generation] = remaining
-                    }
-                    if remainingBytes == 0 {
-                        self.pendingOCRBytesByGeneration.removeValue(forKey: generation)
-                    } else {
-                        self.pendingOCRBytesByGeneration[generation] = remainingBytes
-                    }
-                    if self.activeLifecycleToken()?.generation == generation {
-                        self.pendingOCRJobs = remaining
-                        self.pendingOCRBytes = remainingBytes
-                    }
+                    self.releaseOCRReservation(generation: generation, byteCount: dataByteCount)
                 }
             }
         )
         ocrQueue.addOperation(operation)
+    }
+
+    func releaseOCRReservation(generation: UInt64, byteCount: Int) {
+        pendingOCRJobs = max(0, pendingOCRJobs - 1)
+        pendingOCRBytes = max(0, pendingOCRBytes - max(0, byteCount))
+
+        let remainingJobs = max(0, (pendingOCRJobsByGeneration[generation] ?? 0) - 1)
+        let remainingBytes = max(
+            0,
+            (pendingOCRBytesByGeneration[generation] ?? 0) - max(0, byteCount)
+        )
+        if remainingJobs == 0 {
+            pendingOCRJobsByGeneration.removeValue(forKey: generation)
+        } else {
+            pendingOCRJobsByGeneration[generation] = remainingJobs
+        }
+        if remainingBytes == 0 {
+            pendingOCRBytesByGeneration.removeValue(forKey: generation)
+        } else {
+            pendingOCRBytesByGeneration[generation] = remainingBytes
+        }
     }
 
     private func performOCR(

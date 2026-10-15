@@ -75,6 +75,88 @@ final class MacClippyPasteboardObserverRetryTests: XCTestCase {
         observer.stop()
     }
 
+    func testObserverAccumulatesStaggeredRepresentationsAcrossRetriesForRepeatedUTIs() {
+        let reader = SteppingTestPasteboardReader(
+            initial: PasteboardChange(changeCount: 1, items: [])
+        )
+        let observer = PasteboardObserver(
+            reader: reader,
+            pollInterval: 60,
+            retryState: MacClippyPasteboardReadRetryState(maxAttempts: 4)
+        )
+        var delivered: [PasteboardChange] = []
+        observer.start { delivered.append($0) }
+        observer.poll()
+
+        let lazyA = "com.example.lazy-a"
+        let lazyB = "com.example.lazy-b"
+        let shared = "com.example.shared"
+        reader.change = PasteboardChange(changeCount: 2, items: [
+            PasteboardItem(types: [lazyA, shared], representations: [
+                shared: Data("item-zero-shared".utf8)
+            ]),
+            PasteboardItem(types: [lazyB, shared], representations: [
+                shared: Data("item-one-shared".utf8)
+            ])
+        ])
+
+        var requestedSlots: [[String]] = []
+        installStaggeredRereadHandler(reader, lazyA: lazyA, lazyB: lazyB) { slots in
+            requestedSlots.append(slots)
+        }
+
+        observer.poll()
+        XCTAssertTrue(delivered.isEmpty)
+        observer.poll()
+        XCTAssertTrue(delivered.isEmpty)
+        observer.poll()
+
+        XCTAssertEqual(requestedSlots, [["0:\(lazyA)", "1:\(lazyB)"], ["1:\(lazyB)"]])
+        XCTAssertEqual(delivered.count, 1)
+        guard let captured = delivered.first else {
+            observer.stop()
+            return XCTFail("The complete generation should be delivered after both providers resolve")
+        }
+        XCTAssertEqual(captured.items[0].data(forType: lazyA), Data("value-\(lazyA)".utf8))
+        XCTAssertEqual(captured.items[1].data(forType: lazyB), Data("value-\(lazyB)".utf8))
+        XCTAssertEqual(captured.items[0].data(forType: shared), Data("item-zero-shared".utf8))
+        XCTAssertEqual(captured.items[1].data(forType: shared), Data("item-one-shared".utf8))
+        observer.stop()
+    }
+
+    private func installStaggeredRereadHandler(
+        _ reader: SteppingTestPasteboardReader,
+        lazyA: String,
+        lazyB: String,
+        onPass: @escaping ([String]) -> Void
+    ) {
+        var retryPass = 0
+        reader.rereadHandler = { change, unavailableTypes in
+            retryPass += 1
+            onPass(unavailableTypes.map { "\($0.itemIndex):\($0.uti)" })
+            var items = change.items
+            for pending in unavailableTypes {
+                let materializes = (retryPass == 1 && pending.uti == lazyA)
+                    || (retryPass == 2 && pending.uti == lazyB)
+                guard materializes, items.indices.contains(pending.itemIndex) else { continue }
+                let item = items[pending.itemIndex]
+                var representations = item.representations
+                representations[pending.uti] = Data("value-\(pending.uti)".utf8)
+                items[pending.itemIndex] = PasteboardItem(
+                    types: item.types,
+                    representations: representations,
+                    oversizedTypes: item.oversizedTypes
+                )
+            }
+            return PasteboardChange(
+                changeCount: change.changeCount,
+                items: items,
+                sourceAppBundleID: change.sourceAppBundleID,
+                truncatedItemCount: change.truncatedItemCount
+            )
+        }
+    }
+
     func testObserverDeliversUnavailableMarkersAfterRetryBudgetExhausted() {
         // The lazy provider never materializes the bytes. After the retry
         // budget is exhausted, the observer delivers the change so the

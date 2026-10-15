@@ -125,11 +125,11 @@ extension MacClippySettingsView {
     var snippetsSection: some View {
         MacClippySettingsGroup(
             title: "Snippets",
-            subtitle: "Choose whether ;triggers expand while you type."
+            subtitle: MacClippySnippetPreferences.expansionInstructions(for: snippetExpansionMode)
         ) {
             MacClippySettingsRow(title: "Expansion", detail: nil) {
                 Picker("Snippet expansion", selection: $snippetExpansionMode) {
-                    Text("Automatically expand").tag(MacClippySnippetExpansionMode.autoExpand.rawValue)
+                    Text("Expand with Space").tag(MacClippySnippetExpansionMode.autoExpand.rawValue)
                     Text("Confirm with Tab").tag(MacClippySnippetExpansionMode.confirmWithTab.rawValue)
                     Text("Off").tag(MacClippySnippetExpansionMode.disabled.rawValue)
                 }
@@ -406,7 +406,7 @@ extension MacClippySettingsView {
         let duration = MacClippyTimedPauseDuration(rawValue: pauseDurationSeconds) ?? .fiveMinutes
         MacClippyRetentionPreferences.applyPause(
             enabled: enabled,
-            duration: duration
+            duration: duration, defaults: defaults
         )
     }
 

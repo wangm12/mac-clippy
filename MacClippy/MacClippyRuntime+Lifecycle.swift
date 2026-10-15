@@ -7,11 +7,45 @@ import MacClippyCore
 import MacClippyPlatform
 
 extension MacClippyRuntime {
+    /// Stops producers, drains runtime-owned storage queues, then explicitly
+    /// closes every SQLite writer before a restore can replace the files.
+    /// The caller removes this runtime from the UI before invoking this method
+    /// so no new app operation can be scheduled against the old stores.
+    func closeStorageForRestore() throws {
+        stop()
+        drainCaptureQueueForShutdown()
+        drainMaintenanceQueueForShutdown()
+        drainOCRQueueForShutdown()
+        drainLifecycleCommitsForShutdown()
+        thumbnailDiskCache.retireForRestore()
+
+        try withStoreLock {
+            var firstError: Error?
+            for database in databases {
+                do {
+                    try database.closeForReplacement()
+                } catch {
+                    if firstError == nil { firstError = error }
+                    MacClippyLog.record(
+                        category: .storage,
+                        code: .databaseHealthFailed,
+                        operation: "database_close_for_restore",
+                        recoveryAction: "retry_restore_after_restart",
+                        impact: "restore_storage_close_failed"
+                    )
+                }
+            }
+            if let firstError { throw firstError }
+        }
+    }
+
     #if DEBUG
         func closeForTesting() {
             stop()
             drainCaptureQueueForShutdown()
             drainMaintenanceQueueForShutdown()
+            drainOCRQueueForShutdown()
+            drainLifecycleCommitsForShutdown()
             // Test fixtures remove their temporary database root immediately
             // after this hook returns. Close the queues here, rather than
             // relying on ARC to run `deinit` after the test teardown has
@@ -60,40 +94,75 @@ extension MacClippyRuntime {
         defer { lifecycleLock.unlock() }
 
         guard let lifecycleToken = beginLifecycle() else { return }
-        // OCR completions from an older generation may still be draining
-        // after OperationQueue cancellation. Reset the active-generation
-        // accounting on the capture queue before new work is admitted; old
-        // completions are generation-checked and cannot decrement this value.
-        captureQueue.async { [weak self] in
+        scheduleStartupMaintenance(for: lifecycleToken)
+        scheduleRetentionTimer(for: lifecycleToken)
+        observeLifecycleNotifications()
+        if usesRuntimeExclusionRules {
+            observer.updateExclusionRules(
+                MacClippyRetentionPreferences.exclusionRules(from: preferencesDefaults)
+            )
+            applyCapturePausePreference()
+        }
+        observer.start(
+            admissionHandler: { [weak self] change in
+                guard let self, self.isCurrentLifecycleToken(lifecycleToken) else { return nil }
+                return self.captureQueueAdmission.admission(for: change)
+            },
+            admittedProjectionHandler: { [weak self] change, projection, admission in
+                guard let self else {
+                    admission.finish(wasPersisted: false)
+                    return
+                }
+                let job = MacClippyRuntimeCaptureJob(
+                    change: change,
+                    projection: projection,
+                    admission: admission
+                )
+                self.captureQueue.async { [weak self, job] in
+                    let persisted = job.persist { change, projection in
+                        guard let self else { return false }
+                        return self.capture(
+                            change,
+                            projection: projection,
+                            for: lifecycleToken
+                        )
+                    }
+                    job.finish(wasPersisted: persisted)
+                }
+            }
+        )
+        requestCaptureQueueRecoveryIfPossible()
+        if snippetExpansionEnabled {
+            _ = snippetExpander.start()
+        }
+    }
+
+    private func scheduleStartupMaintenance(for lifecycleToken: MacClippyRuntimeLifecycleToken) {
+        maintenanceQueue.async { [weak self] in
             guard let self,
                   self.isCurrentLifecycleToken(lifecycleToken) else { return }
-            self.pendingOCRJobs = 0
-            self.pendingOCRBytes = 0
-            self.pendingOCRJobsByGeneration[lifecycleToken.generation] = 0
-            self.pendingOCRBytesByGeneration[lifecycleToken.generation] = 0
-            self.deferredOCRJobs.removeAll()
-        }
-        // Off-main startup reconciliation: trim orphan blobs and FTS rows left
-        // behind by a crash mid-capture. Best-effort; failures are logged and
-        // never block capture from starting. Maintenance has its own queue so
-        // this scan cannot occupy the capture queue.
-        maintenanceQueue.async { [weak self] in
-            guard let self else { return }
-            guard self.isCurrentLifecycleToken(lifecycleToken) else { return }
-            self.retentionPreferencesSnapshot = MacClippyRetentionPreferencesSnapshot(defaults: .standard)
+            self.retentionPreferencesSnapshot = MacClippyRetentionPreferencesSnapshot(
+                defaults: self.preferencesDefaults
+            )
             self.reconcileStorage(for: lifecycleToken)
             self.enforceRetention(for: lifecycleToken)
         }
-        let retentionTimer = DispatchSource.makeTimerSource(queue: maintenanceQueue)
-        retentionTimer.schedule(deadline: .now() + 3_600, repeating: 3_600)
-        retentionTimer.setEventHandler { [weak self] in
+    }
+
+    private func scheduleRetentionTimer(for lifecycleToken: MacClippyRuntimeLifecycleToken) {
+        let timer = DispatchSource.makeTimerSource(queue: maintenanceQueue)
+        timer.schedule(deadline: .now() + 3_600, repeating: 3_600)
+        timer.setEventHandler { [weak self] in
             self?.enforceRetention(for: lifecycleToken)
         }
-        self.retentionTimer = retentionTimer
-        retentionTimer.resume()
+        retentionTimer = timer
+        timer.resume()
+    }
+
+    private func observeLifecycleNotifications() {
         defaultsObserver = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,
-            object: UserDefaults.standard,
+            object: preferencesDefaults,
             queue: nil
         ) { [weak self] _ in
             self?.captureQueue.async { [weak self] in
@@ -110,23 +179,14 @@ extension MacClippyRuntime {
                 self?.startDeferredOCRIfReady()
             }
         }
-        if usesRuntimeExclusionRules {
-            observer.updateExclusionRules(MacClippyRetentionPreferences.exclusionRules())
-            applyCapturePausePreference()
-        }
-        observer.start(projectionHandler: { [weak self] change, projection in
-            // Hand the change to the capture queue so mapping, encryption, and
-            // DB writes never block the observer's poll loop or the main
-            // thread.
-            guard let self else { return }
-            self.captureQueue.async { [self] in
-                self.capture(change, projection: projection, for: lifecycleToken)
-            }
-        })
-        _ = snippetExpander.start()
     }
 
     func stop() {
+        // Backup and compression cancellation is a short state update. It
+        // must happen before any lifecycle/store draining so an ordinary UI
+        // stop can ask off-lock maintenance work to stop without waiting for
+        // its filesystem or image-processing calls.
+        cancelBulkMaintenanceIO()
         guard Thread.isMainThread else {
             DispatchQueue.main.sync { [self] in stop() }
             return
@@ -134,12 +194,16 @@ extension MacClippyRuntime {
         lifecycleLock.lock()
         defer { lifecycleLock.unlock() }
 
+        // Reject new lifecycle-bound admission before asking producers to
+        // stop. A transaction that already passed the token check may finish;
+        // later observer deliveries cannot reserve another capture slot.
+        invalidateLifecycle()
+        captureQueueAdmission.observerDidStop()
+
         // Stop producers first so no new observer/timer work is submitted.
-        // The lifecycle is invalidated while holding storeLock below. An
-        // already-running capture either completes before that transition or
-        // observes the invalidated token before entering storage; this closes
-        // the commit window where stop could invalidate a generation while its
-        // transaction was still writing.
+        // The lifecycle transition above is nonblocking with respect to
+        // storage. A transaction that already passed its token check may
+        // complete; work not yet admitted observes the invalidated generation.
         observer.stop()
         snippetExpander.stop()
         ocrQueue.cancelAllOperations()
@@ -160,17 +224,32 @@ extension MacClippyRuntime {
             NotificationCenter.default.removeObserver(defaultsObserver)
             self.defaultsObserver = nil
         }
-        // Invalidate through the lifecycle commit gate. This may wait for an
-        // already-admitted capture/OCR commit, but it cannot wait for an
-        // unrelated maintenance pass: those passes use storeLock without the
-        // lifecycle gate and keep checking their token between bounded pages.
-        invalidateLifecycle()
         captureQueue.async { [weak self] in
-            self?.pendingOCRJobs = 0
-            self?.pendingOCRBytes = 0
-            self?.pendingOCRJobsByGeneration.removeAll()
-            self?.pendingOCRBytesByGeneration.removeAll()
-            self?.deferredOCRJobs.removeAll()
+            guard let self else { return }
+            var deferredJobs = self.deferredOCRJobs
+            self.deferredOCRJobs.removeAll(keepingCapacity: true)
+            let reservations = deferredJobs.map { job in
+                (generation: job.lifecycleToken.generation, byteCount: job.data.count)
+            }
+            // Drop this local COW array as well as the stored queue before
+            // releasing counters, so no deferred Data remains retained.
+            deferredJobs.removeAll(keepingCapacity: false)
+            reservations.forEach {
+                self.releaseOCRReservation(
+                    generation: $0.generation,
+                    byteCount: $0.byteCount
+                )
+            }
+        }
+    }
+
+    func requestCaptureQueueRecoveryIfPossible() {
+        guard isRunning,
+              captureQueueAdmission.beginCurrentGenerationReadIfPossible() else {
+            return
+        }
+        observer.requestCurrentGenerationRead { [weak self] changeCount in
+            self?.captureQueueAdmission.currentGenerationReadCompleted(changeCount: changeCount)
         }
     }
 
@@ -186,7 +265,7 @@ extension MacClippyRuntime {
     }
 
     func applyCapturePausePreference(now: Date = Date()) {
-        let defaults = UserDefaults.standard
+        let defaults = preferencesDefaults
         let wantsPause = defaults.bool(forKey: MacClippyRetentionPreferences.privacyPauseKey)
         let until = MacClippyRetentionPreferences.pauseUntil(from: defaults)
         guard wantsPause else {
@@ -247,6 +326,10 @@ extension MacClippyRuntime {
         defer { lifecycleLock.unlock() }
 
         guard isLifecycleRunning() else { return }
+        guard snippetExpansionEnabled else {
+            snippetExpander.stop()
+            return
+        }
         if AXIsProcessTrusted(), CGPreflightListenEventAccess() {
             _ = snippetExpander.start()
         } else {

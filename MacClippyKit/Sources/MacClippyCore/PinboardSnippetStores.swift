@@ -36,8 +36,10 @@ public final class MacClippyPinboardStore {
         try database.migrate(Self.migrations)
     }
 
-    public func databaseHealth() -> MacClippyDatabaseHealthReport {
-        database.healthCheck(requiredTables: ["macclippy_pinboards", "grdb_migrations"])
+    public func databaseHealth(
+        mode: MacClippyDatabaseHealthCheckMode = .bounded
+    ) -> MacClippyDatabaseHealthReport {
+        database.healthCheck(requiredTables: ["macclippy_pinboards", "grdb_migrations"], mode: mode)
     }
 
     public func databaseRowCount() throws -> Int64? {
@@ -223,8 +225,10 @@ public final class MacClippySnippetStore {
         try database.migrate(Self.migrations)
     }
 
-    public func databaseHealth() -> MacClippyDatabaseHealthReport {
-        database.healthCheck(requiredTables: ["macclippy_snippets", "grdb_migrations"])
+    public func databaseHealth(
+        mode: MacClippyDatabaseHealthCheckMode = .bounded
+    ) -> MacClippyDatabaseHealthReport {
+        database.healthCheck(requiredTables: ["macclippy_snippets", "grdb_migrations"], mode: mode)
     }
 
     public func databaseRowCount() throws -> Int64? {

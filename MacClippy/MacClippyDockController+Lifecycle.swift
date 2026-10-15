@@ -6,34 +6,19 @@ import QuartzCore
 import SwiftUI
 
 extension MacClippyDockController {
-    func toggle(source: MacClippyDockToggleSource = .hotKey) {
-        let cursorScreen = screenContainingCursor()
-        let panelScreen = panel.flatMap { screen(for: $0) }
-        let isDifferentScreen = cursorScreen != nil && panelScreen != nil && cursorScreen != panelScreen
-        switch MacClippyDockTogglePolicy.action(
-            source: source,
-            panelIsVisible: panel?.isVisible == true,
-            isClosing: isClosing,
-            isDifferentScreen: isDifferentScreen
-        ) {
-        case .show:
-            if isClosing {
-                invalidateAnimation()
-                panel?.contentView?.layer?.removeAllAnimations()
-                panelContentView?.backdropView.layer?.removeAllAnimations()
-                panelContentView?.foregroundView.layer?.removeAllAnimations()
-                isClosing = false
-            }
-            show()
-        case .hide:
-            hide()
-        case .ignore:
-            return
-        }
-    }
-
     func show() {
         guard let screen = screenContainingCursor() ?? NSScreen.main else { return }
+        let session = prepareDockShow(on: screen)
+        let dockPanel = makeDockPanel(frame: session.frame)
+        prepareDockPanelForShow(
+            dockPanel,
+            frame: session.frame,
+            reduceMotion: session.reduceMotion
+        )
+        presentDockPanel(dockPanel, reduceMotion: session.reduceMotion)
+    }
+
+    private func prepareDockShow(on screen: NSScreen) -> (frame: NSRect, reduceMotion: Bool) {
         let panelExisted = panel != nil
         if let pending = pendingDisplayEvent,
            MacClippyDisplayGenerationPolicy.shouldDiscardHiddenPanel(
@@ -78,7 +63,18 @@ extension MacClippyDockController {
             )
         )
 
-        let dockPanel = makeDockPanel(frame: frame)
+        let reduceMotion = MacClippyPanelGlassMotionPolicy.shouldSkipAnimatedTransition(
+            reduceMotion: shouldReduceMotion,
+            skipGlassMotion: skipGlassMotion
+        )
+        return (frame, reduceMotion)
+    }
+
+    private func prepareDockPanelForShow(
+        _ dockPanel: MacClippyDockPanel,
+        frame: NSRect,
+        reduceMotion: Bool
+    ) {
         _ = beginAnimation(.showing)
         resetPanelAnimationState(dockPanel)
         isClosing = false
@@ -92,10 +88,6 @@ extension MacClippyDockController {
         model.resetSearchFocus()
         startMonitors()
 
-        let reduceMotion = MacClippyPanelGlassMotionPolicy.shouldSkipAnimatedTransition(
-            reduceMotion: shouldReduceMotion,
-            skipGlassMotion: skipGlassMotion
-        )
         if reduceMotion {
             setPanelLayerState(
                 dockPanel,
@@ -113,7 +105,9 @@ extension MacClippyDockController {
                 shadowOpacity: MacClippyMotion.panelShadowOpacityStart
             )
         }
+    }
 
+    private func presentDockPanel(_ dockPanel: MacClippyDockPanel, reduceMotion: Bool) {
         dockPanel.makeKeyAndOrderFront(nil)
         takeKeyboardOwnership(of: dockPanel)
         // SwiftUI can restore the TextField responder when the panel becomes
@@ -133,39 +127,39 @@ extension MacClippyDockController {
             self.enterPickerMode()
         }
 
-        if !reduceMotion {
-            let backdrop = MacClippyPanelGlassMotionPolicy.backdropOpacity(animated: true)
-            if MacClippyPanelGlassMotionPolicy.shouldFadeBackdrop() {
-                animatePanelOpacity(
-                    layer: panelContentView?.backdropView.layer,
-                    from: backdrop.from,
-                    to: backdrop.to,
-                    duration: MacClippyMotion.entranceDuration,
-                    timingFunction: MacClippyMotion.entranceTimingFunction
-                )
-            } else {
-                panelContentView?.backdropView.layer?.opacity = backdrop.to
-            }
+        if !reduceMotion { animatePanelEntrance(on: dockPanel) }
+        ignoreOutsideClicksUntil = Date().addingTimeInterval(MacClippyMotion.outsideClickGraceDuration)
+        ignoreSpaceChangesUntil = Date().addingTimeInterval(MacClippyMotion.spaceChangeGraceDuration)
+    }
+
+    private func animatePanelEntrance(on dockPanel: MacClippyDockPanel) {
+        let backdrop = MacClippyPanelGlassMotionPolicy.backdropOpacity(animated: true)
+        if MacClippyPanelGlassMotionPolicy.shouldFadeBackdrop() {
             animatePanelOpacity(
-                layer: panelContentView?.foregroundView.layer,
-                from: 0,
-                to: 1,
-                duration: MacClippyMotion.entranceDuration - MacClippyMotion.foregroundRevealDelay,
-                delay: MacClippyMotion.foregroundRevealDelay,
-                timingFunction: MacClippyMotion.entranceTimingFunction
-            )
-            animatePanelLayer(
-                dockPanel,
-                fromScale: MacClippyMotion.panelContentScaleStart,
-                toScale: 1,
-                fromShadowOpacity: 0,
-                toShadowOpacity: 0,
+                layer: panelContentView?.backdropView.layer,
+                from: backdrop.from,
+                to: backdrop.to,
                 duration: MacClippyMotion.entranceDuration,
                 timingFunction: MacClippyMotion.entranceTimingFunction
             )
+        } else {
+            panelContentView?.backdropView.layer?.opacity = backdrop.to
         }
-        ignoreOutsideClicksUntil = Date().addingTimeInterval(MacClippyMotion.outsideClickGraceDuration)
-        ignoreSpaceChangesUntil = Date().addingTimeInterval(MacClippyMotion.spaceChangeGraceDuration)
+        animatePanelOpacity(
+            layer: panelContentView?.foregroundView.layer,
+            from: 0,
+            to: 1,
+            duration: MacClippyMotion.entranceDuration - MacClippyMotion.foregroundRevealDelay,
+            delay: MacClippyMotion.foregroundRevealDelay,
+            timingFunction: MacClippyMotion.entranceTimingFunction
+        )
+        animatePanelLayer(
+            dockPanel,
+            fromScale: MacClippyMotion.panelContentScaleStart,
+            toScale: 1,
+            duration: MacClippyMotion.entranceDuration,
+            timingFunction: MacClippyMotion.entranceTimingFunction
+        )
     }
 
     private func makeDockPanel(frame: NSRect) -> MacClippyDockPanel {
@@ -187,7 +181,7 @@ extension MacClippyDockController {
                 onClose: { [weak self] in self?.hide() },
                 onCreateSnippet: { [weak self] in self?.presentSnippetEditor() },
                 onOpenSettings: { [weak self] in self?.openSettingsAfterHide() },
-                onEnterPickerMode: { [weak self] in self?.enterPickerMode() },
+                onEnterPickerMode: { [weak self] in self?.focusResults() },
                 onPreview: { [weak self] in self?.showPreview() },
                 onSearchModeChange: { [weak self] isSearching in
                     self?.setSearchMode(isSearching)
@@ -208,9 +202,10 @@ extension MacClippyDockController {
                 onLayoutHeightChange: { [weak self] hasMultipleSelection in
                     self?.updateDockFrame(hasMultipleSelection: hasMultipleSelection)
                 },
-                onCopyToast: { [weak self] title in
-                    self?.showCopyToast(title: title)
-                }
+                onShowDetails: { [weak self] in self?.showCardDetails(id: $0, editing: $1) },
+                onPreviewTarget: { [weak self] target in self?.showPreview(for: target) },
+                onEditSnippet: { [weak self] snippet in self?.presentSnippetEditor(snippet: snippet) },
+                onOpenHelp: { [weak self] in self?.openHelpAfterHide() }
             )
         )
         hostingView = hosting
@@ -223,7 +218,7 @@ extension MacClippyDockController {
 
     func openSettingsAfterHide() {
         guard panel?.isVisible == true else {
-            (NSApp.delegate as? AppDelegate)?.openSettingsWindowFromDock()
+            openSettingsHandler()
             return
         }
         guard !isClosing else { return }
@@ -231,34 +226,55 @@ extension MacClippyDockController {
         // exit animation starts, so the Settings window remains in front.
         // This avoids depending on animation completion timing.
         hide { [weak self] in
-            guard self != nil else { return }
-            (NSApp.delegate as? AppDelegate)?.openSettingsWindowFromDock()
+            self?.openSettingsHandler()
         }
     }
 
-    func presentSnippetEditor() {
-        snippetEditorWindow.present { [weak self] name, trigger, body, folder, completion in
+    func presentSnippetEditor(snippet: MacClippySnippetEntry? = nil) {
+        snippetEditorWindow.present(snippet: snippet) { [weak self] name, trigger, body, folder, completion in
             guard let self else { return }
-            self.model.createSnippet(
-                name: name,
-                trigger: trigger,
-                body: body,
-                folder: folder,
-                onSuccess: { [weak self] in
-                    completion(true)
-                    self?.snippetEditorWindow.close()
-                },
-                onFailure: { [weak self] message in
-                    completion(false)
-                    self?.snippetEditorWindow.presentError(message)
-                }
-            )
+            let editorGeneration = self.snippetEditorWindow.generation
+            let onSuccess: @MainActor @Sendable () -> Void = { [weak self] in
+                guard self?.snippetEditorWindow.generation == editorGeneration else { return }
+                completion(true)
+                self?.snippetEditorWindow.close()
+            }
+            let onFailure: @MainActor @Sendable (String) -> Void = { [weak self] message in
+                guard self?.snippetEditorWindow.generation == editorGeneration else { return }
+                completion(false)
+                self?.snippetEditorWindow.presentError(message)
+            }
+            if let snippet {
+                self.model.updateSnippet(
+                    id: snippet.id, draft: .init(name: name, trigger: trigger, body: body, folder: folder),
+                    onSuccess: onSuccess, onFailure: onFailure
+                )
+            } else {
+                self.model.createSnippet(name: name, trigger: trigger, body: body, folder: folder,
+                                         onSuccess: onSuccess, onFailure: onFailure)
+            }
+        }
+    }
+
+    func openHelpAfterHide() {
+        let defaults = model.defaults
+        if panel?.isVisible == true {
+            hide { MacClippyHelpWindow.shared.present(defaults: defaults) }
+        } else {
+            MacClippyHelpWindow.shared.present(defaults: defaults)
         }
     }
 
     func hide(reason: MacClippyDockHideReason = .command, completion: (() -> Void)? = nil) {
         guard let dockPanel = panel, dockPanel.isVisible, !isClosing else { return }
         guard hideDetails() else { return }
+        traceE2EFocus("hide-\(reason)", location: NSEvent.mouseLocation)
+        prepareForHide(reason: reason)
+        completion?()
+        animateHide(dockPanel, reason: reason)
+    }
+
+    private func prepareForHide(reason: MacClippyDockHideReason) {
         let leavingSearch = interactionMode == .search
         isClosing = true
         model.dismissModal()
@@ -272,16 +288,39 @@ extension MacClippyDockController {
         applyOverlayLevel(allowsInputMethodCandidates: false)
         hidePreview()
         stopMonitors()
-        // Bump the session generation so an async batch completion that was
-        // started while the dock was visible cannot mutate state or close a
-        // dock that the user has just reopened. Thumbnail cache reset waits
-        // until the panel is gone so cards do not publish nil mid-hide.
-        let resetCachesBeforeAnimation = MacClippyDockHideTeardownPolicy
-            .shouldResetThumbnailCachesBeforeHideAnimation()
-        model.endSession(resetCaches: resetCachesBeforeAnimation)
-        completion?()
+        // End the session immediately so decoders and late cache writes cannot
+        // outlive a hidden/reopened dock. Cards already holding a CGImage keep
+        // their display value independently of the loader cache.
+        model.endSession(resetCaches: true)
+    }
+
+    private func animateHide(_ dockPanel: MacClippyDockPanel, reason: MacClippyDockHideReason) {
         let transaction = beginAnimation(.hiding)
-        let finish: @MainActor @Sendable () -> Void = { [weak self, weak dockPanel] in
+        let finish = hideCompletion(for: dockPanel, transaction: transaction)
+        let reduceMotion = MacClippyPanelGlassMotionPolicy.shouldSkipAnimatedTransition(
+            reduceMotion: shouldReduceMotion,
+            skipGlassMotion: skipGlassMotionForSession,
+            hideReason: reason
+        )
+        guard !reduceMotion else {
+            finish()
+            return
+        }
+        CATransaction.begin()
+        CATransaction.setCompletionBlock {
+            Task { @MainActor in
+                finish()
+            }
+        }
+        animateHideLayers(on: dockPanel)
+        CATransaction.commit()
+    }
+
+    private func hideCompletion(
+        for dockPanel: MacClippyDockPanel,
+        transaction: MacClippyDockAnimationTransaction
+    ) -> @MainActor @Sendable () -> Void {
+        { [weak self, weak dockPanel] in
             guard let self, let dockPanel,
                   MacClippyDockAnimationLifecyclePolicy.shouldApplyCompletion(
                       for: transaction,
@@ -299,86 +338,33 @@ extension MacClippyDockController {
             dockPanel.interceptsPickerKeys = false
             self.animationTransaction = nil
             self.isClosing = false
-            if !resetCachesBeforeAnimation {
-                self.model.resetSessionThumbnailCaches()
-            }
         }
+    }
 
-        let reduceMotion = MacClippyPanelGlassMotionPolicy.shouldSkipAnimatedTransition(
-            reduceMotion: shouldReduceMotion,
-            skipGlassMotion: skipGlassMotionForSession,
-            hideReason: reason
-        )
-        if reduceMotion {
-            finish()
-        } else {
-            CATransaction.begin()
-            CATransaction.setCompletionBlock {
-                Task { @MainActor in
-                    finish()
-                }
-            }
-            if MacClippyPanelGlassMotionPolicy.shouldFadeBackdrop() {
-                animatePanelOpacity(
-                    layer: panelContentView?.backdropView.layer,
-                    from: 1,
-                    to: 0,
-                    duration: MacClippyMotion.exitDuration,
-                    timingFunction: MacClippyMotion.exitTimingFunction
-                )
-            }
+    private func animateHideLayers(on dockPanel: MacClippyDockPanel) {
+        if MacClippyPanelGlassMotionPolicy.shouldFadeBackdrop() {
             animatePanelOpacity(
-                layer: panelContentView?.foregroundView.layer,
+                layer: panelContentView?.backdropView.layer,
                 from: 1,
                 to: 0,
                 duration: MacClippyMotion.exitDuration,
                 timingFunction: MacClippyMotion.exitTimingFunction
             )
-            animatePanelLayer(
-                dockPanel,
-                fromScale: 1,
-                toScale: MacClippyMotion.panelContentScaleStart,
-                fromShadowOpacity: MacClippyMotion.panelShadowOpacity,
-                toShadowOpacity: MacClippyMotion.panelShadowOpacityStart,
-                duration: MacClippyMotion.exitDuration,
-                timingFunction: MacClippyMotion.exitTimingFunction
-            )
-            CATransaction.commit()
         }
-    }
-
-    func discardPanelSurfaces() {
-        invalidateAnimation()
-        panel?.contentView?.layer?.removeAllAnimations()
-        panelContentView?.backdropView.layer?.removeAllAnimations()
-        panelContentView?.foregroundView.layer?.removeAllAnimations()
-        panel?.animationBehavior = .none
-        panel?.orderOut(nil)
-        panel?.close()
-        panel = nil
-        panelContentView = nil
-        hostingView = nil
-        isClosing = false
-    }
-
-    func noteDisplayLifecycleEvent(_ event: MacClippyDisplayLifecycleEvent) {
-        pendingDisplayEvent = event
-        let panelExists = panel != nil
-        let visible = isVisible
-        if MacClippyDisplayGenerationPolicy.shouldDiscardHiddenPanel(
-            event: event,
-            panelExists: panelExists,
-            isVisible: visible
-        ) {
-            discardPanelSurfaces()
-            return
-        }
-        if MacClippyDisplayGenerationPolicy.shouldRebuildVisibleGlass(
-            event: event,
-            isVisible: visible
-        ) {
-            rebuildVisibleGlassSurfaces()
-        }
+        animatePanelOpacity(
+            layer: panelContentView?.foregroundView.layer,
+            from: 1,
+            to: 0,
+            duration: MacClippyMotion.exitDuration,
+            timingFunction: MacClippyMotion.exitTimingFunction
+        )
+        animatePanelLayer(
+            dockPanel,
+            fromScale: 1,
+            toScale: MacClippyMotion.panelContentScaleStart,
+            duration: MacClippyMotion.exitDuration,
+            timingFunction: MacClippyMotion.exitTimingFunction
+        )
     }
 
     func rebuildVisibleGlassSurfaces() {
@@ -409,257 +395,5 @@ extension MacClippyDockController {
         takeKeyboardOwnership(of: dockPanel)
         startMonitors()
         handleScreenParametersChanged()
-    }
-
-    func cleanup() {
-        cancelPreviewRetry()
-        // Explicitly invalidate model session/operation tokens before tearing
-        // down windows. Shutdown must not rely on ARC timing to suppress a
-        // queued paste or a late database completion.
-        model.endSession()
-        model.dismissModal()
-        snippetEditorWindow.close()
-        stopMonitors()
-        dismissPreviewImmediately()
-        dismissDetailsImmediately()
-        dismissCopyToast()
-        invalidateAnimation()
-        panel?.contentView?.layer?.removeAllAnimations()
-        panelContentView?.backdropView.layer?.removeAllAnimations()
-        panelContentView?.foregroundView.layer?.removeAllAnimations()
-        panel?.animationBehavior = .none
-        panel?.orderOut(nil)
-        panel?.close()
-        panel = nil
-        panelContentView = nil
-        hostingView = nil
-        isClosing = false
-    }
-
-    func beginAnimation(_ operation: MacClippyDockAnimationTransaction.Operation) -> MacClippyDockAnimationTransaction {
-        animationGeneration = MacClippyDockAnimationLifecyclePolicy.nextGeneration(after: animationGeneration)
-        let transaction = MacClippyDockAnimationTransaction(
-            generation: animationGeneration,
-            operation: operation
-        )
-        animationTransaction = transaction
-        return transaction
-    }
-
-    func invalidateAnimation() {
-        animationGeneration = MacClippyDockAnimationLifecyclePolicy.nextGeneration(after: animationGeneration)
-        animationTransaction = nil
-    }
-
-    func resetPanelAnimationState(_ dockPanel: NSWindow) {
-        dockPanel.contentView?.layer?.removeAllAnimations()
-        panelContentView?.backdropView.layer?.removeAllAnimations()
-        panelContentView?.foregroundView.layer?.removeAllAnimations()
-        dockPanel.setFrame(dockPanel.frame, display: false, animate: false)
-        dockPanel.alphaValue = 1
-        setPanelLayerState(
-            dockPanel,
-            backdropOpacity: 1,
-            foregroundOpacity: 1,
-            scale: 1,
-            shadowOpacity: MacClippyMotion.panelShadowOpacity
-        )
-    }
-
-    func configurePanelLayer(_ dockPanel: NSWindow) {
-        guard let layer = dockPanel.contentView?.layer else { return }
-        layer.masksToBounds = false
-        layer.shadowColor = nil
-        layer.shadowOpacity = 0
-        layer.shadowRadius = 0
-        layer.shadowPath = nil
-    }
-
-    func setPanelLayerState(
-        _ dockPanel: NSWindow,
-        backdropOpacity: Float,
-        foregroundOpacity: Float,
-        scale: CGFloat,
-        shadowOpacity: Float
-    ) {
-        guard let contentView = dockPanel.contentView as? MacClippyDockPanelContentView else { return }
-        contentView.backdropView.layer?.opacity = backdropOpacity
-        contentView.foregroundView.layer?.opacity = foregroundOpacity
-        contentView.foregroundView.layer?.transform = CATransform3DMakeScale(scale, scale, 1)
-        contentView.layer?.shadowOpacity = 0
-    }
-
-    func animatePanelLayer(
-        _ dockPanel: NSWindow,
-        fromScale: CGFloat,
-        toScale: CGFloat,
-        fromShadowOpacity: Float,
-        toShadowOpacity: Float,
-        duration: TimeInterval,
-        timingFunction: CAMediaTimingFunction
-    ) {
-        guard let contentView = dockPanel.contentView as? MacClippyDockPanelContentView,
-              let foregroundLayer = contentView.foregroundView.layer,
-              let containerLayer = contentView.layer else { return }
-
-        let scale = CABasicAnimation(keyPath: "transform")
-        scale.fromValue = CATransform3DMakeScale(fromScale, fromScale, 1)
-        scale.toValue = CATransform3DMakeScale(toScale, toScale, 1)
-        scale.duration = duration
-        scale.timingFunction = timingFunction
-        foregroundLayer.add(scale, forKey: "macClippyPanelScale")
-
-        containerLayer.removeAnimation(forKey: "macClippyPanelShadow")
-        containerLayer.shadowOpacity = 0
-
-        foregroundLayer.transform = CATransform3DMakeScale(toScale, toScale, 1)
-    }
-
-    func animatePanelOpacity(
-        layer: CALayer?,
-        from: Float,
-        to: Float,
-        duration: TimeInterval,
-        delay: TimeInterval = 0,
-        timingFunction: CAMediaTimingFunction
-    ) {
-        guard let layer else { return }
-        let opacity = CABasicAnimation(keyPath: "opacity")
-        opacity.fromValue = from
-        opacity.toValue = to
-        opacity.beginTime = CACurrentMediaTime() + delay
-        opacity.duration = duration
-        opacity.timingFunction = timingFunction
-        opacity.fillMode = .backwards
-        layer.add(opacity, forKey: "macClippyPanelOpacity")
-        layer.opacity = to
-    }
-
-    var shouldReduceMotion: Bool {
-        reduceMotionOverride ?? MacClippyMotion.shouldReduceMotion(swiftUI: swiftUIReduceMotion)
-    }
-
-    // Show a short-lived floating copy toast in the center of the active screen.
-    // Independent of the dock panel so it survives a dock close, matching how
-    // paste feedback reads as a system-level indicator.
-
-    func screenContainingCursor() -> NSScreen? {
-        screen(containing: NSEvent.mouseLocation, in: NSScreen.screens)
-    }
-
-    func isFullScreenSpace(_ screen: NSScreen) -> Bool {
-        let frame = screen.frame
-        let visibleFrame = screen.visibleFrame
-        let tolerance: CGFloat = 1
-        return abs(frame.minX - visibleFrame.minX) <= tolerance
-            && abs(frame.minY - visibleFrame.minY) <= tolerance
-            && abs(frame.width - visibleFrame.width) <= tolerance
-            && abs(frame.height - visibleFrame.height) <= tolerance
-    }
-
-    func screen(for dockPanel: NSWindow) -> NSScreen? {
-        let screens = NSScreen.screens
-        if let matchingScreen = currentScreen(for: dockPanel, in: screens) {
-            return matchingScreen
-        }
-        return screen(containing: dockPanel.frame.midPoint, in: screens)
-            ?? NSScreen.main
-    }
-
-    func currentScreen(for dockPanel: NSWindow, in screens: [NSScreen]) -> NSScreen? {
-        guard let currentScreen = dockPanel.screen else { return nil }
-        return screens.first { $0.frame == currentScreen.frame }
-    }
-
-    func screen(
-        containing point: CGPoint,
-        in screens: [NSScreen]
-    ) -> NSScreen? {
-        let frames = screens.map(\.frame)
-        guard let selectedFrame = MacClippyDisplayLayout.screenRect(containing: point, from: frames) else {
-            return nil
-        }
-        return screens.first { $0.frame == selectedFrame }
-    }
-
-    func handleScreenParametersChanged() {
-        guard let dockPanel = panel, dockPanel.isVisible, !isClosing else { return }
-
-        let screens = NSScreen.screens
-        let cursorScreen = screen(containing: NSEvent.mouseLocation, in: screens)
-        let panelScreen = currentScreen(for: dockPanel, in: screens)
-        let targetScreen = cursorScreen ?? panelScreen ?? NSScreen.main
-        guard let targetScreen else { return }
-
-        let dockFrame = MacClippyDockFramePolicy.frame(
-            for: targetScreen.frame,
-            hasMultipleSelection: model.hasMultipleSelection
-        )
-        let shouldKeepPreview = interactionMode == .preview && previewPanel?.isVisible == true
-        let nextPreviewFrame = shouldKeepPreview
-            ? frameForPreview(above: dockFrame, on: targetScreen)
-            : nil
-
-        invalidateAnimation()
-        dockPanel.contentView?.frame = NSRect(origin: .zero, size: dockFrame.size)
-        dockPanel.setFrame(dockFrame, display: false, animate: false)
-        resetPanelAnimationState(dockPanel)
-        configurePanelLayer(dockPanel)
-
-        previewAnimationGeneration &+= 1
-        previewIsClosing = false
-        if let preview = previewPanel {
-            if let nextPreviewFrame, shouldKeepPreview {
-                resetPreviewPanelState(preview)
-                preview.setFrame(nextPreviewFrame, display: false, animate: false)
-                preview.orderFrontRegardless()
-            } else {
-                preview.orderOut(nil)
-            }
-        }
-
-        if interactionMode == .details, let detailsPanel, detailsPanel.isVisible {
-            detailsPanel.setFrame(detailsFrame(for: dockPanel), display: true, animate: false)
-            detailsPanel.orderFrontRegardless()
-        }
-    }
-
-    func updateDockFrame(hasMultipleSelection: Bool) {
-        guard let dockPanel = panel,
-              dockPanel.isVisible,
-              !isClosing,
-              let targetScreen = screen(for: dockPanel) else { return }
-
-        let dockFrame = MacClippyDockFramePolicy.frame(
-            for: targetScreen.frame,
-            hasMultipleSelection: hasMultipleSelection
-        )
-        guard dockPanel.frame.size != dockFrame.size else { return }
-
-        let shouldKeepPreview = interactionMode == .preview && previewPanel?.isVisible == true
-        let nextPreviewFrame = shouldKeepPreview
-            ? frameForPreview(above: dockFrame, on: targetScreen)
-            : nil
-
-        // Keep the bottom edge anchored and resize without spatial motion. The
-        // action row is a content-state change, not a panel entrance/exit.
-        dockPanel.contentView?.frame = NSRect(origin: .zero, size: dockFrame.size)
-        dockPanel.setFrame(dockFrame, display: true, animate: false)
-        configurePanelLayer(dockPanel)
-
-        if let preview = previewPanel {
-            if let nextPreviewFrame, shouldKeepPreview {
-                resetPreviewPanelState(preview)
-                preview.setFrame(nextPreviewFrame, display: true, animate: false)
-                preview.orderFrontRegardless()
-            } else {
-                preview.orderOut(nil)
-            }
-        }
-
-        if interactionMode == .details, let detailsPanel, detailsPanel.isVisible {
-            detailsPanel.setFrame(detailsFrame(for: dockPanel), display: true, animate: false)
-            detailsPanel.orderFrontRegardless()
-        }
     }
 }

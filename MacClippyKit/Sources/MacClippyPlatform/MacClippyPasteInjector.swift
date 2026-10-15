@@ -3,9 +3,52 @@ import ApplicationServices
 import CoreGraphics
 import Foundation
 
+/// Describes whether a paste event was posted or content was only prepared.
+/// `injected` means the keystroke events were delivered; it does not confirm
+/// that the target application accepted or inserted the clipboard contents.
 public enum MacClippyPasteInjectionResult: Equatable, Sendable {
     case injected
-    case manualPasteRequired
+    case preparedForManualPaste
+    case failed(MacClippyPasteInjectionFailure)
+    case cancelled
+}
+
+public enum MacClippyPasteInjectionFailure: Error, Equatable, Sendable, LocalizedError {
+    case accessibilityUnavailable
+    case incompleteClipboard
+    case clipboardChanged
+    case preparationFailed
+    case pasteboardWriteFailed
+    case clipboardRestoreFailed
+    case eventCreationFailed
+
+    public var errorDescription: String? {
+        switch self {
+        case .accessibilityUnavailable:
+            return "Enable Accessibility access to paste this snippet automatically."
+        case .incompleteClipboard:
+            return "The current clipboard contains data that cannot be safely restored."
+        case .clipboardChanged:
+            return "The clipboard changed before the paste could be prepared. Try again."
+        case .preparationFailed:
+            return "The selected content could not be prepared for paste."
+        case .pasteboardWriteFailed:
+            return "The selected content could not be written to the clipboard."
+        case .clipboardRestoreFailed:
+            return "The clipboard could not be restored after a failed paste."
+        case .eventCreationFailed:
+            return "The paste keystroke could not be created."
+        }
+    }
+}
+
+public enum MacClippyPasteManualFallbackPolicy: Equatable, Sendable {
+    /// Leave the selected content on the clipboard when event posting is not
+    /// available so the user can paste it manually.
+    case prepareClipboard
+    /// Preserve the existing clipboard and never synthesize a manual fallback.
+    /// Used by snippet expansion, which must keep its typed trigger intact.
+    case preserveClipboard
 }
 
 public typealias PasteInjectionResult = MacClippyPasteInjectionResult
@@ -20,19 +63,45 @@ extension Notification.Name {
 }
 
 public final class MacClippyPasteInjector: @unchecked Sendable {
-    private struct PasteboardSnapshot {
+    struct PasteboardSnapshot {
         let items: [[(type: NSPasteboard.PasteboardType, data: Data)]]
         let isComplete: Bool
         let changeCount: Int
     }
 
-    private let pasteboard: NSPasteboard
-    private let isProcessTrusted: () -> Bool
-    private let postEvents: (CGEvent, CGEvent) -> Void
-    private let writeSentinel: MacClippyPasteboardWriteSentinel?
-    private let prepareContent: (MacClippyPasteboardContent, NSPasteboard) -> Bool
-    private let writeObjects: (NSPasteboard, [NSPasteboardWriting]) -> Bool
-    private let operationLock = NSLock()
+    struct PasteEvents {
+        let keyDown: CGEvent
+        let keyUp: CGEvent
+    }
+
+    struct InjectionRequest {
+        let beforePaste: (() -> Bool)?
+        let afterPasteEvents: (() -> Void)?
+        let validateBeforePaste: (() -> Bool)?
+        let validateCommitContext: (() -> Bool)?
+        let manualFallback: MacClippyPasteManualFallbackPolicy
+        let gate: MacClippyPasteInjectionGate?
+        let targetProcessIdentifier: Int32?
+    }
+
+    enum SnapshotWriteResult {
+        case written(changeCount: Int)
+        case failed(restoreIfChangeCountIs: Int?)
+        case cancelled(restoreIfChangeCountIs: Int?)
+        case clipboardChanged
+        case restoreFailed
+    }
+
+    let pasteboard: NSPasteboard
+    let pasteboardAccessCoordinator: MacClippyPasteboardAccessCoordinator
+    let isProcessTrusted: () -> Bool
+    let postEvents: (CGEvent, CGEvent) -> Void
+    let postEventsToProcess: ((CGEvent, CGEvent, Int32) -> Void)?
+    let writeSentinel: MacClippyPasteboardWriteSentinel?
+    let prepareContent: (MacClippyPasteboardContent, NSPasteboard) -> Bool
+    let writeObjects: (NSPasteboard, [NSPasteboardWriting]) -> Bool
+    let operationLock = NSLock()
+    var preEventAdmissionHookForTesting: (() -> Void)?
 
     public init(
         pasteboard: NSPasteboard = .general,
@@ -41,19 +110,31 @@ public final class MacClippyPasteInjector: @unchecked Sendable {
             keyDown.post(tap: .cghidEventTap)
             keyUp.post(tap: .cghidEventTap)
         },
+        postEventsToProcess: ((CGEvent, CGEvent, Int32) -> Void)? = nil,
         writeSentinel: MacClippyPasteboardWriteSentinel? = nil,
+        pasteboardAccessCoordinator: MacClippyPasteboardAccessCoordinator? = nil,
         preparer: @escaping (MacClippyPasteboardContent, NSPasteboard) -> Bool = {
             MacClippyPasteboardPreparer.prepare($0, on: $1)
         },
         writeObjects: ((NSPasteboard, [NSPasteboardWriting]) -> Bool)? = nil
     ) {
         self.pasteboard = pasteboard
+        self.pasteboardAccessCoordinator = pasteboardAccessCoordinator ?? .shared(for: pasteboard)
         self.isProcessTrusted = isProcessTrusted
         self.postEvents = postEvents
+        self.postEventsToProcess = postEventsToProcess
         self.writeSentinel = writeSentinel
         self.prepareContent = preparer
         self.writeObjects = writeObjects ?? { pasteboard, items in
-            pasteboard.writeObjects(items)
+            (try? MacClippyNativePasteboard.write(items, to: pasteboard)) ?? false
+        }
+        self.preEventAdmissionHookForTesting = nil
+    }
+
+    @_spi(Testing)
+    public func setPreEventAdmissionHookForTesting(_ hook: (() -> Void)?) {
+        withOperationLock {
+            preEventAdmissionHookForTesting = hook
         }
     }
 
@@ -65,7 +146,9 @@ public final class MacClippyPasteInjector: @unchecked Sendable {
     }
 
     public func currentPlainText() -> String? {
-        pasteboard.string(forType: .string)
+        pasteboardAccessCoordinator.withAccess {
+            try? MacClippyNativePasteboard.string(from: pasteboard, forType: .string)
+        }
     }
 
     public func prepareText(
@@ -90,211 +173,68 @@ public final class MacClippyPasteInjector: @unchecked Sendable {
         _ content: MacClippyPasteboardContent,
         gate: MacClippyPasteInjectionGate? = nil
     ) throws {
-        try withOptionalGate(gate) {
-            try withOperationLock { try prepareLocked(content, writeSentinel: writeSentinel) }
-        }
+        try prepare(content, gate: gate, sentinel: writeSentinel)
     }
 
     public func prepareForHistory(
         _ content: MacClippyPasteboardContent,
         gate: MacClippyPasteInjectionGate? = nil
     ) throws {
-        try withOptionalGate(gate) {
-            try withOperationLock { try prepareLocked(content, writeSentinel: nil) }
-        }
-    }
-
-    private func prepareLocked(
-        _ content: MacClippyPasteboardContent,
-        writeSentinel: MacClippyPasteboardWriteSentinel?
-    ) throws {
-        let original = snapshotPasteboard()
-        // A promised item may expose its UTI before its provider can
-        // materialize bytes. Refuse to clear an incomplete snapshot because
-        // there is no lossless way to restore that item after a failed copy.
-        guard original.isComplete else {
-            throw MacClippyPasteboardPrepareError.incompleteSnapshot
-        }
-
-        guard prepareContentLocked(content, writeSentinel: writeSentinel) else {
-            if restore(original) {
-                throw MacClippyPasteboardPrepareError.writeFailed
-            }
-            throw MacClippyPasteboardPrepareError.restoreFailed
-        }
-    }
-
-    private func prepareContentLocked(
-        _ content: MacClippyPasteboardContent,
-        writeSentinel: MacClippyPasteboardWriteSentinel?
-    ) -> Bool {
-        if let writeSentinel {
-            return MacClippyPasteboardWriteCoordinator.write(
-                content,
-                on: pasteboard,
-                sentinel: writeSentinel,
-                preparer: prepareContent
-            )
-        }
-        return prepareContent(content, pasteboard)
+        try prepare(content, gate: gate, sentinel: nil)
     }
 
     public func inject(
         text: String,
-        beforePaste: (() -> Void)? = nil,
-        gate: MacClippyPasteInjectionGate? = nil
+        beforePaste: (() -> Bool)? = nil,
+        afterPasteEvents: (() -> Void)? = nil,
+        validateBeforePaste: (() -> Bool)? = nil,
+        validateCommitContext: (() -> Bool)? = nil,
+        manualFallback: MacClippyPasteManualFallbackPolicy = .prepareClipboard,
+        gate: MacClippyPasteInjectionGate? = nil,
+        targetProcessIdentifier: Int32? = nil
     ) -> MacClippyPasteInjectionResult {
-        inject(content: .text(text), beforePaste: beforePaste, gate: gate)
-    }
-
-    public func inject(
-        content: MacClippyPasteboardContent,
-        beforePaste: (() -> Void)? = nil,
-        gate: MacClippyPasteInjectionGate? = nil
-    ) -> MacClippyPasteInjectionResult {
-        if let gate {
-            return gate.withOpenGate {
-                withOperationLock {
-                    injectLocked(content: content, beforePaste: beforePaste)
-                }
-            } ?? .manualPasteRequired
-        }
-        return withOperationLock {
-            injectLocked(content: content, beforePaste: beforePaste)
-        }
-    }
-
-    private func withOptionalGate(
-        _ gate: MacClippyPasteInjectionGate?,
-        _ operation: () throws -> Void
-    ) throws {
-        guard let gate else {
-            try operation()
-            return
-        }
-        var captured: Result<Void, Error>?
-        let opened: ()? = gate.withOpenGate {
-            captured = Result { try operation() }
-        }
-        guard opened != nil, let captured else {
-            throw MacClippyPasteboardPrepareError.gateClosed
-        }
-        try captured.get()
-    }
-
-    private func withOperationLock<T>(_ operation: () throws -> T) rethrows -> T {
-        operationLock.lock()
-        defer { operationLock.unlock() }
-        return try operation()
-    }
-
-    private func injectLocked(
-        content: MacClippyPasteboardContent,
-        beforePaste: (() -> Void)?
-    ) -> MacClippyPasteInjectionResult {
-        let original = snapshotPasteboard()
-        // A promised pasteboard item can expose its UTI before its provider
-        // can materialize bytes. Do not clear or replace an incomplete
-        // snapshot: restoring it would silently drop the promised item.
-        guard original.isComplete else { return .manualPasteRequired }
-        let expectedInjectedChangeCount = pasteboard.changeCount + 1
-        guard prepareContentLocked(content, writeSentinel: writeSentinel) else {
-            writeSentinel?.cancel(changeCount: expectedInjectedChangeCount)
-            _ = restore(original)
-            return .manualPasteRequired
-        }
-
-        guard isProcessTrusted() else {
-            writeSentinel?.cancel(changeCount: expectedInjectedChangeCount)
-            _ = restore(original)
-            return .manualPasteRequired
-        }
-
-        guard let source = CGEventSource(stateID: .hidSystemState),
-              let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false)
-        else {
-            writeSentinel?.cancel(changeCount: expectedInjectedChangeCount)
-            _ = restore(original)
-            return .manualPasteRequired
-        }
-
-        keyDown.flags = .maskCommand
-        keyUp.flags = .maskCommand
-        // Callers such as Snippet expansion use this hook to remove the
-        // trigger immediately before Cmd+V. All failure paths above return
-        // before the hook, preserving the original user input.
-        beforePaste?()
-        postPasteKeystrokeNotification(.macClippyWillInjectPasteKeystroke)
-        postEvents(keyDown, keyUp)
-        postPasteKeystrokeNotification(.macClippyDidInjectPasteKeystroke)
-        return .injected
-    }
-
-    private func snapshotPasteboard() -> PasteboardSnapshot {
-        var isComplete = true
-        let items = (pasteboard.pasteboardItems ?? []).map { item in
-            item.types.compactMap { type -> (type: NSPasteboard.PasteboardType, data: Data)? in
-                guard let data = item.data(forType: type) else {
-                    isComplete = false
-                    return nil
-                }
-                return (type: type, data: data)
-            }
-        }
-        return PasteboardSnapshot(
-            items: items,
-            isComplete: isComplete,
-            changeCount: pasteboard.changeCount
+        inject(
+            content: .text(text),
+            beforePaste: beforePaste,
+            afterPasteEvents: afterPasteEvents,
+            validateBeforePaste: validateBeforePaste,
+            validateCommitContext: validateCommitContext,
+            manualFallback: manualFallback,
+            gate: gate,
+            targetProcessIdentifier: targetProcessIdentifier
         )
     }
 
-    /// Restores a snapshot after a failed prepare/inject. Clears once, then
-    /// retries `writeObjects` without clearing again. Aborts if another writer
-    /// changed the pasteboard after that clear.
-    @discardableResult
-    private func restore(_ snapshot: PasteboardSnapshot) -> Bool {
-        let expectedPreparedChangeCount = snapshot.changeCount + 1
-        guard pasteboard.changeCount <= expectedPreparedChangeCount else {
-            return false
+    /// Runs synchronously after this request's paste events return. It also
+    /// runs when cancellation closes the gate after event posting was admitted,
+    /// and is not called when the request is canceled before posting.
+    public func inject(
+        content: MacClippyPasteboardContent,
+        beforePaste: (() -> Bool)? = nil,
+        afterPasteEvents: (() -> Void)? = nil,
+        validateBeforePaste: (() -> Bool)? = nil,
+        validateCommitContext: (() -> Bool)? = nil,
+        manualFallback: MacClippyPasteManualFallbackPolicy = .prepareClipboard,
+        gate: MacClippyPasteInjectionGate? = nil,
+        targetProcessIdentifier: Int32? = nil
+    ) -> MacClippyPasteInjectionResult {
+        let request = InjectionRequest(
+            beforePaste: beforePaste,
+            afterPasteEvents: afterPasteEvents,
+            validateBeforePaste: validateBeforePaste,
+            validateCommitContext: validateCommitContext,
+            manualFallback: manualFallback,
+            gate: gate,
+            targetProcessIdentifier: targetProcessIdentifier
+        )
+        return withOperationLock {
+            injectLocked(content: content, request: request)
         }
-
-        let restoredItems = snapshot.items.map { values -> NSPasteboardWriting in
-            let item = NSPasteboardItem()
-            for value in values {
-                _ = item.setData(value.data, forType: value.type)
-            }
-            return item
-        }
-
-        let expectedAfterClear = pasteboard.changeCount + 1
-        writeSentinel?.beginWrite(expectedChangeCount: expectedAfterClear)
-        pasteboard.clearContents()
-        guard pasteboard.changeCount == expectedAfterClear else {
-            writeSentinel?.cancel(changeCount: expectedAfterClear)
-            return false
-        }
-        if restoredItems.isEmpty {
-            return true
-        }
-        if writeObjects(pasteboard, restoredItems) {
-            return true
-        }
-        guard pasteboard.changeCount == expectedAfterClear else {
-            writeSentinel?.cancel(changeCount: expectedAfterClear)
-            return false
-        }
-        // The retry writes into the generation the clear above already opened.
-        // `writeObjects` does not bump changeCount, so registering a second
-        // token here would stamp the *next* foreign copy instead.
-        if writeObjects(pasteboard, restoredItems) {
-            return true
-        }
-        writeSentinel?.cancel(changeCount: expectedAfterClear)
-        return false
     }
 
-    private func postPasteKeystrokeNotification(_ name: Notification.Name) {
-        NotificationCenter.default.post(name: name, object: self)
+    func withOperationLock<T>(_ operation: () throws -> T) rethrows -> T {
+        operationLock.lock()
+        defer { operationLock.unlock() }
+        return try operation()
     }
 }

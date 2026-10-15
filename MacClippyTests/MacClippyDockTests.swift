@@ -220,7 +220,7 @@ final class MacClippyDockTests: XCTestCase {
     }
 
     @MainActor
-    func testLeavingSearchClearsTheQueryInsteadOfInheritingIt() throws {
+    func testLeavingSearchPreservesTheQueryForResultOperations() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "MacClippyDockSearchDismiss-\(UUID().uuidString)",
             isDirectory: true
@@ -236,7 +236,7 @@ final class MacClippyDockTests: XCTestCase {
         controller.enterPickerMode()
 
         XCTAssertEqual(controller.interactionMode, .picker)
-        XCTAssertEqual(controller.model.query, "")
+        XCTAssertEqual(controller.model.query, "测试")
     }
 
     @MainActor

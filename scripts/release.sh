@@ -7,9 +7,9 @@ project_root="$(cd "${script_dir}/.." && pwd)"
 
 cd "${project_root}"
 
-# 1. Check working directory status
-if ! git diff --quiet || ! git diff --cached --quiet; then
-    echo "error: working tree has uncommitted changes. Please commit or stash before releasing." >&2
+# 1. Check working directory status, including untracked files
+if [[ -n "$(git status --porcelain --untracked-files=all)" ]]; then
+    echo "error: working tree has uncommitted or untracked changes. Please commit or stash before releasing." >&2
     exit 1
 fi
 
@@ -35,7 +35,7 @@ raw_version="${1:-${VERSION:-}}"
 
 if [[ -z "${raw_version}" ]]; then
     # Look for the latest semantic tag
-    latest_tag="$(git tag -l "v*" 2>/dev/null | sort -V | tail -n 1 || true)"
+    latest_tag="$(git tag -l "v*" 2>/dev/null | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
     if [[ -z "${latest_tag}" ]]; then
         suggested="0.0.1"
     else
@@ -60,8 +60,8 @@ fi
 clean_version="${raw_version#v}"
 tag="v${clean_version}"
 
-if ! [[ "${clean_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
-    echo "error: invalid semantic version '${raw_version}'. Expected format: X.Y.Z or vX.Y.Z (e.g. 0.0.1)" >&2
+if ! [[ "${clean_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "error: invalid stable version '${raw_version}'. Expected format: X.Y.Z or vX.Y.Z (e.g. 0.0.1)" >&2
     exit 1
 fi
 
@@ -71,7 +71,7 @@ if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
     exit 1
 fi
 
-if git ls-remote --tags origin "refs/tags/${tag}" | grep -q "${tag}"; then
+if git ls-remote --tags origin "refs/tags/${tag}" | awk -v ref="refs/tags/${tag}" '$2 == ref || $2 == ref "^{}" { found = 1 } END { exit !found }'; then
     echo "error: tag '${tag}' already exists on origin." >&2
     exit 1
 fi

@@ -6,18 +6,17 @@ import MacClippyCore
 extension MacClippyDockView {
     @ViewBuilder
     func snippetContextMenu(_ snippet: MacClippySnippetEntry) -> some View {
+        Button("Edit…") { onEditSnippet(snippet) }
+        Button("Preview") { onPreviewTarget(.snippet(snippet.id)) }
         Button("Copy") {
-            model.focus(snippet)
-            model.copyFocused()
+            model.copyTarget(.snippet(snippet.id))
         }
         Button("Paste") {
-            model.focus(snippet)
-            model.pasteFocused(completion: onClose)
+            model.pasteTarget(.snippet(snippet.id), completion: onClose)
         }
         Divider()
         Button("Delete", role: .destructive) {
-            model.focus(snippet)
-            model.deleteFocused()
+            model.deleteSnippet(id: snippet.id)
         }
     }
 
@@ -49,20 +48,22 @@ extension MacClippyDockView {
     @ViewBuilder
     func itemContextMenu(_ item: MacClippyHistoryEntry) -> some View {
         Button("Copy") {
-            model.focus(item)
-            model.copyFocused()
+            model.copyRecord(id: item.id)
         }
         if item.supportsPlainCopy {
             Button("Copy plain") {
-                model.focus(item)
-                model.copyFocused(plain: true)
+                model.copyRecord(id: item.id, plain: true)
             }
             itemTransformMenu(item)
         }
         Button("Paste") {
-            model.focus(item)
-            model.pasteFocused(completion: onClose)
+            model.pasteTarget(.item(item.id), completion: onClose)
         }
+        .disabled(!item.isPasteable)
+        Button("Preview") { onPreviewTarget(.item(item.id)) }
+        Button("Edit…") { onShowDetails(item.id, true) }
+            .disabled(!item.supportsPlainCopy)
+        Button("Details…") { onShowDetails(item.id, false) }
         Button("Rename…") {
             model.focus(item)
             model.presentRenameItem(for: item)
@@ -88,9 +89,8 @@ extension MacClippyDockView {
             itemPinboardMenu(item)
         }
         Divider()
-        Button("Delete", role: .destructive) {
-            model.focus(item)
-            model.deleteFocused()
+        Button("Delete from history…", role: .destructive) {
+            model.requestDeleteRecords(ids: [item.id])
         }
     }
 
@@ -100,12 +100,10 @@ extension MacClippyDockView {
             ForEach(TextTransform.allCases, id: \.self) { transform in
                 Menu(transform.displayName) {
                     Button("Copy transformed") {
-                        model.focus(item)
-                        model.copyFocused(transform: transform)
+                        model.copyRecord(id: item.id, transform: transform)
                     }
                     Button("Paste transformed") {
-                        model.focus(item)
-                        model.pasteFocused(transform: transform, completion: onClose)
+                        model.pasteRecord(id: item.id, transform: transform, completion: onClose)
                     }
                 }
             }

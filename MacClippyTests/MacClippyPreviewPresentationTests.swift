@@ -159,11 +159,6 @@ final class MacClippyPreviewPresentationTests: XCTestCase {
     }
 
     private func appSource(named fileName: String) throws -> String {
-        let sourceRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("MacClippy")
-        let fileURL = sourceRoot.appendingPathComponent(fileName)
-        return try String(contentsOf: fileURL, encoding: .utf8)
+        try macClippyTestAppSource(named: fileName)
     }
 }

@@ -14,26 +14,78 @@ struct MacClippyDockChromeIconButton: View {
     let accessibilityIdentifier: String
     let help: String
     let action: () -> Void
+    var selected = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .frame(width: 36, height: 36)
+                // The hit shape belongs to the label. Putting it outside the
+                // Button only decorates the chrome and leaves its edges inert.
+                .contentShape(Circle())
+        }
+        .modifier(MacClippyDockChromeIconStyle(
+            glassID: glassID, namespace: namespace, reduceMotion: reduceMotion,
+            highContrast: highContrast, selected: selected, showsPressFeedback: true))
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityIdentifier(accessibilityIdentifier)
+        .help(help)
+    }
+}
+
+struct MacClippyDockChromeIconMenu<Content: View>: View {
+    let systemImage: String
+    let glassID: String
+    let namespace: Namespace.ID
+    let reduceMotion: Bool
+    let highContrast: Bool
+    let accessibilityLabel: String
+    let accessibilityIdentifier: String
+    let help: String
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        Menu(content: content) {
+            Image(systemName: systemImage)
+                .frame(width: 36, height: 36)
+                .contentShape(Circle())
+        }
+        .menuStyle(.button)
+        .menuIndicator(.hidden)
+        .modifier(MacClippyDockChromeIconStyle(
+            glassID: glassID, namespace: namespace, reduceMotion: reduceMotion,
+            highContrast: highContrast))
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityIdentifier(accessibilityIdentifier)
+        .help(help)
+    }
+}
+
+private struct MacClippyDockChromeIconStyle: ViewModifier {
+    let glassID: String
+    let namespace: Namespace.ID
+    let reduceMotion: Bool
+    let highContrast: Bool
+    var selected = false
+    var showsPressFeedback = false
 
     @State private var isHovered = false
 
-    var body: some View {
+    func body(content: Content) -> some View {
         let ringWidth: CGFloat = highContrast ? 2 : MacClippyDockTheme.pillBorderWidth
         let ringColor = isHovered
             ? MacClippyDockTheme.interactiveFocusBorder
             : MacClippyDockTheme.pillRestBorder
-        return Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.body.weight(.semibold))
-                .foregroundStyle(isHovered ? MacClippyDockTheme.accentColor : MacClippyDockTheme.textColor)
-                .frame(width: 36, height: 36)
-                .contentShape(Capsule())
-                .macClippyGlassEffectID(glassID, in: namespace, enabled: !reduceMotion)
-        }
+        return content
+        .font(.body.weight(.semibold))
+        .foregroundStyle(isHovered || selected ? MacClippyDockTheme.accentColor : MacClippyDockTheme.textColor)
+        .frame(width: 36, height: 36)
+        .macClippyGlassEffectID(glassID, in: namespace, enabled: !reduceMotion)
         .macClippyFilterChipStyle(
-            selected: false,
+            selected: selected,
             hovered: isHovered,
-            tint: MacClippyDockTheme.accentColor
+            tint: MacClippyDockTheme.accentColor,
+            pressFeedback: showsPressFeedback
         )
         .overlay(
             Capsule()
@@ -45,9 +97,6 @@ struct MacClippyDockChromeIconButton: View {
         .onContinuousHover { phase in
             isHovered = MacClippyDockHoverPolicy.isHovering(phase)
         }
-        .accessibilityLabel(accessibilityLabel)
-        .accessibilityIdentifier(accessibilityIdentifier)
-        .help(help)
     }
 }
 
@@ -259,7 +308,6 @@ extension MacClippyDockView {
             accessibilityIdentifier: "macClippy.settingsButton",
             help: "Settings"
         ) {
-            MacClippySettingsWindowCoordinator.shared.bringToFront()
             showAboutPanel()
         }
     }
@@ -291,9 +339,9 @@ extension MacClippyDockView {
             namespace: headerGlassNamespace,
             reduceMotion: reduceMotion,
             highContrast: highContrast,
-            accessibilityLabel: "Create category",
+            accessibilityLabel: "Add Pinboard",
             accessibilityIdentifier: "macClippy.createCategoryButton",
-            help: "Create category"
+            help: "Add Pinboard"
         ) {
             model.presentCreateCategory()
         }

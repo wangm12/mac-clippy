@@ -1,13 +1,21 @@
 import AppKit
 import SwiftUI
+import MacClippyCore
 
 @MainActor
 extension MacClippyDockController {
-    func showDetails() {
+    func showCardDetails(id: RecordID, editing: Bool) {
+        showDetails(editing: editing ? .content : .none, targetID: id)
+    }
+
+    func showDetails(editing requestedEditing: MacClippyDetailsEditing = .none, targetID requestedID: RecordID? = nil) {
         guard let dockPanel = panel, dockPanel.isVisible,
-              let target = model.focusedItem else { return }
+              let targetID = requestedID ?? model.focusedItem?.id,
+              confirmDetailsDismissalIfNeeded() else { return }
+        detailsTargetID = targetID
         dismissPreviewImmediately()
         interactionMode = .details
+        model.resetSearchFocus()
         detailsEditing = .none
         let frame = detailsFrame(for: dockPanel)
         let panel: MacClippyDetailsPanel
@@ -21,19 +29,23 @@ extension MacClippyDockController {
         panel.orderFrontRegardless()
         panel.makeKey()
         details = nil
+        detailsEditSession = nil
+        detailsIsLoading = true
         setDetailsRootView(AnyView(MacClippyDetailsLoadingView()))
-        let targetID = target.id
         detailsRequestID &+= 1
         let requestID = detailsRequestID
         model.loadDetails(for: targetID) { [weak self, weak panel] result in
             guard let self, let panel,
                   self.detailsRequestID == requestID,
                   self.interactionMode == .details,
-                  self.model.focusedItem?.id == targetID else { return }
+                  self.detailsTargetID == targetID else { return }
+            self.detailsIsLoading = false
             switch result {
             case let .success(details):
                 self.details = details
+                self.detailsEditSession = MacClippyDetailsEditSession(details: details)
                 self.setDetailsRootView(AnyView(self.detailsView(details: details, editing: .none)))
+                if requestedEditing != .none { self.beginDetailsEditing(requestedEditing) }
                 panel.makeKey()
             case let .failure(error):
                 self.details = nil
@@ -63,6 +75,10 @@ extension MacClippyDockController {
         detailsRequestID &+= 1
         detailsEditing = .none
         details = nil
+        detailsIsLoading = false
+        detailsEditSession = nil
+        model.isDetailsSaving = false
+        detailsTargetID = nil
         if interactionMode == .details {
             interactionMode = .picker
             model.resetSearchFocus()
@@ -77,7 +93,8 @@ extension MacClippyDockController {
     }
 
     private func confirmDetailsDismissalIfNeeded() -> Bool {
-        guard detailsEditing != .none else { return true }
+        guard detailsEditSession?.isSaving != true else { return false }
+        guard detailsEditSession?.isDirty(editing: detailsEditing) == true else { return true }
         let alert = NSAlert()
         alert.messageText = "Discard unsaved changes?"
         alert.informativeText = "Your clipboard edits have not been saved."
@@ -91,6 +108,10 @@ extension MacClippyDockController {
         detailsRequestID &+= 1
         detailsEditing = .none
         details = nil
+        detailsIsLoading = false
+        detailsEditSession = nil
+        model.isDetailsSaving = false
+        detailsTargetID = nil
         detailsPanel?.orderOut(nil)
         detailsPanel?.close()
         detailsPanel = nil
@@ -98,20 +119,22 @@ extension MacClippyDockController {
     }
 
     func beginDetailsEditing(_ editing: MacClippyDetailsEditing) {
-        guard interactionMode == .details, let details else { return }
+        guard interactionMode == .details, let details, confirmDetailsDismissalIfNeeded() else { return }
         guard editing == .name || details.isEditable else { return }
         guard editing != .content
             || (details.textContent?.count ?? 0) <= MacClippyDockPreviewTextPolicy.maxRenderedCharacters else {
-            model.setErrorForDetails("Content too large to edit inline — use Copy instead")
+            detailsEditSession?.errorMessage = "Content too large to edit inline — use Copy instead"
             return
         }
+        if editing != detailsEditing { detailsEditSession?.resetDrafts() }
         detailsEditing = editing
         detailsHostingView?.rootView = AnyView(detailsView(details: details, editing: editing))
         detailsPanel?.makeKey()
     }
 
     func cancelDetailsEditing() {
-        guard let details else { return }
+        guard let details, confirmDetailsDismissalIfNeeded() else { return }
+        detailsEditSession?.resetDrafts()
         detailsEditing = .none
         detailsHostingView?.rootView = AnyView(detailsView(details: details, editing: .none))
         detailsPanel?.makeKey()
@@ -124,79 +147,106 @@ extension MacClippyDockController {
         MacClippyDetailsView(
             details: details,
             editing: editing,
-            onEditingChanged: { [weak self] isEditing in self?.detailsEditing = isEditing ? editing : .none },
+            editSession: detailsEditSession,
             onEdit: { [weak self] in self?.beginDetailsEditing(.content) },
             onRename: { [weak self] in self?.beginDetailsEditing(.name) },
-            onSaveContent: { [weak self] text in self?.saveDetailsContent(text) },
-            onSaveName: { [weak self] name in self?.saveDetailsName(name) },
+            onSaveContent: { [weak self] text, intent in self?.saveDetailsContent(text, intent: intent) },
+            onSaveName: { [weak self] name, intent in self?.saveDetailsName(name, intent: intent) },
             onCancelEdit: { [weak self] in self?.cancelDetailsEditing() },
-            onPreview: { [weak self] in self?.showPreview() },
-            onCopy: { [weak self] in self?.model.copyFocused() },
+            onPreview: { [weak self] in self?.showPreview(for: .item(details.id)) },
+            onCopy: { [weak self] in self?.model.copyRecord(id: details.id) },
             onPlainCopy: details.contentKind == .text || details.contentKind == .html || details.contentKind == .rtf
-                ? { [weak self] in self?.model.copyFocused(plain: true) } : nil,
+                ? { [weak self] in self?.model.copyRecord(id: details.id, plain: true) } : nil,
             onTransformCopy: details.isEditable
-                ? { [weak self] transform in self?.model.copyFocused(transform: transform) } : nil,
+                ? { [weak self] transform in self?.model.copyRecord(id: details.id, transform: transform) } : nil,
             onTransformPaste: details.isEditable
                 ? { [weak self] transform in
-                    self?.model.pasteFocused(transform: transform, completion: { self?.hide() })
+                    self?.model.pasteRecord(id: details.id, transform: transform, completion: { self?.hide() })
                 } : nil,
-            onPaste: { [weak self] in self?.model.pasteFocused(completion: { self?.hide() }) },
+            onPaste: { [weak self] in self?.model.selectRecord(id: details.id, completion: { self?.hide() }) },
             onPin: { [weak self] in
-                self?.model.togglePinFocused { [weak self] in self?.refreshDetails() }
+                guard let self, self.hideDetails() else { return }
+                self.model.requestPinSelection(ids: [details.id])
             },
             onDelete: { [weak self] in
                 guard let self, self.hideDetails() else { return }
-                self.model.deleteFocused()
+                self.model.requestDeleteRecords(ids: [details.id])
             },
             onClose: { [weak self] in self?.hideDetails() }
         )
     }
 
-    func saveDetailsContent(_ text: String) {
-        guard let details else { return }
-        let targetID = details.id
-        let requestID = detailsRequestID
+    func saveDetailsContent(_ text: String, intent: MacClippyDetailsSaveIntent = .save) {
+        guard let details, let editor = detailsEditSession, !editor.isSaving else { return }
         guard text.count <= MacClippyDockPreviewTextPolicy.maxRenderedCharacters else {
-            // Keep the editor open so the user can shorten the draft. The
-            // original-content check above only protects the initial view and
-            // does not cover replacing it with a larger draft.
-            model.setErrorForDetails("Content too large to edit inline — use Copy instead")
+            editor.errorMessage = "Content too large to edit inline — use Copy instead"
             return
         }
+        editor.contentDraft = text
+        beginDetailsSave(editor)
+        let requestID = detailsRequestID
         model.editDetails(id: details.id, text: text) { [weak self] result in
-            guard let self else { return }
-            guard self.detailsRequestID == requestID,
-                  self.interactionMode == .details,
-                  self.details?.id == targetID else { return }
-            switch result {
-            case .success:
-                self.detailsEditing = .none
-                self.showDetails()
-            case let .failure(error):
-                self.model.setErrorForDetails(
-                    MacClippyUserFacingError.message(for: error, fallback: MacClippyUserFacingError.itemSave)
-                )
-            }
+            self?.completeDetailsSave(result, editor: editor, requestID: requestID, intent: intent)
         }
     }
 
-    func saveDetailsName(_ name: String) {
-        guard let details else { return }
-        let targetID = details.id
+    func saveDetailsName(_ name: String, intent: MacClippyDetailsSaveIntent = .save) {
+        guard let details, let editor = detailsEditSession, !editor.isSaving else { return }
+        editor.nameDraft = name
+        beginDetailsSave(editor)
         let requestID = detailsRequestID
         model.renameDetails(id: details.id, name: name) { [weak self] result in
-            guard let self else { return }
-            guard self.detailsRequestID == requestID,
-                  self.interactionMode == .details,
-                  self.details?.id == targetID else { return }
+            self?.completeDetailsSave(result, editor: editor, requestID: requestID, intent: intent)
+        }
+    }
+
+    private func beginDetailsSave(_ editor: MacClippyDetailsEditSession) {
+        editor.errorMessage = nil
+        editor.isSaving = true
+        model.isDetailsSaving = true
+    }
+
+    private func completeDetailsSave(
+        _ result: Result<Void, Error>, editor: MacClippyDetailsEditSession,
+        requestID: UInt, intent: MacClippyDetailsSaveIntent
+    ) {
+        guard detailsRequestID == requestID, interactionMode == .details,
+              detailsTargetID == editor.recordID, detailsEditSession === editor else { return }
+        switch result {
+        case .success:
+            editor.markSaved()
+            refreshSavedDetails(editor: editor, intent: intent)
+        case let .failure(error):
+            editor.isSaving = false
+            model.isDetailsSaving = false
+            editor.errorMessage = MacClippyUserFacingError.message(
+                for: error, fallback: MacClippyUserFacingError.itemSave
+            )
+        }
+    }
+
+    private func refreshSavedDetails(editor: MacClippyDetailsEditSession, intent: MacClippyDetailsSaveIntent) {
+        let id = editor.recordID
+        detailsRequestID += 1
+        let requestID = detailsRequestID
+        model.loadDetails(for: id) { [weak self] result in
+            guard let self, self.detailsRequestID == requestID,
+                  self.detailsTargetID == id, self.interactionMode == .details,
+                  self.detailsEditSession === editor else { return }
             switch result {
-            case .success:
+            case let .success(details):
+                self.details = details
+                self.detailsEditSession = MacClippyDetailsEditSession(details: details)
                 self.detailsEditing = .none
-                self.showDetails()
+                self.model.isDetailsSaving = false
+                self.setDetailsRootView(AnyView(self.detailsView(details: details, editing: .none)))
+                if intent == .saveAndPaste {
+                    self.model.selectRecord(id: id, completion: { [weak self] in self?.hide() })
+                }
             case let .failure(error):
-                self.model.setErrorForDetails(
-                    MacClippyUserFacingError.message(for: error, fallback: MacClippyUserFacingError.itemSave)
-                )
+                editor.isSaving = false
+                self.model.isDetailsSaving = false
+                self.detailsEditSession?.errorMessage = MacClippyUserFacingError.message(for: error)
             }
         }
     }

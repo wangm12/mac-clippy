@@ -120,24 +120,69 @@ public final class MacClippyPasteboardReadRetryState {
         return nextAttempts < maxAttempts
     }
 
-    // Narrows the retry set as providers materialize individual UTI slots,
-    // while preserving the original full change and attempt budget.
+    // Carries forward materialized provider slots while narrowing the retry
+    // set. The accumulated snapshot is accepted only when its generation and
+    // item/type identity still match the originally observed change.
+    @discardableResult
+    public func update(
+        change: PasteboardChange,
+        unavailableTypes: [(itemIndex: Int, uti: String)]
+    ) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return updateLocked(change: change, unavailableTypes: unavailableTypes)
+    }
+
+    /// Source-compatible spelling retained for clients compiled against the
+    /// earlier exported API. It uses the stored snapshot as the identity token
+    /// and delegates to the same generation/item-checked update path.
+    @available(*, deprecated, message: "Use update(change:unavailableTypes:) to provide the accumulated snapshot.")
     public func updateUnavailableTypes(
         for changeCount: Int,
         unavailableTypes: [(itemIndex: Int, uti: String)]
     ) {
         lock.lock(); defer { lock.unlock() }
         guard let entry = pendingByChangeCount[changeCount] else { return }
+        if let change = entry.originalChange {
+            // Snapshot-backed callers retain generation and item/type identity
+            // checks through the newer primary method.
+            _ = updateLocked(change: change, unavailableTypes: unavailableTypes)
+            return
+        }
         guard !unavailableTypes.isEmpty else {
             pendingByChangeCount.removeValue(forKey: changeCount)
             return
         }
+        // The historical API could only identify an entry by changeCount.
+        // Preserve that behavior for legacy count-only entries without
+        // changing the stricter semantics of update(change:unavailableTypes:).
         pendingByChangeCount[changeCount] = Pending(
-            changeCount: entry.changeCount,
-            originalChange: entry.originalChange,
+            changeCount: changeCount,
+            originalChange: nil,
             unavailableTypes: unavailableTypes,
             attempts: entry.attempts
         )
+    }
+
+    private func updateLocked(
+        change: PasteboardChange,
+        unavailableTypes: [(itemIndex: Int, uti: String)]
+    ) -> Bool {
+        guard let entry = pendingByChangeCount[change.changeCount],
+              let original = entry.originalChange,
+              Self.hasSameIdentity(original, change) else {
+            return false
+        }
+        guard !unavailableTypes.isEmpty else {
+            pendingByChangeCount.removeValue(forKey: change.changeCount)
+            return true
+        }
+        pendingByChangeCount[change.changeCount] = Pending(
+            changeCount: change.changeCount,
+            originalChange: change,
+            unavailableTypes: unavailableTypes,
+            attempts: entry.attempts
+        )
+        return true
     }
 
     // Clears the pending entry for a changeCount once the observer has
@@ -174,6 +219,13 @@ public final class MacClippyPasteboardReadRetryState {
     public func stalePendingChangeCounts(below changeCount: Int) -> [Int] {
         lock.lock(); defer { lock.unlock() }
         return pendingByChangeCount.keys.filter { $0 < changeCount }.sorted()
+    }
+
+    private static func hasSameIdentity(_ lhs: PasteboardChange, _ rhs: PasteboardChange) -> Bool {
+        lhs.changeCount == rhs.changeCount
+            && lhs.sourceAppBundleID == rhs.sourceAppBundleID
+            && lhs.truncatedItemCount == rhs.truncatedItemCount
+            && lhs.items.map(\.types) == rhs.items.map(\.types)
     }
 }
 

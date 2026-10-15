@@ -16,10 +16,10 @@ extension AppDelegate {
     }
 
     func activateDiagnosticsJournal() {
-        guard !isRunningUnderXCTest else { return }
+        guard !isRunningUnderXCTest || isIsolatedE2E else { return }
         do {
-            let paths = try MacClippyPaths()
-            MacClippyDiagnosticsJournal.shared.activate(url: paths.diagnosticsJournalURL)
+            guard let runtime else { throw StartupError.runtimeUnavailable }
+            MacClippyDiagnosticsJournal.shared.activate(url: runtime.paths.diagnosticsJournalURL)
         } catch {
             MacClippyLog.record(
                 category: .lifecycle,
@@ -32,7 +32,7 @@ extension AppDelegate {
     }
 
     func startDisplayLifecycleMonitoring() {
-        guard !isRunningUnderXCTest else { return }
+        guard !isRunningUnderXCTest || isIsolatedE2E else { return }
         displayLifecycleCoordinator.handler = { [weak self] event in
             self?.handleDisplayLifecycleEvent(event)
         }
@@ -40,7 +40,7 @@ extension AppDelegate {
     }
 
     func handleDisplayLifecycleEvent(_ event: MacClippyDisplayLifecycleEvent) {
-        guard !isRunningUnderXCTest else { return }
+        guard !isRunningUnderXCTest || isIsolatedE2E else { return }
         runtime?.noteDisplayLifecycleForCapture(event)
         if MacClippyDisplayGenerationPolicy.shouldRecreateStatusItem(for: event) {
             recreateStatusItemIfPresented()
@@ -49,6 +49,7 @@ extension AppDelegate {
     }
 
     func recreateStatusItemIfPresented() {
+        guard !isIsolatedE2E else { return }
         let presentationState = MacClippyPresentationPolicy.state(
             hideFromMenuBar: UserDefaults.standard.bool(forKey: MacClippyPresentationPreferences.hideFromMenuBarKey),
             hideDockIcon: UserDefaults.standard.bool(forKey: MacClippyPresentationPreferences.hideDockIconKey)

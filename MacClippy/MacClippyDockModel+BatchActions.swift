@@ -12,6 +12,7 @@ extension MacClippyDockModel {
     // IDs and never inspect or filter their content (no-filter semantics).
 
     func pasteSelectedAll(completion: @escaping @MainActor @Sendable () -> Void) {
+        guard selectionIsReady else { return }
         guard selectedTab != .snippets, hasMultipleSelection else {
             pasteFocused(completion: completion)
             return
@@ -23,13 +24,15 @@ extension MacClippyDockModel {
         let opGeneration = operationGeneration
         let session = sessionGeneration
         let runtime = runtime
+        let targetPID = pasteTargetProcessIdentifier
         let sideEffectGate = MacClippyPasteInjectionGate()
         self.sideEffectGate = sideEffectGate
         clearActionError()
 
         workQueue.async { [weak self, runtime, sideEffectGate] in
             let result = Result {
-                try runtime.pasteOrdered(ids: orderedIDs, sideEffectGate: sideEffectGate)
+                try runtime.pasteOrdered(
+                    ids: orderedIDs, targetProcessIdentifier: targetPID, sideEffectGate: sideEffectGate)
             }
             MacClippyMainHop.async { [weak self] in
                 guard let self,
@@ -37,31 +40,7 @@ extension MacClippyDockModel {
                       self.operationGeneration == opGeneration else { return }
                 switch result {
                 case let .success(pasteResult):
-                    switch pasteResult {
-                    case let .merged(injected):
-                        self.showActionFeedback(.pasted(manual: !injected))
-                        completion()
-                    case let .mixed(supportedIDs, unsupportedIDs, unsupportedKinds):
-                        // Never paste a subset of a mixed selection. Show
-                        // transient feedback naming the unsupported kinds so
-                        // the user knows exactly what was not pasted.
-                        self.showActionFeedback(.multiPasteMixed(
-                            supportedCount: supportedIDs.count,
-                            unsupportedCount: unsupportedIDs.count,
-                            unsupportedKinds: unsupportedKinds
-                        ))
-                    case let .textUnavailable(availableIDs, unavailableIDs, unavailableKinds):
-                        // Never paste when a text-compatible payload was
-                        // unavailable/undecodable; merging it as an empty
-                        // piece would be silent data loss. Name the
-                        // unavailable kinds so the user knows exactly which
-                        // records could not be pasted.
-                        self.showActionFeedback(.multiPasteUnavailable(
-                            availableCount: availableIDs.count,
-                            unavailableCount: unavailableIDs.count,
-                            unavailableKinds: unavailableKinds
-                        ))
-                    }
+                    self.handlePasteResult(pasteResult, completion: completion)
                 case .failure:
                     self.setActionError(MacClippyUserFacingError.genericAction)
                 }
@@ -69,7 +48,47 @@ extension MacClippyDockModel {
         }
     }
 
+    private func handlePasteResult(
+        _ pasteResult: MacClippyMultiPasteResult,
+        completion: @escaping @MainActor @Sendable () -> Void
+    ) {
+        switch pasteResult {
+        case let .merged(result):
+            switch result {
+            case .injected:
+                showActionFeedback(.pasted(manual: false))
+                completion()
+            case .preparedForManualPaste:
+                showActionFeedback(.pasted(manual: true))
+                completion()
+            case let .failed(failure):
+                setActionError(failure.localizedDescription)
+            case .cancelled:
+                break
+            }
+        case let .mixed(supportedIDs, unsupportedIDs, unsupportedKinds):
+            // Never paste a subset of a mixed selection. Show transient
+            // feedback naming the unsupported kinds so the user knows exactly
+            // what was not pasted.
+            showActionFeedback(.multiPasteMixed(
+                supportedCount: supportedIDs.count,
+                unsupportedCount: unsupportedIDs.count,
+                unsupportedKinds: unsupportedKinds
+            ))
+        case let .textUnavailable(availableIDs, unavailableIDs, unavailableKinds):
+            // Never paste when a text-compatible payload was unavailable or
+            // undecodable; merging it as an empty piece would be silent data
+            // loss. Name the unavailable kinds so users know what failed.
+            showActionFeedback(.multiPasteUnavailable(
+                availableCount: availableIDs.count,
+                unavailableCount: unavailableIDs.count,
+                unavailableKinds: unavailableKinds
+            ))
+        }
+    }
+
     func copySelectedAll() {
+        guard selectionIsReady else { return }
         guard selectedTab != .snippets, hasMultipleSelection else {
             copyFocused()
             return

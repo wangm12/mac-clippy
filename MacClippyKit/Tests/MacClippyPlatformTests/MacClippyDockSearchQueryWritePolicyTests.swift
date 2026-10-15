@@ -465,8 +465,8 @@ final class MacClippyDockSearchQueryWritePolicyTests: XCTestCase {
         )
     }
 
-    func testLeavingSearchClearsTheCommittedQuery() {
-        XCTAssertTrue(MacClippyDockSearchQueryWritePolicy.shouldClearQueryWhenLeavingSearch())
+    func testLeavingSearchPreservesTheCommittedQuery() {
+        XCTAssertFalse(MacClippyDockSearchQueryWritePolicy.shouldClearQueryWhenLeavingSearch())
     }
 
     func testSearchFieldClearKeysUnlockEmptyOverwrite() {

@@ -6,6 +6,7 @@ public enum MacClippyStoreError: Error, Sendable {
     case recordNotFound
     case invalidStoredRecord
     case inputTooLarge
+    case unprovenLegacyAttachmentReferences
 }
 
 public struct MacClippyClipboardMetadataFilter: Sendable {
@@ -88,106 +89,6 @@ public struct MacClippyDeletionJournalEntry: Sendable, Equatable {
 }
 
 public final class MacClippyClipboardStore {
-    public static let migrations: [MacClippyDatabaseMigration] = [
-        MacClippyDatabaseMigration(identifier: "001-clipboard-core") { database in
-            try database.execute(sql: MacClippyClipboardStore.schemaSQL)
-        },
-        // P0 no-filter capture: a side table that retains every external
-        // NSPasteboard representation (UTI + encrypted Data, or BlobStore id)
-        // for a clipboard record. The legacy single-payload envelope column is
-        // preserved so existing local records continue to decode and existing
-        // call sites keep working.
-        MacClippyDatabaseMigration(identifier: "002-clipboard-representations") { database in
-            try database.execute(sql: """
-                CREATE TABLE IF NOT EXISTS clipboard_representations (
-                    record_id TEXT NOT NULL,
-                    sort_order INTEGER NOT NULL,
-                    uti TEXT NOT NULL,
-                    payload BLOB,
-                    blob_id TEXT,
-                    payload_state TEXT NOT NULL DEFAULT 'present',
-                    PRIMARY KEY(record_id, uti),
-                    FOREIGN KEY(record_id) REFERENCES clipboard_records(id) ON DELETE CASCADE
-                );
-                CREATE INDEX IF NOT EXISTS idx_macclippy_repr_blob
-                    ON clipboard_representations(blob_id);
-            """)
-        },
-        // Structured `type:` queries and image-only maintenance passes use
-        // the persisted discriminator instead of decrypting every envelope.
-        MacClippyDatabaseMigration(identifier: "003-clipboard-query-indexes") { database in
-            try database.execute(sql: """
-                CREATE INDEX IF NOT EXISTS idx_macclippy_records_content_kind
-                    ON clipboard_records(content_kind);
-            """)
-        },
-        // Cross-database deletion is intentionally journaled in the clipboard
-        // database, which is already protected by the runtime store lock.
-        // FTS/pinboard cleanup and external blob deletion can then be retried
-        // after a force quit without guessing whether the parent row existed.
-        MacClippyDatabaseMigration(identifier: "004-deletion-journal") { database in
-            try database.execute(sql: """
-                CREATE TABLE IF NOT EXISTS clipboard_deletion_operations (
-                    operation_id TEXT PRIMARY KEY NOT NULL,
-                    created INTEGER NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS clipboard_deletion_journal (
-                    operation_id TEXT NOT NULL,
-                    record_id TEXT NOT NULL,
-                    blob_id TEXT NOT NULL,
-                    PRIMARY KEY(operation_id, record_id, blob_id),
-                    FOREIGN KEY(operation_id)
-                        REFERENCES clipboard_deletion_operations(operation_id)
-                        ON DELETE CASCADE
-                );
-                CREATE INDEX IF NOT EXISTS idx_macclippy_deletion_record
-                    ON clipboard_deletion_journal(record_id);
-            """)
-        },
-        // Keep record IDs independently of Blob IDs. A text-only deletion has
-        // no representation/blob row, but its cross-database cleanup still
-        // needs to be replayable after a force quit.
-        MacClippyDatabaseMigration(identifier: "005-deletion-records") { database in
-            try database.execute(sql: """
-                CREATE TABLE IF NOT EXISTS clipboard_deletion_records (
-                    operation_id TEXT NOT NULL,
-                    record_id TEXT NOT NULL,
-                    PRIMARY KEY(operation_id, record_id),
-                    FOREIGN KEY(operation_id)
-                        REFERENCES clipboard_deletion_operations(operation_id)
-                        ON DELETE CASCADE
-                );
-                CREATE INDEX IF NOT EXISTS idx_macclippy_deletion_records_record
-                    ON clipboard_deletion_records(record_id);
-                INSERT OR IGNORE INTO clipboard_deletion_records(operation_id, record_id)
-                    SELECT DISTINCT operation_id, record_id
-                    FROM clipboard_deletion_journal;
-            """)
-        },
-        // Capture-time dedup looks up an identical payload by plaintext hash
-        // so a recopy can bump frequency instead of sealing another envelope.
-        MacClippyDatabaseMigration(identifier: "006-capture-content-hash") { database in
-            try database.execute(sql: """
-                ALTER TABLE clipboard_records ADD COLUMN content_hash TEXT;
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_macclippy_records_content_hash
-                    ON clipboard_records(content_hash)
-                    WHERE content_hash IS NOT NULL;
-            """)
-        },
-        // Structured `app:` and `has:ocr` filters were still scanning every
-        // meta row. `type:` already uses idx_macclippy_records_content_kind.
-        MacClippyDatabaseMigration(identifier: "007-structured-search-indexes") { database in
-            try database.execute(sql: MacClippyStructuredSearchIndexPolicy.createMissingIndexesSQL)
-        },
-        MacClippyDatabaseMigration(identifier: "008-search-and-storage-metadata") { database in
-            try database.execute(sql: """
-                ALTER TABLE clipboard_records ADD COLUMN source_app_name TEXT;
-                ALTER TABLE clipboard_records ADD COLUMN primary_blob_id TEXT;
-            """)
-            try database.execute(sql: MacClippyStructuredSearchIndexPolicy.createSourceAppNameIndexSQL)
-        }
-    ]
-
     // SQLite's default variable limit is commonly 999. Keep ID batches below
     // that ceiling with room for future query arguments, and de-duplicate
     // before querying so a repeated ID cannot cause duplicate work across
@@ -212,39 +113,10 @@ public final class MacClippyClipboardStore {
         }
     }
 
-    private static let schemaSQL = """
-        CREATE TABLE IF NOT EXISTS clipboard_records (
-            id TEXT PRIMARY KEY NOT NULL,
-            created INTEGER NOT NULL,
-            modified INTEGER NOT NULL,
-            device_id TEXT NOT NULL,
-            lamport INTEGER NOT NULL,
-            kind TEXT NOT NULL,
-            content_kind TEXT NOT NULL,
-            preview TEXT NOT NULL,
-            source_app TEXT,
-            frequency INTEGER NOT NULL DEFAULT 0,
-            last_accessed INTEGER,
-            custom_label TEXT,
-            detected_type TEXT,
-            ocr_text TEXT,
-            envelope BLOB NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_macclippy_records_modified
-            ON clipboard_records(modified DESC, lamport DESC, id DESC);
-        CREATE INDEX IF NOT EXISTS idx_macclippy_records_frequency
-            ON clipboard_records(frequency DESC, modified DESC);
-        CREATE TABLE IF NOT EXISTS macclippy_lamport_clock (
-            scope TEXT PRIMARY KEY NOT NULL,
-            value INTEGER NOT NULL
-        );
-        INSERT OR IGNORE INTO macclippy_lamport_clock(scope, value) VALUES ('clipboard', 0);
-    """
-
     let database: MacClippyDatabase
     let key: SymmetricKey
-    private let deviceID: DeviceID
-    private let inputLimits: MacClippyPasteboardInputLimits
+    let deviceID: DeviceID
+    let inputLimits: MacClippyPasteboardInputLimits
     private let decryptAccountingLock = NSLock()
     private var representationPayloadDecrypts = 0
     private var recordEnvelopeDecrypts = 0
@@ -286,291 +158,35 @@ public final class MacClippyClipboardStore {
         try database.migrate(Self.migrations)
     }
 
-    public func databaseHealth() -> MacClippyDatabaseHealthReport {
+    public func databaseHealth(
+        mode: MacClippyDatabaseHealthCheckMode = .bounded
+    ) -> MacClippyDatabaseHealthReport {
         database.healthCheck(requiredTables: [
             "clipboard_records",
             "clipboard_representations",
             "clipboard_deletion_operations",
             "clipboard_deletion_journal",
             "clipboard_deletion_records",
+            "macclippy_clipboard_state",
             "grdb_migrations"
-        ])
+        ], mode: mode)
     }
 
     public func databaseRowCount() throws -> Int64? {
         try database.tableRowCount("clipboard_records")
     }
 
-    @discardableResult
-    public func append(
+    func encodedRecordData(
         _ record: ClipboardRecord,
-        sourceAppBundleID: String? = nil,
-        sourceAppDisplayName: String? = nil,
-        detectedTypeJSON: String? = nil,
-        now: Date = Date()
-    ) throws -> ClipboardItemMeta {
-        let id = RecordID.generate()
-        let envelope = try MacClippyCipher.seal(try encodedRecordData(record), with: key)
-        let milliseconds = Self.milliseconds(now)
-        let lamport = try database.queue.write { database -> UInt64 in
-            let current = try Int64.fetchOne(database, sql: "SELECT value FROM macclippy_lamport_clock WHERE scope = 'clipboard'") ?? 0
-            let next = current == Int64.max ? current : current + 1
-            try database.execute(sql: "UPDATE macclippy_lamport_clock SET value = ? WHERE scope = 'clipboard'", arguments: [next])
-            try database.execute(sql: """
-                INSERT INTO clipboard_records
-                    (id, created, modified, device_id, lamport, kind, content_kind, preview,
-                     source_app, source_app_name, detected_type, envelope, primary_blob_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, arguments: [
-                id.rawValue, milliseconds, milliseconds, deviceID.rawValue, next,
-                RecordKind.clipboardItem.rawValue, record.contentKind.rawValue,
-                Self.preview(for: record), sourceAppBundleID, sourceAppDisplayName, detectedTypeJSON,
-                envelope.combined, record.imageBlobID
-            ])
-            return UInt64(next)
+        requiresRepresentationRoster: Bool = true
+    ) throws -> Data {
+        guard record.imageBlobID.map(MacClippyBlobStore.isSafeIdentifier) ?? true else {
+            throw MacClippyStoreError.invalidStoredRecord
         }
-        return ClipboardItemMeta(
-            id: id, created: now, modified: now, deviceID: deviceID, lamport: lamport,
-            contentKind: record.contentKind,
-            preview: Self.preview(for: record), sourceAppBundleID: sourceAppBundleID,
-            sourceAppDisplayName: sourceAppDisplayName,
-            detectedTypeJSON: detectedTypeJSON
+        let data = try MacClippyClipboardRecordEnvelopeCodec.encode(
+            record,
+            requiresRepresentationRoster: requiresRepresentationRoster
         )
-    }
-
-    // P0 no-filter capture entry point. Persists the legacy single-payload
-    // envelope (so existing cards/preview/paste keep working) AND every
-    // external NSPasteboard representation alongside it. Representation
-    // payloads are encrypted at rest inline; oversized payloads are spilled
-    // to BlobStore via the spillPayload closure so the store stays unaware of
-    // the blob root URL while still keeping encryption on the spilled bytes.
-    //
-    // The parent clipboard_records row and every clipboard_representations
-    // row are written inside a single database transaction so a crash or
-    // failure mid-capture can never leave a visible record without its
-    // retained representation set. Spilled blobs are created before the
-    // transaction commits (BlobStore writes are outside the DB transaction);
-    // if the transaction fails, any blob spilled during this call is deleted
-    // via deleteSpilledPayload as a compensating rollback before the error
-    // propagates, so no orphan blob is left behind by a failed append. When
-    // deleteSpilledPayload is nil, spilled-blob cleanup is deferred to
-    // startup reconciliation (the orphan will be detected and trimmed later).
-    // Empty advertised payloads are retained as empty inline rows; provider-
-    // unavailable payloads are retained as type-only rows with payloadState
-    // .unavailable.
-    @discardableResult
-    public func append(
-        _ record: ClipboardRecord,
-        representations: [MacClippyClipboardRepresentation],
-        sourceAppBundleID: String? = nil,
-        sourceAppDisplayName: String? = nil,
-        detectedTypeJSON: String? = nil,
-        contentHash: String? = nil,
-        spillPayload: ((Data) throws -> String)? = nil,
-        deleteSpilledPayload: ((String) -> Void)? = nil,
-        now: Date = Date()
-    ) throws -> ClipboardItemMeta {
-        let id = RecordID.generate()
-        let envelope = try MacClippyCipher.seal(try encodedRecordData(record), with: key)
-        let milliseconds = Self.milliseconds(now)
-
-        try validateRepresentationLimits(representations)
-
-        // Spill oversized payloads up front, outside the DB transaction, so the
-        // spilled blob IDs are known before we write any rows. Track every blob
-        // created here so a later failure rolls them back via compensating
-        // delete. A spill failure aborts before any row is written, so no
-        // record and no representation can be left visible. If a later
-        // representation's preparation (spill or inline encryption) throws
-        // after an earlier representation already spilled, the already-spilled
-        // blobs are cleaned up via deleteSpilledPayload before rethrowing.
-        var spilledBlobIDs: [String] = []
-        var preparedRows: [PreparedRepresentationRow] = []
-        do {
-            for (index, representation) in representations.enumerated() {
-                let row = try prepareRepresentationRow(
-                    representation,
-                    atIndex: index,
-                    recordID: id,
-                    spillPayload: spillPayload,
-                    spilledBlobIDs: &spilledBlobIDs
-                )
-                preparedRows.append(row)
-            }
-        } catch {
-            if let deleteSpilledPayload {
-                for blobID in spilledBlobIDs {
-                    deleteSpilledPayload(blobID)
-                }
-            }
-            throw error
-        }
-
-        let lamport: UInt64
-        do {
-            lamport = try database.queue.write { database -> UInt64 in
-                let current = try Int64.fetchOne(database, sql: "SELECT value FROM macclippy_lamport_clock WHERE scope = 'clipboard'") ?? 0
-                let next = current == Int64.max ? current : current + 1
-                try database.execute(sql: "UPDATE macclippy_lamport_clock SET value = ? WHERE scope = 'clipboard'", arguments: [next])
-                try database.execute(sql: """
-                    INSERT INTO clipboard_records
-                        (id, created, modified, device_id, lamport, kind, content_kind, preview,
-                         source_app, source_app_name, detected_type, envelope, content_hash, primary_blob_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, arguments: [
-                    id.rawValue, milliseconds, milliseconds, deviceID.rawValue, next,
-                    RecordKind.clipboardItem.rawValue, record.contentKind.rawValue,
-                    Self.preview(for: record), sourceAppBundleID, sourceAppDisplayName, detectedTypeJSON,
-                    envelope.combined, contentHash, record.imageBlobID
-                ])
-
-                for row in preparedRows {
-                    try database.execute(
-                        sql: """
-                            INSERT OR REPLACE INTO clipboard_representations
-                                (record_id, sort_order, uti, payload, blob_id, payload_state)
-                            VALUES (?, ?, ?, ?, ?, ?)
-                        """,
-                        arguments: [id.rawValue, row.sortOrder, row.uti, row.storedPayload, row.storedBlobID, row.payloadState.rawValue]
-                    )
-                }
-                return UInt64(next)
-            }
-        } catch {
-            // Compensating rollback: delete any blob spilled during this call
-            // so a failed append never leaves an orphan blob on disk. The
-            // database transaction rolled back on its own; BlobStore writes
-            // are outside that transaction and must be cleaned manually. When
-            // no delete closure is provided, the orphan is left for startup
-            // reconciliation to reclaim.
-            if let deleteSpilledPayload {
-                for blobID in spilledBlobIDs {
-                    deleteSpilledPayload(blobID)
-                }
-            }
-            throw error
-        }
-
-        return ClipboardItemMeta(
-            id: id, created: now, modified: now, deviceID: deviceID, lamport: lamport,
-            contentKind: record.contentKind,
-            preview: Self.preview(for: record), sourceAppBundleID: sourceAppBundleID,
-            sourceAppDisplayName: sourceAppDisplayName,
-            detectedTypeJSON: detectedTypeJSON
-        )
-    }
-
-    private struct PreparedRepresentationRow {
-        let sortOrder: Int
-        let uti: String
-        let storedPayload: Data?
-        let storedBlobID: String?
-        let payloadState: MacClippyClipboardRepresentationPayloadState
-    }
-
-    private func prepareRepresentationRow(
-        _ representation: MacClippyClipboardRepresentation,
-        atIndex index: Int,
-        recordID: RecordID,
-        spillPayload: ((Data) throws -> String)?,
-        spilledBlobIDs: inout [String]
-    ) throws -> PreparedRepresentationRow {
-        switch representation.payloadState {
-        case .present:
-            guard representation.payloadBytes != nil, representation.blobID == nil else {
-                throw MacClippyStoreError.invalidStoredRecord
-            }
-        case .spilled:
-            guard representation.payloadBytes == nil, representation.blobID != nil else {
-                throw MacClippyStoreError.invalidStoredRecord
-            }
-        case .unavailable, .oversized:
-            guard representation.payloadBytes == nil, representation.blobID == nil else {
-                throw MacClippyStoreError.invalidStoredRecord
-            }
-        }
-
-        // Provider-unavailable payload: retain the UTI as a type-only row.
-        // payloadBytes and blobID are both nil; payloadState is .unavailable.
-        if representation.isUnavailable {
-            return PreparedRepresentationRow(
-                sortOrder: index,
-                uti: representation.uti,
-                storedPayload: nil,
-                storedBlobID: nil,
-                payloadState: .unavailable
-            )
-        }
-
-        if representation.isOversized {
-            return PreparedRepresentationRow(
-                sortOrder: index,
-                uti: representation.uti,
-                storedPayload: nil,
-                storedBlobID: nil,
-                payloadState: .oversized
-            )
-        }
-
-        // Blob-backed representation carried through from mapping (already
-        // spilled upstream). Keep the existing blobID and no inline payload.
-        if let blobID = representation.blobID {
-            return PreparedRepresentationRow(
-                sortOrder: index,
-                uti: representation.uti,
-                storedPayload: nil,
-                storedBlobID: blobID,
-                payloadState: .spilled
-            )
-        }
-
-        if let payloadBytes = representation.payloadBytes {
-            guard payloadBytes.count <= inputLimits.maxRepresentationBytes else {
-                throw MacClippyStoreError.inputTooLarge
-            }
-            if payloadBytes.count > MacClippyClipboardRepresentationLimits.inlineByteCeiling,
-               let spillPayload {
-                // Spill oversized payloads to BlobStore; the bytes are
-                // encrypted by the spill closure before they hit disk.
-                let blobID = try spillPayload(payloadBytes)
-                spilledBlobIDs.append(blobID)
-                return PreparedRepresentationRow(
-                    sortOrder: index,
-                    uti: representation.uti,
-                    storedPayload: nil,
-                    storedBlobID: blobID,
-                    payloadState: .spilled
-                )
-            } else {
-                // Inline encrypted payload: seal the plaintext bytes (which
-                // may be empty — an advertised empty payload is retained as
-                // an empty inline row) with the device key so the at-rest
-                // format is always our AES-GCM envelope.
-                let sealed = try MacClippyCipher.seal(payloadBytes, with: key)
-                return PreparedRepresentationRow(
-                    sortOrder: index,
-                    uti: representation.uti,
-                    storedPayload: sealed.combined,
-                    storedBlobID: nil,
-                    payloadState: .present
-                )
-            }
-        }
-
-        // A representation with no bytes and no blobID that was not marked
-        // unavailable is treated as provider-unavailable so the UTI is still
-        // retained rather than dropped.
-        return PreparedRepresentationRow(
-            sortOrder: index,
-            uti: representation.uti,
-            storedPayload: nil,
-            storedBlobID: nil,
-            payloadState: .unavailable
-        )
-    }
-
-    func encodedRecordData(_ record: ClipboardRecord) throws -> Data {
-        let data = try JSONEncoder().encode(record)
         guard data.count <= inputLimits.maxRecordBytes else { throw MacClippyStoreError.inputTooLarge }
         return data
     }
@@ -582,7 +198,19 @@ public final class MacClippyClipboardStore {
             throw MacClippyStoreError.inputTooLarge
         }
         var totalRepresentationBytes = 0
+        var representationCountsByItem: [Int: Int] = [:]
+        var seenItemTypes = Set<String>()
         for representation in representations {
+            guard representation.itemIndex >= 0,
+                  representation.itemIndex < inputLimits.maxItemsPerChange,
+                  seenItemTypes.insert("\(representation.itemIndex)\u{0}\(representation.uti)").inserted else {
+                throw MacClippyStoreError.invalidStoredRecord
+            }
+            let itemCount = representationCountsByItem[representation.itemIndex, default: 0] + 1
+            guard itemCount <= inputLimits.maxRepresentationsPerItem else {
+                throw MacClippyStoreError.inputTooLarge
+            }
+            representationCountsByItem[representation.itemIndex] = itemCount
             guard representation.uti.utf8.count <= inputLimits.maxUTIBytes else {
                 throw MacClippyStoreError.inputTooLarge
             }

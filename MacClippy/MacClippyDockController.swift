@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import MacClippyPlatform
+import MacClippyCore
 import QuartzCore
 import os.signpost
 import SwiftUI
@@ -89,17 +90,26 @@ enum MacClippyDockKeyboardOwnershipPolicy {
 @MainActor
 final class MacClippySnippetEditorWindowCoordinator: NSObject, NSWindowDelegate {
     private var window: NSWindow?
+    private var form: MacClippySnippetEditorState?
+    private(set) var generation: UInt = 0
 
-    func present(onCreate: @escaping (String, String?, String, String?, @escaping (Bool) -> Void) -> Void) {
+    func present(
+        snippet: MacClippySnippetEntry? = nil,
+        onCreate: @escaping (String, String?, String, String?, @escaping (Bool) -> Void) -> Void
+    ) {
         if let window {
             bringToFront(window)
             return
         }
 
+        let form = MacClippySnippetEditorState(snippet: snippet)
+        generation &+= 1
+        self.form = form
         let hostingView = NSHostingView(
             rootView: MacClippyCreateSnippetEditor(
+                form: form,
                 onCreate: onCreate,
-                onCancel: { [weak self] in self?.close() }
+                onCancel: { [weak self] in self?.window?.performClose(nil) }
             )
         )
         let window = NSWindow(
@@ -108,7 +118,7 @@ final class MacClippySnippetEditorWindowCoordinator: NSObject, NSWindowDelegate 
             backing: .buffered,
             defer: false
         )
-        window.title = "New Snippet"
+        window.title = snippet == nil ? "New Snippet" : "Edit Snippet"
         window.contentView = hostingView
         window.isReleasedWhenClosed = false
         window.level = .normal
@@ -138,17 +148,24 @@ final class MacClippySnippetEditorWindowCoordinator: NSObject, NSWindowDelegate 
     }
 
     func presentError(_ message: String) {
-        guard let window else { return }
-        let alert = NSAlert()
-        alert.messageText = "Could not save snippet"
-        alert.informativeText = message
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "OK")
-        alert.beginSheetModal(for: window) { _ in }
+        form?.errorMessage = message
     }
 
     func windowWillClose(_ notification: Notification) {
+        generation &+= 1
         window = nil
+        form = nil
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard form?.isSubmitting != true else { return false }
+        guard form?.isDirty == true else { return true }
+        let alert = NSAlert()
+        alert.messageText = "Discard unsaved changes?"
+        alert.informativeText = "Your snippet edits have not been saved."
+        alert.addButton(withTitle: "Discard Changes")
+        alert.addButton(withTitle: "Keep Editing")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     private func bringToFront(_ window: NSWindow) {
@@ -161,6 +178,7 @@ final class MacClippySnippetEditorWindowCoordinator: NSObject, NSWindowDelegate 
 @MainActor
 final class MacClippyDockController {
     let model: MacClippyDockModel
+    let openSettingsHandler: @MainActor () -> Void
     let snippetEditorWindow = MacClippySnippetEditorWindowCoordinator()
     var panel: MacClippyDockPanel?
     var panelContentView: MacClippyDockPanelContentView?
@@ -173,7 +191,9 @@ final class MacClippyDockController {
     var keyWindowObserver: NSObjectProtocol?
     var keyboardInputSourceObserver: NSObjectProtocol?
     var cachedKeyboardInputSourceType: String?
-    var pasteTargetApplication: NSRunningApplication?
+    var pasteTargetApplication: NSRunningApplication? {
+        didSet { model.pasteTargetProcessIdentifier = pasteTargetApplication?.processIdentifier }
+    }
     var didActivateApplicationForSearch = false
     var isFullscreenSearchHost = false
     var pendingDisplayEvent: MacClippyDisplayLifecycleEvent?
@@ -194,13 +214,21 @@ final class MacClippyDockController {
     var detailsHostingView: NSHostingView<AnyView>?
     var details: MacClippyItemDetails?
     var detailsEditing: MacClippyDetailsEditing = .none
+    var detailsEditSession: MacClippyDetailsEditSession?
+    var detailsTargetID: RecordID?
     var previewRequestID: UInt = 0
+    var previewTarget: MacClippyDockPreviewTarget?
+    var previewMetadataSnapshot = MacClippyDockPreviewMetadata.unknown
     var detailsRequestID: UInt = 0
+    var detailsIsLoading = false
     var previewAnimationGeneration: UInt = 0
     var previewRetryGeneration: UInt = 0
     var previewRetryTask: Task<Void, Never>?
     var previewIsClosing = false
     var previewPerformanceSignpostID: OSSignpostID?
+    #if MACCLIPPY_E2E
+    var e2eFocusDiagnostic: ((String) -> Void)?
+    #endif
     var interactionMode: MacClippyDockInteractionMode = .picker
     var swiftUIReduceMotion = false
     var reduceMotionOverride: Bool?
@@ -209,16 +237,50 @@ final class MacClippyDockController {
     // event-routing edge cases, so remember the last consumed event object to
     // make the two paths idempotent without reading deprecated event metadata.
     var lastRoutedEventIdentity: ObjectIdentifier?
+    var nativeMenuTrackingDepth = 0
+    var nativeMenuObservers: [MacClippyNotificationToken] = []
     // Screen-level copy toast panel, independent of the dock panel so a copy
     // confirmation survives a dock close and reads as a system indicator.
     var toastPanel: MacClippyToastPanel?
     var toastDismissTask: Task<Void, Never>?
+    var toastGeneration: UInt = 0
 
-    init(runtime: MacClippyRuntime) {
-        model = MacClippyDockModel(runtime: runtime)
+    init(
+        runtime: MacClippyRuntime, defaults: UserDefaults = .standard,
+        onOpenSettings: @escaping @MainActor () -> Void = { MacClippySettingsWindowCoordinator.shared.bringToFront() }
+    ) {
+        model = MacClippyDockModel(runtime: runtime, defaults: defaults)
+        openSettingsHandler = onOpenSettings
+        model.actionToastHandler = { [weak self] feedback in
+            self?.showCopyToast(title: feedback.title, duration: feedback.toastDuration)
+        }
+        model.snippetUpdateHandler = { [weak self] id in
+            guard let self, self.panel?.isVisible == true,
+                  self.interactionMode == .preview, self.previewTarget == .snippet(id) else { return }
+            self.refreshPreview(for: .snippet(id))
+        }
+        model.actionErrorHandler = { [weak self] message in
+            guard let self, self.interactionMode == .details else { return }
+            self.detailsEditSession?.errorMessage = message
+        }
+        for (name, delta) in [(NSMenu.didBeginTrackingNotification, 1), (NSMenu.didEndTrackingNotification, -1)] {
+            let observer = NotificationCenter.default.addObserver(
+                forName: name, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.nativeMenuTrackingDepth = max(0, self.nativeMenuTrackingDepth + delta)
+                }
+            }
+            nativeMenuObservers.append(MacClippyNotificationToken(observer))
+        }
     }
 
     var isVisible: Bool { panel?.isVisible == true && !isClosing }
+
+    deinit {
+        nativeMenuObservers.forEach { $0.remove() }
+    }
 
 }
 

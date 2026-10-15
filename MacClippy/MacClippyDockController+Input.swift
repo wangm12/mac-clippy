@@ -34,10 +34,12 @@ extension MacClippyDockController {
             return event
         }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            self?.routeKeyEvent(event) ?? event
+            guard let self else { return event }
+            return self.routeKeyEvent(event)
         }
         keyUpMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyUp) { [weak self] event in
-            self?.routeKeyEvent(event) ?? event
+            guard let self else { return event }
+            return self.routeKeyEvent(event)
         }
         spaceChangeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.activeSpaceDidChangeNotification,
@@ -65,9 +67,13 @@ extension MacClippyDockController {
             forName: NSWindow.didResignKeyNotification,
             object: dockPanel,
             queue: .main
-        ) { [weak self] _ in
-            MacClippyDockInputDispatch.performOnMain {
-                self?.handlePanelDidResignKey(
+        ) { [weak self, weak dockPanel] _ in
+            // AppKit posts this before the next window finishes becoming key.
+            // Wait for the handoff so accessibility actions and internal panels
+            // are not dismissed using an unrelated, stationary pointer.
+            MacClippyMainHop.async {
+                guard let self, let dockPanel else { return }
+                self.handlePanelDidResignKey(
                     dockPanel,
                     monitorGeneration: monitorGeneration,
                     pointerLocation: NSEvent.mouseLocation
@@ -82,9 +88,18 @@ extension MacClippyDockController {
         pointerLocation: NSPoint
     ) {
         guard monitorGeneration == self.monitorGeneration else { return }
+        traceE2EFocus("resign-key", location: pointerLocation)
 
-        // If the window resigned key because the user switched spaces away from this window,
-        // dismiss immediately without stealing focus back or animating across spaces.
+        guard !dockPanel.isKeyWindow,
+              detailsPanel?.isKeyWindow != true,
+              previewPanel?.isKeyWindow != true,
+              !snippetEditorWindow.isPresented,
+              NSApp.modalWindow == nil,
+              nativeMenuTrackingDepth == 0,
+              !model.isFilterPopoverPresented else { return }
+
+        // A key-window handoff can precede the active-space bookkeeping too.
+        // Only assess a space departure after ruling out a completed handoff.
         if !dockPanel.isOnActiveSpace {
             hide(reason: .spaceChange)
             return
@@ -100,7 +115,7 @@ extension MacClippyDockController {
                   for: interactionMode,
                   isVisible: isVisible,
                   isClosing: isClosing,
-                  isExternalWindowPresented: snippetEditorWindow.isPresented,
+                  isExternalWindowPresented: snippetEditorWindow.isPresented || model.isFilterPopoverPresented,
                   isSystemQuickLookVisible: isSystemQuickLookVisible
               ) else { return }
         // Candidate chrome is another process. Stealing key back here
@@ -164,6 +179,7 @@ extension MacClippyDockController {
     }
 
     func closeIfOutside(at location: NSPoint) {
+        guard nativeMenuTrackingDepth == 0, !model.isFilterPopoverPresented else { return }
         guard let dockPanel = panel, dockPanel.isVisible else { return }
         guard !snippetEditorWindow.owns(location: location) else { return }
         if let detailsPanel, detailsPanel.isVisible, detailsPanel.frame.contains(location) {
@@ -181,14 +197,7 @@ extension MacClippyDockController {
         // A click inside the preview panel must not dismiss the dock before the
         // button action runs, so treat it as in-bounds here; clicks elsewhere
         // keep dismissing normally.
-        if let previewPanel, previewPanel.isVisible, previewPanel.frame.contains(location) {
-            return
-        }
-        if QLPreviewPanel.sharedPreviewPanelExists(),
-           QLPreviewPanel.shared().isVisible,
-           QLPreviewPanel.shared().frame.contains(location) {
-            return
-        }
+        if isInsidePreviewSurface(location) { return }
         let isInsideInputMethodCandidate = isInputMethodCandidate(at: location)
         guard MacClippyDockInputMethodPolicy.shouldDismissForOutsideClick(
             isInsideInputMethodCandidate: isInsideInputMethodCandidate,
@@ -203,7 +212,22 @@ extension MacClippyDockController {
             ignoreUntil: ignoreOutsideClicksUntil,
             now: Date()
         ) else { return }
+        traceE2EFocus("outside-pointer-hide", location: location)
         hide(reason: .outsideClick)
+    }
+
+    private func isInsidePreviewSurface(_ location: NSPoint) -> Bool {
+        if let previewPanel, previewPanel.isVisible, previewPanel.frame.contains(location) { return true }
+        return QLPreviewPanel.sharedPreviewPanelExists()
+            && QLPreviewPanel.shared().isVisible && QLPreviewPanel.shared().frame.contains(location)
+    }
+
+    func focusResults() {
+        guard !searchFieldHasMarkedText, model.currentCount > 0 else { return }
+        if model.currentCount > 0 {
+            model.focusedIndex = min(max(0, model.focusedIndex), model.currentCount - 1)
+        }
+        enterPickerMode()
     }
 
     func enterPickerMode() {
@@ -227,12 +251,15 @@ extension MacClippyDockController {
     func setModalMode(_ isPresented: Bool) {
         if isPresented {
             interactionMode = .modal
-        } else {
+        } else if interactionMode == .modal {
             enterPickerMode()
         }
     }
 
     func enterSearchMode() {
+        if interactionMode == .details {
+            guard hideDetails() else { return }
+        }
         if interactionMode == .preview {
             hidePreview()
         }
@@ -368,483 +395,4 @@ extension MacClippyDockController {
         }
     }
 
-    func capturePasteTargetApplicationIfNeeded() {
-        guard pasteTargetApplication == nil else { return }
-        let front = NSWorkspace.shared.frontmostApplication
-        if let front, MacClippyDockInputMethodPolicy.shouldCaptureHostApplication(
-            hostBundleID: front.bundleIdentifier,
-            ownBundleID: Bundle.main.bundleIdentifier
-        ) {
-            pasteTargetApplication = front
-            return
-        }
-        if let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] {
-            for win in windows {
-                guard let layer = win[kCGWindowLayer as String] as? Int, layer == 0,
-                      let pid = win[kCGWindowOwnerPID as String] as? Int32,
-                      pid != NSRunningApplication.current.processIdentifier,
-                      let app = NSRunningApplication(processIdentifier: pid),
-                      MacClippyDockInputMethodPolicy.shouldCaptureHostApplication(
-                          hostBundleID: app.bundleIdentifier,
-                          ownBundleID: Bundle.main.bundleIdentifier
-                      ) else {
-                    continue
-                }
-                pasteTargetApplication = app
-                return
-            }
-        }
-    }
-
-    func restorePasteTargetApplicationIfNeeded(
-        leavingSearch: Bool,
-        isHiding: Bool,
-        hideReason: MacClippyDockHideReason = .command
-    ) {
-        let shouldRestore = MacClippyDockInputMethodPolicy.shouldRestoreHostApplication(
-            leavingSearch: leavingSearch,
-            isHiding: isHiding,
-            didStealActivation: didActivateApplicationForSearch,
-            hideReason: hideReason
-        )
-        if leavingSearch || isHiding {
-            didActivateApplicationForSearch = false
-        }
-        defer {
-            if isHiding {
-                pasteTargetApplication = nil
-            }
-        }
-        guard shouldRestore else { return }
-        guard let host = pasteTargetApplication, !host.isTerminated else { return }
-        guard host != NSRunningApplication.current else { return }
-        activatePasteTarget(host)
-    }
-
-    private func activateForFullscreenSearchIfNeeded() {
-        isFullscreenSearchHost = hostApplicationIsFullscreen()
-        guard !didActivateApplicationForSearch else { return }
-        guard MacClippyDockInputMethodPolicy.shouldActivateApplication(
-            isSearchMode: true,
-            hostIsFullscreen: isFullscreenSearchHost
-        ) else { return }
-        NSApp.activate(
-            ignoringOtherApps: MacClippyDockInputMethodPolicy.shouldActivateIgnoringOtherApps(
-                isSearchMode: true,
-                hostIsFullscreen: isFullscreenSearchHost
-            )
-        )
-        didActivateApplicationForSearch = true
-    }
-
-    func hostApplicationIsFullscreen() -> Bool {
-        guard let windows = CGWindowListCopyWindowInfo(
-            [.optionOnScreenOnly],
-            kCGNullWindowID
-        ) as? [[String: Any]] else {
-            return false
-        }
-        return MacClippyDockInputMethodPolicy.isFullscreenHost(
-            hostPID: hostProcessIdentifierForFullscreenCheck(),
-            windows: windows,
-            screens: NSScreen.screens.map(\.frame),
-            accessibilityFullscreen: hostAccessibilityFullscreen()
-        )
-    }
-
-    private func hostProcessIdentifierForFullscreenCheck() -> Int32? {
-        if let pid = pasteTargetApplication?.processIdentifier {
-            return pid
-        }
-        let front = NSWorkspace.shared.frontmostApplication
-        if let front, MacClippyDockInputMethodPolicy.shouldCaptureHostApplication(
-            hostBundleID: front.bundleIdentifier,
-            ownBundleID: Bundle.main.bundleIdentifier
-        ) {
-            return front.processIdentifier
-        }
-        if let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] {
-            for win in windows {
-                guard let layer = win[kCGWindowLayer as String] as? Int, layer == 0,
-                      let pid = win[kCGWindowOwnerPID as String] as? Int32,
-                      pid != NSRunningApplication.current.processIdentifier else {
-                    continue
-                }
-                return pid
-            }
-        }
-        return nil
-    }
-
-    private func hostAccessibilityFullscreen() -> Bool? {
-        guard AXIsProcessTrusted(),
-              let pid = hostProcessIdentifierForFullscreenCheck() else {
-            return nil
-        }
-        let app = AXUIElementCreateApplication(pid)
-        var focused: CFTypeRef?
-        if AXUIElementCopyAttributeValue(
-            app,
-            kAXFocusedWindowAttribute as CFString,
-            &focused
-        ) == .success, let focused {
-            let window = unsafeDowncast(focused, to: AXUIElement.self)
-            var value: CFTypeRef?
-            if AXUIElementCopyAttributeValue(
-                window,
-                "AXFullScreen" as CFString,
-                &value
-            ) == .success, let val = value as? NSNumber, val.boolValue {
-                return true
-            }
-        }
-        var windowsRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            app,
-            kAXWindowsAttribute as CFString,
-            &windowsRef
-        ) == .success,
-              let windows = windowsRef as? [AXUIElement] else {
-            return nil
-        }
-        for window in windows {
-            var value: CFTypeRef?
-            if AXUIElementCopyAttributeValue(
-                window,
-                "AXFullScreen" as CFString,
-                &value
-            ) == .success,
-               let val = value as? NSNumber,
-               val.boolValue {
-                return true
-            }
-        }
-        return false
-    }
-
-    private func activatePasteTarget(_ host: NSRunningApplication) {
-        _ = host.activate(from: NSRunningApplication.current)
-    }
-
-    private func exposeSearchFieldToInputMethodIfNeeded() {
-        guard !searchFieldHasMarkedText else { return }
-        if MacClippyDockInputMethodPolicy.shouldPerformDeferredSearchFieldFocus(
-            searchFieldIsFirstResponder: searchFieldIsFirstResponder,
-            hasMarkedText: searchFieldHasMarkedText
-        ) {
-            focusSearchFieldEditor()
-        }
-        activateInputContextForFullscreenSearchIfNeeded()
-    }
-
-    private func activateInputContextForFullscreenSearchIfNeeded() {
-        guard isFullscreenSearchHost,
-              interactionMode == .search,
-              !searchFieldHasMarkedText,
-              MacClippyDockInputMethodPolicy.shouldActivateInputContextForFullscreenSearch()
-        else { return }
-        // Activate the context only. A deactivate/activate cycle dismisses
-        // the candidate window while leaving marked text in the field.
-        NSTextInputContext.current?.activate()
-        if let contentView = panel?.contentView,
-           let field = firstTextField(in: contentView),
-           let editor = field.currentEditor() {
-            editor.inputContext?.activate()
-        }
-    }
-
-    private var searchFieldIsFirstResponder: Bool {
-        let responder = panel?.firstResponder
-        if responder is NSTextView {
-            return true
-        }
-        if let field = responder as? NSTextField {
-            return field.isEditable
-        }
-        if let contentView = panel?.contentView,
-           let field = firstTextField(in: contentView),
-           let editor = field.currentEditor(),
-           panel?.firstResponder === editor {
-            return true
-        }
-        return false
-    }
-
-    private func isInputMethodCandidate(at location: NSPoint) -> Bool {
-        let primaryHeight = NSScreen.screens.first(where: { $0.frame.origin == .zero })?.frame.height
-            ?? NSScreen.main?.frame.height
-            ?? 0
-        let quartz = MacClippyDockInputMethodPolicy.quartzPoint(
-            fromCocoa: location,
-            primaryHeight: primaryHeight
-        )
-        guard let windows = CGWindowListCopyWindowInfo(
-            [.optionOnScreenOnly],
-            kCGNullWindowID
-        ) as? [[String: Any]] else {
-            return false
-        }
-        return MacClippyDockInputMethodPolicy.isInputMethodCandidate(
-            at: quartz,
-            windows: windows
-        )
-    }
-
-    private func bringOverlayToKeyboard(
-        _ dockPanel: MacClippyDockPanel,
-        allowsInputMethodCandidates: Bool,
-        attempt: Int
-    ) {
-        if MacClippyDockInputMethodPolicy.shouldReorderOverlayInFrontOfInputMethod(
-            allowsInputMethodCandidates: allowsInputMethodCandidates,
-            ownershipAttempt: attempt
-        ) {
-            dockPanel.orderFrontRegardless()
-            dockPanel.makeKeyAndOrderFront(nil)
-        } else {
-            dockPanel.makeKey()
-        }
-    }
-
-    func setSearchMode(_ isSearching: Bool) {
-        if isSearching {
-            if interactionMode != .search {
-                enterSearchMode()
-            }
-        } else if interactionMode == .search {
-            enterPickerMode()
-        }
-    }
-
-    func routeKeyEvent(_ event: NSEvent) -> NSEvent? {
-        guard panel?.isVisible == true else { return event }
-        // The snippet editor is a separate AppKit window. Let its text fields
-        // receive native typing and navigation instead of routing those events
-        // through the Dock picker/search state machine.
-        guard !snippetEditorWindow.owns(event: event) else { return event }
-        // Keep the visible closing panel a keyboard sink until orderOut. This
-        // prevents AppKit from forwarding the same key to an unrelated
-        // responder during the short hide animation.
-        if isClosing {
-            return nil
-        }
-        let eventIdentity = ObjectIdentifier(event)
-        if eventIdentity == lastRoutedEventIdentity {
-            return nil
-        }
-        // The Preview panel is intentionally non-key so the Dock remains the
-        // keyboard owner. Route image OCR selection directly before asking the
-        // general picker policy for an action; otherwise a selected image can
-        // lose ⌘C when AppKit has no native text responder.
-        if routePreviewCommandCopy(event, eventIdentity: eventIdentity) {
-            return nil
-        }
-        guard let keyEvent = dockKeyEvent(from: event) else { return event }
-        noteSearchFieldClearKeys(event)
-        if MacClippyDockInputMethodPolicy.shouldReapplySearchOverlayOnKeyEvent(),
-           interactionMode == .search,
-           event.type == .keyDown {
-            applyOverlayLevel(allowsInputMethodCandidates: true)
-        }
-        let hasMarkedText = searchFieldHasMarkedText
-        let action = MacClippyDockKeyRouterPolicy.action(
-            for: keyEvent,
-            mode: interactionMode,
-            hasCardFocus: model.focusedPreviewTarget != nil,
-            hasMultipleSelection: model.hasMultipleSelection,
-            detailsEditing: detailsEditing != .none,
-            hasTextSelection: hasNativeTextSelection,
-            isLoading: model.isLoading,
-            alwaysPastePlainText: MacClippyRetentionPreferences.alwaysPastePlainText(),
-            letInputMethodOwnTyping: MacClippyDockInputMethodPolicy.letsInputMethodOwnTyping(
-                hasMarkedText: hasMarkedText,
-                inputSourceType: keyboardInputSourceType()
-            ),
-            hasMarkedText: hasMarkedText
-        )
-        if routeNativeCommandCopy(event, action: action, eventIdentity: eventIdentity) {
-            return nil
-        }
-        let consumed = applyKeyAction(action)
-        if consumed {
-            lastRoutedEventIdentity = eventIdentity
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.lastRoutedEventIdentity == eventIdentity else { return }
-                self.lastRoutedEventIdentity = nil
-            }
-        }
-        return consumed ? nil : event
-    }
-
-    private func dockKeyEvent(from event: NSEvent) -> MacClippyDockKeyEvent? {
-        switch event.type {
-        case .keyDown:
-            return .keyDown(
-                keyCode: event.keyCode,
-                characters: event.characters,
-                modifiers: event.modifierFlags,
-                isRepeat: event.isARepeat
-            )
-        case .keyUp:
-            return .keyUp(keyCode: event.keyCode, modifiers: event.modifierFlags)
-        default:
-            return nil
-        }
-    }
-
-    private func routeNativeCommandCopy(
-        _ event: NSEvent,
-        action: MacClippyDockKeyAction,
-        eventIdentity: ObjectIdentifier
-    ) -> Bool {
-        guard action == .native,
-              event.type == .keyDown,
-              MacClippyDockKeyRouterPolicy.isCommandCopy(
-                  keyCode: event.keyCode,
-                  modifiers: event.modifierFlags
-              ) else { return false }
-        if let selectionHost = selectedPreviewSelectionHost,
-           selectionHost.hasSelectedText {
-            selectionHost.copySelectedText()
-            lastRoutedEventIdentity = eventIdentity
-            return true
-        }
-        guard let previewTextView = selectedPreviewTextView else { return false }
-        previewTextView.copy(nil)
-        lastRoutedEventIdentity = eventIdentity
-        return true
-    }
-
-    private func routePreviewCommandCopy(
-        _ event: NSEvent,
-        eventIdentity: ObjectIdentifier
-    ) -> Bool {
-        guard interactionMode == .preview,
-              event.type == .keyDown,
-              MacClippyDockKeyRouterPolicy.isCommandCopy(
-                  keyCode: event.keyCode,
-                  modifiers: event.modifierFlags
-              ),
-              let selectionHost = selectedPreviewSelectionHost,
-              selectionHost.hasSelectedText else {
-            return false
-        }
-        selectionHost.copySelectedText()
-        lastRoutedEventIdentity = eventIdentity
-        return true
-    }
-
-    private func noteSearchFieldClearKeys(_ event: NSEvent) {
-        guard event.type == .keyDown else { return }
-        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let isDeleteKey = event.keyCode == 51 || event.keyCode == 117
-        let isCommandA = event.keyCode == 0 && modifiers == [.command]
-        guard MacClippyDockSearchQueryWritePolicy.notesSearchFieldUserEdit(
-            isSearchMode: interactionMode == .search,
-            isDeleteKey: isDeleteKey,
-            isCommandA: isCommandA
-        ) else { return }
-        model.noteSearchFieldUserKeyEvent()
-    }
-
-    func focusSearchFieldEditor() {
-        guard let contentView = panel?.contentView,
-              let field = firstTextField(in: contentView) else { return }
-        if panel?.firstResponder === field || (field.currentEditor() != nil && panel?.firstResponder === field.currentEditor()) {
-            return
-        }
-        panel?.makeFirstResponder(field)
-        if let editor = field.currentEditor() {
-            panel?.makeFirstResponder(editor)
-        }
-    }
-
-    private var searchFieldHasMarkedText: Bool {
-        markedTextClient?.hasMarkedText() == true
-    }
-
-    private var markedTextClient: NSTextInputClient? {
-        let fieldEditor = panel?.contentView.flatMap { firstTextField(in: $0) }?.currentEditor()
-        let responders: [NSResponder?] = [
-            NSApp.keyWindow?.firstResponder,
-            panel?.firstResponder,
-            (panel?.firstResponder as? NSTextField)?.currentEditor(),
-            (NSApp.keyWindow?.firstResponder as? NSTextField)?.currentEditor(),
-            fieldEditor,
-        ]
-        for responder in responders {
-            if let client = responder as? NSTextInputClient {
-                return client
-            }
-        }
-        return nil
-    }
-
-    private func firstTextField(in view: NSView) -> NSTextField? {
-        if let field = view as? NSTextField, field.isEditable {
-            return field
-        }
-        for subview in view.subviews {
-            if let field = firstTextField(in: subview) {
-                return field
-            }
-        }
-        return nil
-    }
-
-    private var hasNativeTextSelection: Bool {
-        if let selectionHost = selectedPreviewSelectionHost,
-           selectionHost.hasSelectedText {
-            return true
-        }
-        let responder = NSApp.keyWindow?.firstResponder
-        if let textView = responder as? NSTextView {
-            return textView.selectedRange.length > 0
-        }
-        if let textField = responder as? NSTextField {
-            return textField.currentEditor()?.selectedRange.length ?? 0 > 0
-        }
-        return selectedPreviewTextView != nil
-    }
-
-    private var selectedPreviewSelectionHost: MacClippyPreviewTextSelectionHost? {
-        guard previewPanel?.isVisible == true,
-              let contentView = previewPanel?.contentView else { return nil }
-        return firstSelectionHost(in: contentView)
-    }
-
-    private var selectedPreviewTextView: NSTextView? {
-        guard previewPanel?.isVisible == true,
-              let contentView = previewPanel?.contentView else { return nil }
-        return firstSelectedTextView(in: contentView)
-    }
-
-    private func firstSelectedTextView(in view: NSView) -> NSTextView? {
-        if let textView = view as? NSTextView, textView.selectedRange.length > 0 {
-            return textView
-        }
-        for subview in view.subviews {
-            if let selected = firstSelectedTextView(in: subview) {
-                return selected
-            }
-        }
-        return nil
-    }
-
-    private func firstSelectionHost(in view: NSView) -> MacClippyPreviewTextSelectionHost? {
-        if let host = view as? MacClippyPreviewTextSelectionHost,
-           host.hasSelectedText {
-            return host
-        }
-        for subview in view.subviews {
-            if let host = firstSelectionHost(in: subview) {
-                return host
-            }
-        }
-        return nil
-    }
-
-    func consumePanelKey(_ event: NSEvent) -> Bool {
-        routeKeyEvent(event) == nil
-    }
 }

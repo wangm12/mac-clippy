@@ -3,7 +3,11 @@ import Foundation
 import GRDB
 
 extension MacClippyClipboardStore {
-    public func beginDeletion(ids: [RecordID], now: Date = Date()) throws -> MacClippyDeletionJournalEntry? {
+    public func beginDeletion(
+        ids: [RecordID],
+        now: Date = Date(),
+        allowUnprovenLegacyReferences: Bool = false
+    ) throws -> MacClippyDeletionJournalEntry? {
         let orderedIDs = Array(NSOrderedSet(array: ids))
             .compactMap { $0 as? RecordID }
         guard !orderedIDs.isEmpty else { return nil }
@@ -14,7 +18,7 @@ extension MacClippyClipboardStore {
         var blobIDsByRecord: [RecordID: Set<String>] = [:]
         var allBlobIDs = Set<String>()
         for id in orderedIDs where presentIDs.contains(id) {
-            let ids = try blobIDs(for: id)
+            let ids = try blobIDs(for: id, allowUnprovenLegacyReferences: allowUnprovenLegacyReferences)
             blobIDsByRecord[id] = ids
             allBlobIDs.formUnion(ids)
         }
@@ -110,10 +114,10 @@ extension MacClippyClipboardStore {
             Set(try Row.fetchAll(
                 connection,
                 sql: """
-                    SELECT blob_id
+                    SELECT DISTINCT blob_id
                     FROM clipboard_deletion_journal
                     WHERE operation_id = ?
-                    ORDER BY record_id ASC, blob_id ASC
+                    ORDER BY blob_id ASC
                     LIMIT ? OFFSET ?
                 """,
                 arguments: [operationID, max(1, min(limit, 256)), max(0, offset)]

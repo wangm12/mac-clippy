@@ -111,7 +111,8 @@ extension MacClippyClipboardStore {
             return value
         }
         noteRecordEnvelopeDecrypt()
-        return try JSONDecoder().decode(ClipboardRecord.self, from: MacClippyCipher.open(MacClippyEnvelope(combined: data), with: key))
+        let plaintext = try MacClippyCipher.open(MacClippyEnvelope(combined: data), with: key)
+        return try MacClippyClipboardRecordEnvelopeCodec.decode(plaintext).record
     }
 
     // Atomically replaces the editable primary payload and its card metadata.
@@ -149,10 +150,8 @@ extension MacClippyClipboardStore {
                 throw MacClippyStoreError.invalidStoredRecord
             }
             noteRecordEnvelopeDecrypt()
-            values[id] = try JSONDecoder().decode(
-                ClipboardRecord.self,
-                from: MacClippyCipher.open(MacClippyEnvelope(combined: envelope), with: key)
-            )
+            let plaintext = try MacClippyCipher.open(MacClippyEnvelope(combined: envelope), with: key)
+            values[id] = try MacClippyClipboardRecordEnvelopeCodec.decode(plaintext).record
         }
         return values
     }

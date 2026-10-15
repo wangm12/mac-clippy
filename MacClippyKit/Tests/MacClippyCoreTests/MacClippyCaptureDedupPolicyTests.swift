@@ -81,6 +81,45 @@ final class MacClippyCaptureDedupPolicyTests: XCTestCase {
         XCTAssertNotEqual(plain, rich)
     }
 
+    func testMultiItemHashBindsRepeatedUTIToItsNativeItem() {
+        let first = MacClippyCaptureDedupPolicy.contentHash(
+            primary: .text("copy"),
+            representations: [
+                MacClippyCaptureDedupRepresentation(
+                    itemIndex: 0,
+                    uti: "public.utf8-plain-text",
+                    payloadState: "present",
+                    payloadBytes: Data("one".utf8)
+                ),
+                MacClippyCaptureDedupRepresentation(
+                    itemIndex: 1,
+                    uti: "public.utf8-plain-text",
+                    payloadState: "present",
+                    payloadBytes: Data("two".utf8)
+                )
+            ]
+        )
+        let swapped = MacClippyCaptureDedupPolicy.contentHash(
+            primary: .text("copy"),
+            representations: [
+                MacClippyCaptureDedupRepresentation(
+                    itemIndex: 0,
+                    uti: "public.utf8-plain-text",
+                    payloadState: "present",
+                    payloadBytes: Data("two".utf8)
+                ),
+                MacClippyCaptureDedupRepresentation(
+                    itemIndex: 1,
+                    uti: "public.utf8-plain-text",
+                    payloadState: "present",
+                    payloadBytes: Data("one".utf8)
+                )
+            ]
+        )
+
+        XCTAssertNotEqual(first, swapped)
+    }
+
     func testHealthyDuplicateRowSkipsEnvelopeOpen() {
         let id = RecordID.generate().rawValue
         XCTAssertTrue(

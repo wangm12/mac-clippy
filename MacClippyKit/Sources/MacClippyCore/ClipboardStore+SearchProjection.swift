@@ -15,6 +15,87 @@ public struct MacClippyClipboardHistoryCursor: Sendable, Equatable {
 }
 
 extension MacClippyClipboardStore {
+    /// Enumerates only the IDs eligible for structured search, without loading
+    /// preview/OCR fields or decrypting record envelopes.
+    public func matchingRecordIDs(
+        filter: MacClippyClipboardMetadataFilter,
+        requiresURL: Bool = false,
+        afterID: RecordID? = nil,
+        limit: Int = 512,
+        sourceAppDisplayNameResolver: (@Sendable (String?) -> String?)? = nil
+    ) throws -> [RecordID] {
+        guard limit > 0 else { return [] }
+        return try database.queue.read { connection in
+            let scope = Self.searchScopePredicates(
+                filter, requiresURL: requiresURL, on: connection,
+                resolver: sourceAppDisplayNameResolver
+            )
+            var predicates = scope.predicates
+            var rawArguments = scope.rawArguments
+            if let afterID {
+                predicates.append("id > ?")
+                rawArguments.append(afterID.rawValue)
+            }
+            var sql = "SELECT id FROM clipboard_records"
+            if !predicates.isEmpty { sql += " WHERE " + predicates.joined(separator: " AND ") }
+            sql += " ORDER BY id ASC LIMIT ?"
+            rawArguments.append(limit)
+            guard let arguments = StatementArguments(rawArguments) else {
+                throw MacClippyStoreError.invalidStoredRecord
+            }
+            return try String.fetchAll(connection, sql: sql, arguments: arguments).map { rawID in
+                guard let id = RecordID(rawValue: rawID) else { throw MacClippyStoreError.invalidStoredRecord }
+                return id
+            }
+        }
+    }
+
+    // SQL LOWER/LIKE only folds ASCII. Scope predicates must retain the Swift
+    // grammar's Unicode matching and its fallback for legacy source app names.
+    private static func searchScopePredicates(
+        _ filter: MacClippyClipboardMetadataFilter,
+        requiresURL: Bool,
+        on connection: Database,
+        resolver: (@Sendable (String?) -> String?)?
+    ) -> (predicates: [String], rawArguments: [Any]) {
+        var predicates: [String] = []
+        var rawArguments: [Any] = []
+        var basicFilter = filter
+        basicFilter.sourceAppContains = []
+        basicFilter.labelContains = []
+        appendFilterPredicates(
+            basicFilter, requiresURL: requiresURL, predicates: &predicates,
+            rawArguments: &rawArguments, on: connection
+        )
+        if !filter.sourceAppContains.isEmpty {
+            connection.add(function: DatabaseFunction("macclippy_source_app_contains", argumentCount: 3) { values in
+                let bundleID = String.fromDatabaseValue(values[0])
+                let storedName = String.fromDatabaseValue(values[1])
+                let preferred = MacClippySourceAppSearch.preferredDisplayName(stored: storedName, resolved: nil)
+                let displayName = preferred ?? resolver?(bundleID)
+                guard let needle = String.fromDatabaseValue(values[2]) else { return false }
+                return MacClippySourceAppSearch.segments(bundleID: bundleID, displayName: displayName)
+                    .contains { $0.localizedCaseInsensitiveContains(needle) }
+            })
+            for value in filter.sourceAppContains {
+                predicates.append("macclippy_source_app_contains(source_app, source_app_name, ?)")
+                rawArguments.append(value)
+            }
+        }
+        if !filter.labelContains.isEmpty {
+            connection.add(function: DatabaseFunction("macclippy_label_contains", argumentCount: 2) { values in
+                guard let label = String.fromDatabaseValue(values[0]),
+                      let needle = String.fromDatabaseValue(values[1]) else { return false }
+                return label.localizedCaseInsensitiveContains(needle)
+            })
+            for value in filter.labelContains {
+                predicates.append("macclippy_label_contains(custom_label, ?)")
+                rawArguments.append(value)
+            }
+        }
+        return (predicates, rawArguments)
+    }
+
     public func list(
         limit: Int,
         offset: Int = 0,
@@ -32,7 +113,8 @@ extension MacClippyClipboardStore {
                 activeFilter,
                 requiresURL: requiresURL,
                 predicates: &predicates,
-                rawArguments: &rawArguments
+                rawArguments: &rawArguments,
+                on: connection
             )
             if let cursor {
                 predicates.append("(modified < ? OR (modified = ? AND lamport < ?) OR (modified = ? AND lamport = ? AND id < ?))")
@@ -109,7 +191,8 @@ extension MacClippyClipboardStore {
         _ filter: MacClippyClipboardMetadataFilter,
         requiresURL: Bool,
         predicates: inout [String],
-        rawArguments: inout [Any]
+        rawArguments: inout [Any],
+        on connection: Database
     ) {
         if let contentKind = filter.contentKind {
             predicates.append("content_kind = ?")
@@ -139,7 +222,8 @@ extension MacClippyClipboardStore {
             predicates.append("ocr_text IS NOT NULL AND trim(ocr_text) != ''")
         }
         if requiresURL {
-            predicates.append(urlMatchPredicate)
+            registerURLMatch(on: connection)
+            predicates.append("macclippy_record_is_url(detected_type, preview)")
         }
         for date in filter.modifiedBefore {
             predicates.append("modified < ?")
@@ -151,9 +235,12 @@ extension MacClippyClipboardStore {
         }
     }
 
-    private static let urlMatchPredicate =
-        "(LOWER(IFNULL(detected_type, '')) LIKE '%url%'"
-        + " OR LOWER(TRIM(preview)) LIKE 'http://%'"
-        + " OR LOWER(TRIM(preview)) LIKE 'https://%'"
-        + " OR LOWER(TRIM(preview)) LIKE 'www.%')"
+    private static func registerURLMatch(on connection: Database) {
+        connection.add(function: DatabaseFunction("macclippy_record_is_url", argumentCount: 2) { values in
+            if let detected = String.fromDatabaseValue(values[0]),
+               detected.localizedCaseInsensitiveContains("url") { return true }
+            guard let preview = String.fromDatabaseValue(values[1]) else { return false }
+            return MacClippySmartText.matchesURL(preview)
+        })
+    }
 }

@@ -46,6 +46,7 @@ extension MacClippyDockModel {
     }
 
     func pasteFocused(plain: Bool? = nil, completion: @escaping @MainActor @Sendable () -> Void) {
+        guard selectionIsReady else { return }
         if selectedTab == .snippets {
             guard let snippet = focusedSnippet else { return }
             activate(snippet, completion: completion)
@@ -66,6 +67,7 @@ extension MacClippyDockModel {
     }
 
     func copyFocused(plain: Bool, completion: (@MainActor @Sendable () -> Void)? = nil) {
+        guard selectionIsReady else { return }
         let runtimeReference = runtime
         let feedback: MacClippyDockActionFeedback = .copied(plain: plain)
         if selectedTab == .snippets, let snippet = focusedSnippet {
@@ -97,10 +99,14 @@ extension MacClippyDockModel {
     /// completion (closing the dock) only on a successful paste.
     func copyFocused(transform: TextTransform) {
         guard let item = focusedItem else { return }
+        copyRecord(id: item.id, transform: transform)
+    }
+
+    func copyRecord(id: RecordID, transform: TextTransform) {
         let runtimeReference = runtime
         let name = transform.displayName
         performWithSideEffect { [runtimeReference] gate in
-            try runtimeReference.copy(id: item.id, transform: transform, sideEffectGate: gate)
+            try runtimeReference.copy(id: id, transform: transform, sideEffectGate: gate)
         } onSuccess: { [weak self] in
             self?.showActionFeedback(.transformedCopied(name: name))
         }
@@ -111,7 +117,15 @@ extension MacClippyDockModel {
         completion: @escaping @MainActor @Sendable () -> Void
     ) {
         guard let item = focusedItem else { return }
+        pasteRecord(id: item.id, transform: transform, completion: completion)
+    }
+
+    func pasteRecord(
+        id: RecordID, transform: TextTransform,
+        completion: @escaping @MainActor @Sendable () -> Void
+    ) {
         let runtimeReference = runtime
+        let targetPID = pasteTargetProcessIdentifier
         let name = transform.displayName
         let operation = beginUserOperation()
         let session = sessionGeneration
@@ -122,8 +136,9 @@ extension MacClippyDockModel {
         workQueue.async { [weak self, runtimeReference, sideEffectGate] in
             let result = Result {
                 try runtimeReference.paste(
-                    id: item.id,
+                    id: id,
                     transform: transform,
+                    targetProcessIdentifier: targetPID,
                     sideEffectGate: sideEffectGate
                 )
             }
@@ -133,8 +148,18 @@ extension MacClippyDockModel {
                       self.operationGeneration == operation else { return }
                 switch result {
                 case let .success(pasteResult):
-                    self.showActionFeedback(.transformedPasted(name: name, manual: pasteResult == .manualPasteRequired))
-                    completion()
+                    switch pasteResult {
+                    case .injected:
+                        self.showActionFeedback(.transformedPasted(name: name, manual: false))
+                        completion()
+                    case .preparedForManualPaste:
+                        self.showActionFeedback(.transformedPasted(name: name, manual: true))
+                        completion()
+                    case let .failed(failure):
+                        self.setActionError(failure.localizedDescription)
+                    case .cancelled:
+                        break
+                    }
                 case .failure:
                     self.setActionError(MacClippyUserFacingError.genericAction)
                 }
@@ -231,7 +256,14 @@ extension MacClippyDockModel {
         workQueue.async { [weak self, runtimeReference] in
             let result = Result { try runtimeReference.createSnippet(from: recordID) }
             MacClippyMainHop.async { [weak self] in
-                guard let self, self.sessionGeneration == session else { return }
+                guard let self else {
+                    completion?(false)
+                    return
+                }
+                guard self.sessionGeneration == session else {
+                    completion?(false)
+                    return
+                }
                 switch result {
                 case .success:
                     self.showActionFeedback(.snippetCreated)
@@ -266,24 +298,15 @@ extension MacClippyDockModel {
                 try runtime.createSnippet(name: name, trigger: trigger, body: body, folder: folder)
             }
             MacClippyMainHop.async { [weak self] in
-                guard let self, self.sessionGeneration == session else { return }
                 switch result {
                 case .success:
-                    self.showActionFeedback(.snippetCreated)
-                    self.reload()
+                    if let self, self.sessionGeneration == session {
+                        self.showActionFeedback(.snippetCreated)
+                        self.reload()
+                    }
                     onSuccess?()
                 case let .failure(error):
-                    let message: String
-                    switch error as? MacClippySnippetCreationError {
-                    case .invalidName:
-                        message = "Enter a name for this snippet."
-                    case .emptyBody:
-                        message = "Enter some content for this snippet."
-                    case .duplicateTrigger:
-                        message = "That trigger is already in use."
-                    default:
-                        message = MacClippyUserFacingError.genericAction
-                    }
+                    let message = MacClippySnippetFormError.message(for: error)
                     onFailure?(message)
                 }
             }
@@ -293,13 +316,7 @@ extension MacClippyDockModel {
     func deleteFocused() {
         let runtime = runtime
         if selectedTab == .snippets, let snippet = focusedSnippet {
-            perform {
-                try runtime.delete(snippetID: snippet.id)
-                return true
-            } onSuccess: { [weak self] in
-                self?.showActionFeedback(.deleted)
-                self?.reload()
-            }
+            deleteSnippet(id: snippet.id)
         } else if let item = focusedItem {
             perform {
                 try runtime.delete(id: item.id)

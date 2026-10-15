@@ -30,6 +30,36 @@ public struct MacClippyPasteboardItem: Equatable, Sendable {
 
 public typealias PasteboardItem = MacClippyPasteboardItem
 
+public struct MacClippyPasteboardReadFailure: Equatable, Sendable {
+    public let operation: String
+    public let message: String
+
+    public init(operation: String, message: String) {
+        self.operation = String(operation.prefix(128))
+        self.message = String(message.prefix(256))
+    }
+
+    public init(error: Error) {
+        if let nativeError = error as? MacClippyObjectiveCException {
+            self.init(operation: nativeError.operation, message: nativeError.localizedDescription)
+        } else if let malformed = error as? MacClippyMalformedNativePasteboardResult {
+            self.init(operation: malformed.operation, message: malformed.localizedDescription)
+        } else {
+            self.init(
+                operation: String(describing: type(of: error)),
+                message: error.localizedDescription
+            )
+        }
+    }
+}
+
+public enum MacClippyPasteboardReadOutcome: Equatable, Sendable {
+    case success(PasteboardChange)
+    case failed(MacClippyPasteboardReadFailure)
+    case cancelled
+    case generationUnavailable
+}
+
 public struct MacClippyPasteboardChange: Equatable, Sendable {
     public let changeCount: Int
     public let items: [PasteboardItem]
@@ -63,6 +93,9 @@ public protocol MacClippyPasteboardReading: AnyObject {
     // Production readers can observe lifecycle cancellation between items and
     // provider retries. Injected readers keep the source-compatible default.
     func read(shouldContinue: () -> Bool) -> PasteboardChange
+    /// Outcome-aware production read. The default keeps older injected readers
+    /// source compatible; native readers override it to preserve failures.
+    func readOutcome(shouldContinue: () -> Bool) -> MacClippyPasteboardReadOutcome
     // Re-reads the previously-unavailable types for the same changeCount from
     // the underlying pasteboard and returns an updated change. The default
     // implementation returns the change unchanged, so injected test readers
@@ -75,10 +108,16 @@ public protocol MacClippyPasteboardReading: AnyObject {
         unavailableTypes: [(itemIndex: Int, uti: String)],
         shouldContinue: () -> Bool
     ) -> PasteboardChange
+    func rereadOutcome(
+        change: PasteboardChange,
+        unavailableTypes: [(itemIndex: Int, uti: String)],
+        shouldContinue: () -> Bool
+    ) -> MacClippyPasteboardReadOutcome
     /// Reads a specific pasteboard generation when the reader still has it.
     /// System NSPasteboard only retains the current generation, so the default
     /// returns nil for any count other than `currentChangeCount()`.
     func read(changeCount: Int, shouldContinue: () -> Bool) -> PasteboardChange?
+    func readOutcome(changeCount: Int, shouldContinue: () -> Bool) -> MacClippyPasteboardReadOutcome
 }
 
 public extension MacClippyPasteboardReading {
@@ -88,6 +127,11 @@ public extension MacClippyPasteboardReading {
 
     func read(shouldContinue: () -> Bool) -> PasteboardChange {
         read()
+    }
+
+    func readOutcome(shouldContinue: () -> Bool) -> MacClippyPasteboardReadOutcome {
+        guard shouldContinue() else { return .cancelled }
+        return .success(read(shouldContinue: shouldContinue))
     }
 
     func reread(change: PasteboardChange, unavailableTypes: [(itemIndex: Int, uti: String)]) -> PasteboardChange {
@@ -102,165 +146,111 @@ public extension MacClippyPasteboardReading {
         reread(change: change, unavailableTypes: unavailableTypes)
     }
 
+    func rereadOutcome(
+        change: PasteboardChange,
+        unavailableTypes: [(itemIndex: Int, uti: String)],
+        shouldContinue: () -> Bool
+    ) -> MacClippyPasteboardReadOutcome {
+        guard shouldContinue() else { return .cancelled }
+        return .success(reread(
+            change: change,
+            unavailableTypes: unavailableTypes,
+            shouldContinue: shouldContinue
+        ))
+    }
+
     func read(changeCount: Int, shouldContinue: () -> Bool) -> PasteboardChange? {
         guard currentChangeCount() == changeCount else { return nil }
         let change = read(shouldContinue: shouldContinue)
         guard change.changeCount == changeCount else { return nil }
         return change
     }
+
+    func readOutcome(changeCount: Int, shouldContinue: () -> Bool) -> MacClippyPasteboardReadOutcome {
+        guard shouldContinue() else { return .cancelled }
+        guard let change = read(changeCount: changeCount, shouldContinue: shouldContinue) else {
+            return shouldContinue() ? .generationUnavailable : .cancelled
+        }
+        return .success(change)
+    }
 }
 
 public typealias PasteboardReading = MacClippyPasteboardReading
 
+/// A one-shot reservation that follows a materialized pasteboard change from
+/// observer delivery through persistence. The observer releases it
+/// automatically if filtering or projection prevents the runtime handler from
+/// taking ownership; runtime callers finish it only after retained payloads
+/// have been cleared.
+public final class MacClippyPasteboardCaptureAdmission: @unchecked Sendable {
+    private let lock = NSLock()
+    private var finishHandler: (@Sendable (Bool) -> Void)?
+
+    public init(finish: @escaping @Sendable (Bool) -> Void) {
+        finishHandler = finish
+    }
+
+    public func finish(wasPersisted: Bool) {
+        lock.lock()
+        let handler = finishHandler
+        finishHandler = nil
+        lock.unlock()
+        handler?(wasPersisted)
+    }
+
+    deinit {
+        finish(wasPersisted: false)
+    }
+}
+
 public final class MacClippySystemPasteboardReader: PasteboardReading {
-    private let pasteboard: NSPasteboard
-    private let sourceAppBundleID: () -> String?
-    private let inputLimits: MacClippyPasteboardInputLimits
+    let pasteboard: NSPasteboard
+    let sourceAppBundleID: () -> String?
+    let inputLimits: MacClippyPasteboardInputLimits
+    let accessCoordinator: MacClippyPasteboardAccessCoordinator
+    let onReadFailure: @Sendable (MacClippyObjectiveCException) -> Void
+    private let lastChangeCountLock = NSLock()
+    private var lastKnownChangeCount = 0
 
     public init(
         pasteboard: NSPasteboard = .general,
         sourceAppBundleID: @escaping () -> String? = { NSWorkspace.shared.frontmostApplication?.bundleIdentifier },
-        inputLimits: MacClippyPasteboardInputLimits = .default
+        inputLimits: MacClippyPasteboardInputLimits = .default,
+        accessCoordinator: MacClippyPasteboardAccessCoordinator? = nil,
+        onReadFailure: @escaping @Sendable (MacClippyObjectiveCException) -> Void = { _ in }
     ) {
         self.pasteboard = pasteboard
         self.sourceAppBundleID = sourceAppBundleID
         self.inputLimits = inputLimits
+        self.accessCoordinator = accessCoordinator ?? .shared(for: pasteboard)
+        self.onReadFailure = onReadFailure
     }
 
     public func currentChangeCount() -> Int {
-        pasteboard.changeCount
-    }
-
-    public func read() -> PasteboardChange {
-        read(shouldContinue: { true })
-    }
-
-    public func read(shouldContinue: () -> Bool) -> PasteboardChange {
-        let allItems = pasteboard.pasteboardItems ?? []
-        var totalBytes = 0
-        var items: [PasteboardItem] = []
-        items.reserveCapacity(min(allItems.count, inputLimits.maxItemsPerChange))
-        for item in allItems.prefix(inputLimits.maxItemsPerChange) {
-            guard shouldContinue() else { return PasteboardChange(changeCount: pasteboard.changeCount, items: [], sourceAppBundleID: nil) }
-            var types: [String] = []
-            var boundedTypes: [NSPasteboard.PasteboardType] = []
-            var hasTruncatedTypes = false
-            for type in item.types {
-                guard type.rawValue.utf8.count <= inputLimits.maxUTIBytes,
-                      boundedTypes.count < inputLimits.maxRepresentationsPerItem else {
-                    hasTruncatedTypes = true
-                    continue
-                }
-                types.append(type.rawValue)
-                boundedTypes.append(type)
+        accessCoordinator.withAccess {
+            do {
+                let value = try MacClippyNativePasteboard.changeCount(of: pasteboard)
+                rememberChangeCount(value)
+                return value
+            } catch let error as MacClippyObjectiveCException {
+                onReadFailure(error)
+                return rememberedChangeCount()
+            } catch {
+                return rememberedChangeCount()
             }
-            if hasTruncatedTypes {
-                types.append(MacClippyPasteboardInputLimits.truncatedUTIMarker)
-            }
-            var representations: [String: Data] = [:]
-            var oversizedTypes = Set<String>()
-            for type in boundedTypes {
-                guard shouldContinue() else { return PasteboardChange(changeCount: pasteboard.changeCount, items: [], sourceAppBundleID: nil) }
-                let key = type.rawValue
-                // Retry lazy pasteboard data that is temporarily unavailable.
-                // If a provider returns more than the per-representation or
-                // per-change budget, retain only a type marker and never
-                // encrypt/index/write the bytes.
-                if let data = MacClippyPasteboardReadRetry.read(shouldContinue: shouldContinue, { item.data(forType: type) }) {
-                    if accept(data, for: key, totalBytes: &totalBytes) {
-                        representations[key] = data
-                    } else {
-                        oversizedTypes.insert(key)
-                    }
-                } else if let string = MacClippyPasteboardReadRetry.read(shouldContinue: shouldContinue, { item.string(forType: type) }) {
-                    let data = Data(string.utf8)
-                    if accept(data, for: key, totalBytes: &totalBytes) {
-                        representations[key] = data
-                    } else {
-                        oversizedTypes.insert(key)
-                    }
-                }
-            }
-            if hasTruncatedTypes {
-                oversizedTypes.insert(MacClippyPasteboardInputLimits.truncatedUTIMarker)
-            }
-            items.append(PasteboardItem(types: types, representations: representations, oversizedTypes: oversizedTypes))
         }
-        return PasteboardChange(
-            changeCount: pasteboard.changeCount,
-            items: items,
-            sourceAppBundleID: sourceAppBundleID(),
-            truncatedItemCount: max(0, allItems.count - items.count)
-        )
     }
 
-    // Cross-poll re-read for lazy provider data. Re-queries only the
-    // previously-unavailable (itemIndex, uti) pairs and merges any newly-
-    // available bytes into a copy of the original change. Types that are
-    // still unavailable after this re-read remain absent in the returned
-    // change's representations; the observer will mark them .unavailable at
-    // the mapping layer once the retry budget is exhausted.
-    public func reread(change: PasteboardChange, unavailableTypes: [(itemIndex: Int, uti: String)]) -> PasteboardChange {
-        reread(change: change, unavailableTypes: unavailableTypes, shouldContinue: { true })
+    func rememberChangeCount(_ value: Int) {
+        lastChangeCountLock.lock()
+        lastKnownChangeCount = value
+        lastChangeCountLock.unlock()
     }
 
-    public func reread(
-        change: PasteboardChange,
-        unavailableTypes: [(itemIndex: Int, uti: String)],
-        shouldContinue: () -> Bool
-    ) -> PasteboardChange {
-        guard !unavailableTypes.isEmpty else { return change }
-        let pasteboardItems = pasteboard.pasteboardItems ?? []
-        var updatedItems = change.items
-        for pending in unavailableTypes {
-            guard shouldContinue() else { return change }
-            guard pending.itemIndex < updatedItems.count else { continue }
-            let item = updatedItems[pending.itemIndex]
-            guard pasteboardItems.indices.contains(pending.itemIndex) else { continue }
-            let nsItem = pasteboardItems[pending.itemIndex]
-            let nsType = NSPasteboard.PasteboardType(rawValue: pending.uti)
-            var representations = item.representations
-            var oversizedTypes = item.oversizedTypes
-            var currentTotalBytes = totalBytes(in: updatedItems)
-            if let data = MacClippyPasteboardReadRetry.read(shouldContinue: shouldContinue, { nsItem.data(forType: nsType) }) {
-                if accept(data, for: pending.uti, totalBytes: &currentTotalBytes) {
-                    representations[pending.uti] = data
-                    oversizedTypes.remove(pending.uti)
-                } else {
-                    oversizedTypes.insert(pending.uti)
-                }
-            } else if let string = MacClippyPasteboardReadRetry.read(shouldContinue: shouldContinue, { nsItem.string(forType: nsType) }) {
-                let data = Data(string.utf8)
-                if accept(data, for: pending.uti, totalBytes: &currentTotalBytes) {
-                    representations[pending.uti] = data
-                    oversizedTypes.remove(pending.uti)
-                } else {
-                    oversizedTypes.insert(pending.uti)
-                }
-            }
-            updatedItems[pending.itemIndex] = PasteboardItem(
-                types: item.types,
-                representations: representations,
-                oversizedTypes: oversizedTypes
-            )
-        }
-        return PasteboardChange(
-            changeCount: change.changeCount,
-            items: updatedItems,
-            sourceAppBundleID: change.sourceAppBundleID,
-            truncatedItemCount: change.truncatedItemCount
-        )
-    }
-
-    private func accept(_ data: Data, for _: String, totalBytes: inout Int) -> Bool {
-        guard data.count <= inputLimits.maxRepresentationBytes else { return false }
-        guard totalBytes <= inputLimits.maxChangeBytes - data.count else { return false }
-        totalBytes += data.count
-        return true
-    }
-
-    private func totalBytes(in items: [PasteboardItem]) -> Int {
-        items.reduce(0) { total, item in total + item.representations.values.reduce(0) { $0 + $1.count } }
+    func rememberedChangeCount() -> Int {
+        lastChangeCountLock.lock()
+        defer { lastChangeCountLock.unlock() }
+        return lastKnownChangeCount
     }
 }
 
@@ -283,12 +273,22 @@ public extension MacClippyPasteboardObserver {
 public final class MacClippyPasteboardObserver: @unchecked Sendable {
     public typealias Handler = (PasteboardChange) -> Void
     public typealias ProjectionHandler = (PasteboardChange, MacClippyCaptureProjection) -> Void
+    public typealias AdmissionHandler = (PasteboardChange) -> MacClippyPasteboardCaptureAdmission?
+    public typealias AdmittedProjectionHandler = (
+        PasteboardChange,
+        MacClippyCaptureProjection,
+        MacClippyPasteboardCaptureAdmission
+    ) -> Void
 
     let reader: PasteboardReading
     var exclusionRules: MacClippyCore.CaptureExclusionRules
+    let textRulePreparationQueue: DispatchQueue
+    var textRulePreparationToken: MacClippyTextRulePreparationToken?
     var capturePaused = false
     var ignoreNextCopyCount = 0
+    var restartIgnoreNextCopyDisposition = false
     var pollingSuspended = false
+    package var automaticPollingEnabled = true
     let writeSentinel: MacClippyPasteboardWriteSentinel?
     var pollInterval: TimeInterval
     var pollActivity: MacClippyPasteboardPollActivity = .foreground
@@ -301,6 +301,15 @@ public final class MacClippyPasteboardObserver: @unchecked Sendable {
     var lifecycleStarted = false
     var timer: DispatchSourceTimer?
     var projectionHandler: ProjectionHandler?
+    var admissionHandler: AdmissionHandler?
+    var admittedProjectionHandler: AdmittedProjectionHandler?
+    var recoveryReadRequested = false
+    static let maximumRecoveryReadWaiters = 32
+    var recoveryReadCompletions: [(Int?) -> Void] = []
+    var recoverySuppressedChangeCount: Int?
+    static let maximumReadFailureAttempts = 3
+    var failedReadChangeCount: Int?
+    var failedReadAttempts = 0
     var lastChangeCount: Int?
     var lastObservedChangeAt: Date?
     let secondsSinceLastUserInput: () -> TimeInterval
@@ -321,6 +330,10 @@ public final class MacClippyPasteboardObserver: @unchecked Sendable {
             label: MacClippyPasteboardObserver.productionPollQueueLabel,
             qos: .userInitiated
         ),
+        textRulePreparationQueue: DispatchQueue = DispatchQueue(
+            label: "com.macallyouneed.macclippy.capture.text-rules.prepare",
+            qos: .utility
+        ),
         retryState: MacClippyPasteboardReadRetryState = MacClippyPasteboardReadRetryState(),
         diagnosticsRecorder: MacClippyDiagnosticsRecorder = .shared,
         secondsSinceLastUserInput: @escaping () -> TimeInterval = {
@@ -333,15 +346,25 @@ public final class MacClippyPasteboardObserver: @unchecked Sendable {
         self.writeSentinel = writeSentinel
         self.pollInterval = max(0.01, pollInterval)
         self.queue = queue
+        self.textRulePreparationQueue = textRulePreparationQueue
         self.retryState = retryState
         self.diagnosticsRecorder = diagnosticsRecorder
         self.secondsSinceLastUserInput = secondsSinceLastUserInput
         self.now = now
         queue.setSpecific(key: lifecycleKey, value: ())
+        enqueueOnLifecycleQueue { [weak self] in
+            self?.prepareTextExclusionsOnLifecycleQueue()
+        }
     }
 
     deinit {
-        stop()
+        textRulePreparationToken?.cancel()
+        timer?.setEventHandler {}
+        timer?.cancel()
+        retryState.clearAll()
+        let completions = recoveryReadCompletions
+        recoveryReadCompletions.removeAll()
+        completions.forEach { $0(nil) }
     }
 }
 

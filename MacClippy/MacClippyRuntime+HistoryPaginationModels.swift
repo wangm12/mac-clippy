@@ -3,10 +3,39 @@ import Foundation
 import MacClippyCore
 import MacClippyPlatform
 
+final class MacClippyHistorySearchScope: Equatable, Sendable {
+    let ownerID: UUID
+    let query: MacClippySearchGrammar.Query
+    let clipboardRevision: Int64
+    let recordScope: MacClippySearchRecordScope
+
+    init(ownerID: UUID, query: MacClippySearchGrammar.Query, clipboardRevision: Int64, recordIDs: [RecordID]) {
+        self.ownerID = ownerID
+        self.query = query
+        self.clipboardRevision = clipboardRevision
+        recordScope = MacClippySearchRecordScope(recordIDs: recordIDs)
+    }
+
+    static func == (lhs: MacClippyHistorySearchScope, rhs: MacClippyHistorySearchScope) -> Bool {
+        lhs === rhs
+    }
+}
+
 struct MacClippySearchPageCursor: Equatable, Sendable {
     let indexRevision: Int64
     let lastRank: Double?
     let lastRowID: Int64?
+    let structuredScope: MacClippyHistorySearchScope?
+
+    init(
+        indexRevision: Int64, lastRank: Double?, lastRowID: Int64?,
+        structuredScope: MacClippyHistorySearchScope? = nil
+    ) {
+        self.indexRevision = indexRevision
+        self.lastRank = lastRank
+        self.lastRowID = lastRowID
+        self.structuredScope = structuredScope
+    }
 
     var searchCursor: MacClippySearchCursor? {
         guard let lastRank, let lastRowID else { return nil }

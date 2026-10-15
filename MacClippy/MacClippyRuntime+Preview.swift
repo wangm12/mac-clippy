@@ -27,21 +27,26 @@ extension MacClippyRuntime {
     }
 
     func preview(id: RecordID) throws -> MacClippyRuntimePreviewPayload {
-        let source = try withStoreLock { () -> PreviewSource in
+        let (source, blobLease) = try withStoreLock { () throws -> (PreviewSource, MacClippyBlobLease?) in
             switch try clipboardStore.body(for: id) {
             case let .text(value):
-                return .text(value)
+                return (.text(value), nil)
             case let .html(value):
-                return .html(value)
+                return (.html(value), nil)
             case let .rtf(data):
-                return .rtf(data)
+                return (.rtf(data), nil)
             case let .image(blobID, _, _), let .encryptedImage(blobID, _, _):
-                return .imageBlob(blobID)
+                let lease = try blobStore.acquireReadLease(for: [blobID])
+                return (.imageBlob(blobID), lease)
             case let .files(urls):
-                return .files(urls)
+                return (.files(urls), nil)
             }
         }
+        defer { blobLease?.release() }
         if case let .imageBlob(blobID) = source {
+            #if DEBUG
+                afterImageBlobLeaseAcquiredForTesting?(blobID)
+            #endif
             return try previewPayload(for: .image(try readImageBlob(id: blobID, maxBytes: Self.previewImageReadLimit)))
         }
         return try previewPayload(for: source)

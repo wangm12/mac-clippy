@@ -8,25 +8,29 @@ import SwiftUI
 import os.signpost
 
 extension MacClippyDockController: MacClippySystemQuickLookHosting {
-    func showPreview() {
+    func showPreview(for requestedTarget: MacClippyDockPreviewTarget? = nil) {
+        let explicitMetadata = requestedTarget.map { previewMetadata(for: $0) }
         if interactionMode == .details {
             guard hideDetails() else { return }
         }
         guard let dockPanel = panel, dockPanel.isVisible else {
             return
         }
-        model.ensureFocusedSelection()
-        guard let target = model.focusedPreviewTarget else {
+        if requestedTarget == nil { model.ensureFocusedSelection() }
+        guard let target = requestedTarget ?? model.focusedPreviewTarget else {
             if model.isLoading {
                 retryPreviewWhenReady(attempt: 0)
             }
             return
         }
         cancelPreviewRetry()
+        previewMetadataSnapshot = explicitMetadata ?? previewMetadata(for: target)
+        previewTarget = target
 
         previewRequestID &+= 1
         dockPanel.interceptsPickerKeys = true
         interactionMode = .preview
+        model.resetSearchFocus()
         model.isPreviewVisible = true
         presentPreview(for: target, requestID: previewRequestID, isOpening: true)
     }
@@ -75,9 +79,9 @@ extension MacClippyDockController: MacClippySystemQuickLookHosting {
         previewRetryTask = nil
     }
 
-    func refreshPreview() {
+    func refreshPreview(for requestedTarget: MacClippyDockPreviewTarget? = nil) {
         guard interactionMode == .preview,
-              let target = model.focusedPreviewTarget else { return }
+              let target = requestedTarget ?? model.focusedPreviewTarget else { return }
         previewRequestID &+= 1
         presentPreview(for: target, requestID: previewRequestID, isOpening: false)
     }
@@ -87,9 +91,11 @@ extension MacClippyDockController: MacClippySystemQuickLookHosting {
         requestID: UInt,
         isOpening: Bool
     ) {
+        if previewTarget != target { previewMetadataSnapshot = previewMetadata(for: target) }
+        previewTarget = target
         let transition = MacClippyPreviewSurfacePolicy.transition(isOpening: isOpening)
-        if case .item = target,
-           let item = model.focusedItem,
+        if case let .item(id) = target,
+           let item = model.visibleItems.first(where: { $0.id == id }),
            MacClippySystemQuickLookPolicy.prefersSystemQuickLook(
                contentKind: item.contentKind,
                fileURLs: item.fileURLs
@@ -191,7 +197,7 @@ extension MacClippyDockController: MacClippySystemQuickLookHosting {
             guard
                   self.previewRequestID == requestID,
                   self.interactionMode == .preview,
-                  self.model.focusedPreviewTarget == target,
+                  self.previewTarget == target,
                   let hosting = self.previewHostingView else { return }
             switch result {
             case let .success(payload):
@@ -279,108 +285,6 @@ extension MacClippyDockController: MacClippySystemQuickLookHosting {
         routeKeyEvent(event) == nil
     }
 
-    // The single helper that moves model focus and refreshes the preview. Both
-    // the keyboard arrows and the preview header's prev/next chevrons route
-    // through here so the focused card highlight and the preview content stay
-    // in sync. Wraparound is preserved by model.moveFocus(by:).
-
-    func moveFocusedPreview(direction: MacClippyDockSelectionDirection) {
-        model.moveFocus(direction)
-        if interactionMode == .details {
-            refreshDetails()
-        } else {
-            refreshPreview()
-        }
-    }
-
-    func refreshDetails() {
-        guard interactionMode == .details,
-              let target = model.focusedItem else { return }
-        let targetID = target.id
-        detailsRequestID &+= 1
-        let requestID = detailsRequestID
-        details = nil
-        detailsEditing = .none
-        setDetailsRootView(AnyView(MacClippyDetailsLoadingView()))
-        model.loadDetails(for: targetID) { [weak self] result in
-            guard let self,
-                  self.detailsRequestID == requestID,
-                  self.interactionMode == .details,
-                  self.model.focusedItem?.id == targetID else { return }
-            switch result {
-            case let .success(details):
-                self.details = details
-                self.detailsEditing = .none
-                self.setDetailsRootView(AnyView(self.detailsView(details: details, editing: .none)))
-            case .failure:
-                self.details = nil
-                self.detailsEditing = .none
-                self.setDetailsRootView(AnyView(MacClippyDetailsErrorView(
-                    message: MacClippyUserFacingError.itemLoad,
-                    onRetry: { [weak self] in self?.refreshDetails() },
-                    onClose: { [weak self] in self?.hideDetails() }
-                )))
-            }
-        }
-    }
-
-    // Builds the preview SwiftUI view for a content case, wiring the prev/next
-    // navigation callback and the metadata (source icon/name/time/char count)
-    // from the focused item. Centralized so the show, refresh, and error paths
-    // share the same callback wiring and metadata.
-
-    func previewView(content: MacClippyDockPreviewContent) -> MacClippyDockPreviewView {
-        let meta = previewMetadata()
-        return MacClippyDockPreviewView(
-            content: content,
-            metadata: meta,
-            reduceMotion: shouldReduceMotion,
-            onNavigate: { [weak self] direction in
-                self?.moveFocusedPreview(direction: direction == .previous ? .left : .right)
-            },
-            onCopy: { [weak self] in
-                self?.model.copyFocused()
-            },
-            recognizeOCRLayout: model.runtime.recognizeOCRLayout,
-            onCopyText: { [weak self] text in
-                self?.copyPreviewText(text)
-            },
-            onDismiss: { [weak self] in
-                self?.hidePreview()
-            },
-            highlightTerms: model.highlightTerms
-        )
-    }
-
-    // Resolve QuickLook-style metadata from the focused item: source app
-    // presentation, relative timestamp, and character count of the preview.
-
-    func previewMetadata() -> MacClippyDockPreviewMetadata {
-        guard let item = model.focusedItem else { return .unknown }
-        let source = MacClippySourceAppResolver.presentation(for: item.meta.sourceAppBundleID)
-        let time = MacClippyDockTimestampPolicy.relativeLabel(for: item.meta.modified)
-        let chars = item.preview.count
-        return MacClippyDockPreviewMetadata(
-            sourceName: source.displayName,
-            sourceIcon: source.icon,
-            sourceAccent: source.accent,
-            relativeTime: time,
-            characterCount: chars,
-            ocrText: item.meta.ocrText
-        )
-    }
-
-    func copyPreviewText(_ text: String) {
-        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty else { return }
-        do {
-            try model.runtime.pasteInjector.prepareTextForHistory(normalized)
-            showCopyToast(title: "Text copied")
-        } catch {
-            model.setActionError(MacClippyUserFacingError.message(for: error))
-        }
-    }
-
     func hidePreview() {
         cancelPreviewRetry()
         previewRequestID &+= 1
@@ -432,32 +336,6 @@ extension MacClippyDockController: MacClippySystemQuickLookHosting {
                 Task { @MainActor in finish() }
             })
         }
-    }
-
-    private func finishPreviewPerformance(signpostID: OSSignpostID?) {
-        guard let signpostID, previewPerformanceSignpostID == signpostID else { return }
-        MacClippyPerformance.end("preview_open", id: signpostID)
-        previewPerformanceSignpostID = nil
-    }
-
-    func dismissPreviewImmediately() {
-        cancelPreviewRetry()
-        previewRequestID &+= 1
-        previewAnimationGeneration &+= 1
-        previewIsClosing = false
-        closeSystemQuickLook(animated: false)
-        interactionMode = .picker
-        model.isPreviewVisible = false
-        previewPanel?.contentView?.layer?.removeAllAnimations()
-        previewPanel?.orderOut(nil)
-        previewPanel?.close()
-        previewPanel = nil
-        previewHostingView = nil
-    }
-
-    func resetPreviewPanelState(_ preview: NSWindow) {
-        preview.contentView?.layer?.removeAllAnimations()
-        preview.alphaValue = 1
     }
 
     func frameForPreview(above dockFrame: NSRect, on screen: NSScreen) -> NSRect? {

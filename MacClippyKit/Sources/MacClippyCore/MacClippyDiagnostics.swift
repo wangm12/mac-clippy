@@ -16,6 +16,7 @@ public enum MacClippyLogCategory: String, Codable, Sendable, CaseIterable {
 public enum MacClippyErrorCode: String, Codable, Sendable, CaseIterable {
     case startupFailed
     case capturePersistFailed
+    case captureQueueOverloaded
     case captureInputTooLarge
     case ftsIndexFailed
     case ftsRepairFailed
@@ -35,6 +36,7 @@ public enum MacClippyErrorCode: String, Codable, Sendable, CaseIterable {
     case recoveryFailed
     case launchAtLoginUpdateFailed
     case missedChangeCounts
+    case pasteboardReadFailed
     case displayConfigurationChanged
     case dockPresented
     case debugLoginItemRefused

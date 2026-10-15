@@ -50,6 +50,8 @@ extension MacClippyDockModel {
             completion?(true)
         } onFailure: {
             completion?(false)
+        } onStale: {
+            completion?(false)
         }
     }
 
@@ -67,6 +69,7 @@ extension MacClippyDockModel {
     }
 
     func unpinSelected() {
+        guard selectionIsReady else { return }
         guard case let .pinboard(boardID) = selectedTab, hasAnySelectedRecords else { return }
         let orderedIDs = orderedSelectedRecordIDs
         guard !orderedIDs.isEmpty else { return }
@@ -88,20 +91,31 @@ extension MacClippyDockModel {
     func createPinboard(
         name: String,
         color: String,
+        modalToken: UInt,
         onComplete: (@MainActor @Sendable (Bool) -> Void)? = nil
     ) {
+        guard modal == .createCategory(token: modalToken), !isCreatingPinboard else { return }
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedName.isEmpty else { return }
+        guard !trimmedName.isEmpty else {
+            onComplete?(false)
+            return
+        }
         let runtime = runtime
         let session = sessionGeneration
+        pinboardCreation = (session: session, modalToken: modalToken)
         workQueue.async { [weak self, runtime] in
             let result = Result { try runtime.createPinboard(name: trimmedName, color: color) }
             MacClippyMainHop.async { [weak self] in
-                guard let self, self.sessionGeneration == session else { return }
+                guard let self, self.pinboardCreation?.session == session,
+                      self.pinboardCreation?.modalToken == modalToken else { return }
+                self.pinboardCreation = nil
+                guard self.sessionGeneration == session,
+                      self.modal == .createCategory(token: modalToken) else { return }
                 switch result {
                 case let .success(board):
                     self.selectTab(.pinboard(board.id))
                     self.reload()
+                    self.dismissModal()
                     onComplete?(true)
                 case .failure:
                     self.setActionError(MacClippyUserFacingError.genericAction)

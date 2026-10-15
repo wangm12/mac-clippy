@@ -26,6 +26,8 @@ enum MacClippyHotKeyNotificationUserInfo {
 }
 
 struct MacClippySettingsView: View {
+    let defaults: UserDefaults
+
     @AppStorage(MacClippyRetentionPreferences.maxAgeDaysKey)
     var maxAgeDays = MacClippyRetentionPreferences.defaultMaxAgeDays
     @AppStorage(MacClippyRetentionPreferences.excludeConcealedKey)
@@ -57,7 +59,7 @@ struct MacClippySettingsView: View {
     @State var inputMonitoringTrusted = CGPreflightListenEventAccess()
     @State var permissionSettingsError: String?
     @State var launchAtLoginError: String?
-    @State var hotKeyDescriptor = MacClippyGlobalHotKeyDescriptor.load(from: .standard)
+    @State var hotKeyDescriptor: MacClippyGlobalHotKeyDescriptor
     @State var hotKeyError: String?
     @State var storageHealth: [String: MacClippyDatabaseHealthReport] = [:]
     @State var storageUsage: MacClippyStorageUsage?
@@ -80,6 +82,11 @@ struct MacClippySettingsView: View {
     @State var selectedPage: MacClippySettingsPage? = .general
     @Environment(\.accessibilityReduceMotion) var accessibilityReduceMotion
     @Environment(\.macClippyShouldRegisterSettingsWindow) private var shouldRegisterSettingsWindow
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        _hotKeyDescriptor = State(initialValue: .load(from: defaults))
+    }
 
     var reduceMotion: Bool {
         MacClippyMotion.shouldReduceMotion(swiftUI: accessibilityReduceMotion)
@@ -129,8 +136,12 @@ struct MacClippySettingsView: View {
         .onAppear {
             maxAgeDays = MacClippyHistoryCapacity(maxAgeDays: maxAgeDays).maxAgeDays
             refreshPermissionStatus()
+#if MACCLIPPY_E2E
+            launchAtLogin = defaults.bool(forKey: MacClippyRetentionPreferences.launchAtLoginKey)
+#else
             launchAtLogin = SMAppService.mainApp.status == .enabled
-            hotKeyError = UserDefaults.standard.string(forKey: "com.macallyouneed.macclippy.hotKey.registrationError")
+#endif
+            hotKeyError = defaults.string(forKey: "com.macallyouneed.macclippy.hotKey.registrationError")
             refreshStorageHealth()
             refreshStorageUsage()
         }
@@ -143,14 +154,26 @@ struct MacClippySettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshPermissionStatus()
         }
+        .onChange(of: selectedPage) { _, page in
+            if page == .advanced {
+                refreshStorageHealth()
+                refreshStorageUsage()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
+            guard selectedPage == .advanced, let window = notification.object as? NSWindow,
+                  window === MacClippySettingsWindowCoordinator.shared.lastBroughtToFrontWindow else { return }
+            refreshStorageHealth()
+            refreshStorageUsage()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .macClippyHotKeyUpdateFailed)) { notification in
             hotKeyError = notification.userInfo?[NSLocalizedDescriptionKey] as? String
             hotKeyDescriptor = (notification.userInfo?[MacClippyHotKeyNotificationUserInfo.descriptor] as? MacClippyGlobalHotKeyDescriptor)
-                ?? MacClippyGlobalHotKeyDescriptor.load(from: .standard)
+                ?? MacClippyGlobalHotKeyDescriptor.load(from: defaults)
         }
         .onReceive(NotificationCenter.default.publisher(for: .macClippyHotKeyUpdateSucceeded)) { _ in
             hotKeyError = nil
-            UserDefaults.standard.removeObject(forKey: "com.macallyouneed.macclippy.hotKey.registrationError")
+            defaults.removeObject(forKey: "com.macallyouneed.macclippy.hotKey.registrationError")
         }
         .confirmationDialog(
             "Replace local data with a backup?",

@@ -2,8 +2,14 @@ import Foundation
 
 private struct MacClippyExpectedImageFootprint {
     let modified: Date
-    let blobID: String
-    let byteCount: Int
+    let byteCounts: [String: Int]
+
+    var blobIDs: Set<String> { Set(byteCounts.keys) }
+}
+
+private struct MacClippyImageDeletionBatch {
+    let ids: [RecordID]
+    let expectedFootprints: [RecordID: MacClippyExpectedImageFootprint]
 }
 
 private struct MacClippyImageRetentionContext {
@@ -55,20 +61,26 @@ extension MacClippyRetentionPolicy {
     }
 
     private static func imageStorageBytes(_ context: MacClippyImageRetentionContext) throws -> Int {
+        // Authenticate once before trusting the normalized image index. Subsequent
+        // pages assert that concurrent writers have not invalidated it.
+        do {
+            try context.store.authenticateOwnedBlobReferenceIndex(shouldContinue: context.shouldContinue)
+        } catch is CancellationError {
+            return 0
+        }
+
         var total = 0
-        // Only image records can carry a legacy primary image blob. Avoid
-        // decrypting every text/file envelope during the image-cap sweep.
-        try scanMetadataPagesOldest(
-            store: context.store,
-            contentKind: .image,
-            shouldContinue: context.shouldContinue
-        ) { page in
-            for meta in page where !context.protectedIDs.contains(meta.id) {
-                let body = try context.store.body(for: meta.id)
-                guard let blobID = body.imageBlobID else { continue }
-                total += try context.blobs.byteSizeChecked(id: blobID)
+        var cursor: String?
+        let pageSize = MacClippyBlobReferenceIndexPolicy.pageSize
+        while context.shouldContinue() {
+            let page = try context.store.verifiedImageBlobIDs(after: cursor, limit: pageSize)
+            guard !page.isEmpty else { return total }
+            for blobID in page {
+                guard context.shouldContinue() else { return total }
+                add(try context.blobs.byteSizeChecked(id: blobID), to: &total)
             }
-            return false
+            guard page.count == pageSize, let last = page.last else { return total }
+            cursor = last
         }
         return total
     }
@@ -85,7 +97,9 @@ extension MacClippyRetentionPolicy {
         ) { page in
             let candidates = page.filter { !context.protectedIDs.contains($0.id) }
             var candidateIndex = 0
-            while remaining > context.maxImageBytes, candidateIndex < candidates.count {
+            while remaining > context.maxImageBytes,
+                  candidateIndex < candidates.count,
+                  context.shouldContinue() {
                 guard let batch = try makeImageDeletionBatch(
                     candidates: candidates,
                     candidateIndex: &candidateIndex,
@@ -94,26 +108,11 @@ extension MacClippyRetentionPolicy {
                     maxImageBytes: context.maxImageBytes
                 ) else { break }
 
-                let deletedIDs = try deleteRecords(
-                    batch.ids,
-                    store: context.store,
-                    blobs: context.blobs,
-                    search: context.search,
-                    protectedIDsProvider: context.protectedIDsProvider,
-                    shouldContinue: context.shouldContinue,
-                    withCommitFence: context.withCommitFence,
-                    revalidateIDs: { ids in
-                        try revalidatedImageIDs(
-                            ids,
-                            expected: batch.expectedFootprints,
-                            store: context.store,
-                            blobs: context.blobs
-                        )
-                    }
+                let deletedIDs = try commitImageDeletionBatch(
+                    batch,
+                    context: context,
+                    remaining: &remaining
                 )
-                for id in deletedIDs {
-                    remaining -= batch.expectedFootprints[id]?.byteCount ?? 0
-                }
                 madeProgress = madeProgress || !deletedIDs.isEmpty
             }
             return remaining <= context.maxImageBytes
@@ -126,26 +125,84 @@ extension MacClippyRetentionPolicy {
         context: MacClippyImageRetentionContext,
         remaining: Int,
         maxImageBytes: Int
-    ) throws -> (ids: [RecordID], expectedFootprints: [RecordID: MacClippyExpectedImageFootprint])? {
+    ) throws -> MacClippyImageDeletionBatch? {
         var ids: [RecordID] = []
         var expectedFootprints: [RecordID: MacClippyExpectedImageFootprint] = [:]
-        var plannedRemaining = remaining
-        while candidateIndex < candidates.count, plannedRemaining > maxImageBytes {
+        var candidateByteCounts: [String: Int] = [:]
+        var plannedReclaimedBytes = 0
+
+        while candidateIndex < candidates.count,
+              remaining - min(remaining, plannedReclaimedBytes) > maxImageBytes,
+              context.shouldContinue() {
             let meta = candidates[candidateIndex]
             candidateIndex += 1
-            let body = try context.store.body(for: meta.id)
-            guard let blobID = body.imageBlobID else { continue }
-            let byteCount = try context.blobs.byteSizeChecked(id: blobID)
+
+            let footprint = try context.store.storageFootprint(for: meta.id)
+            guard !footprint.blobIDs.isEmpty else { continue }
+            var byteCounts: [String: Int] = [:]
+            for blobID in footprint.blobIDs {
+                byteCounts[blobID] = try context.blobs.byteSizeChecked(id: blobID)
+                if let existing = candidateByteCounts[blobID], existing != byteCounts[blobID] {
+                    throw MacClippyStoreError.invalidStoredRecord
+                }
+                candidateByteCounts[blobID] = byteCounts[blobID]
+            }
             ids.append(meta.id)
             expectedFootprints[meta.id] = MacClippyExpectedImageFootprint(
                 modified: meta.modified,
-                blobID: blobID,
-                byteCount: byteCount
+                byteCounts: byteCounts
             )
-            plannedRemaining -= byteCount
+
+            let potentiallyReclaimed = try context.store.unreferencedBlobIDsWithoutBackfill(
+                Set(candidateByteCounts.keys),
+                excluding: Set(ids),
+                shouldContinue: context.shouldContinue
+            )
+            plannedReclaimedBytes = potentiallyReclaimed.reduce(into: 0) { total, blobID in
+                if let byteCount = candidateByteCounts[blobID] { add(byteCount, to: &total) }
+            }
         }
         guard !ids.isEmpty else { return nil }
-        return (ids, expectedFootprints)
+        return MacClippyImageDeletionBatch(ids: ids, expectedFootprints: expectedFootprints)
+    }
+
+    private static func commitImageDeletionBatch(
+        _ batch: MacClippyImageDeletionBatch,
+        context: MacClippyImageRetentionContext,
+        remaining: inout Int
+    ) throws -> [RecordID] {
+        let deletion = try deleteRecords(
+            batch.ids,
+            store: context.store,
+            blobs: context.blobs,
+            search: context.search,
+            protectedIDsProvider: context.protectedIDsProvider,
+            shouldContinue: context.shouldContinue,
+            withCommitFence: context.withCommitFence,
+            revalidateIDs: { ids in
+                try revalidatedImageIDs(
+                    ids,
+                    expected: batch.expectedFootprints,
+                    store: context.store,
+                    blobs: context.blobs
+                )
+            }
+        )
+        let deletedIDs = deletion.recordIDs
+        guard !deletedIDs.isEmpty else { return deletedIDs }
+
+        let deletedFootprints = deletedIDs.compactMap { batch.expectedFootprints[$0] }
+        let candidateBlobIDs = deletedFootprints.reduce(into: Set<String>()) {
+            $0.formUnion($1.blobIDs)
+        }
+        let expectedByteCounts = deletedFootprints.reduce(into: [String: Int]()) { result, footprint in
+            result.merge(footprint.byteCounts) { existing, _ in existing }
+        }
+        for blobID in deletion.reclaimedBlobIDs.intersection(candidateBlobIDs) {
+            guard let byteCount = expectedByteCounts[blobID] else { continue }
+            remaining = max(0, remaining - byteCount)
+        }
+        return deletedIDs
     }
 
     private static func revalidatedImageIDs(
@@ -159,15 +216,22 @@ extension MacClippyRetentionPolicy {
         for meta in currentMetas {
             guard let expectedFootprint = expected[meta.id],
                   expectedFootprint.modified == meta.modified else { continue }
-            let body = try store.body(for: meta.id)
-            guard body.imageBlobID == expectedFootprint.blobID,
-                  let currentBlobID = body.imageBlobID,
-                  try blobs.byteSizeChecked(id: currentBlobID) == expectedFootprint.byteCount
-            else {
-                continue
+            let currentFootprint = try store.storageFootprint(for: meta.id)
+            guard currentFootprint.blobIDs == expectedFootprint.blobIDs else { continue }
+            var sizesMatch = true
+            for (blobID, expectedByteCount) in expectedFootprint.byteCounts {
+                guard try blobs.byteSizeChecked(id: blobID) == expectedByteCount else {
+                    sizesMatch = false
+                    break
+                }
             }
-            validIDs.append(meta.id)
+            if sizesMatch { validIDs.append(meta.id) }
         }
         return validIDs
+    }
+
+    private static func add(_ byteCount: Int, to total: inout Int) {
+        let (sum, overflow) = total.addingReportingOverflow(byteCount)
+        total = overflow ? Int.max : sum
     }
 }

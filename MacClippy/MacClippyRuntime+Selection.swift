@@ -3,8 +3,26 @@ import Foundation
 import MacClippyCore
 import MacClippyPlatform
 
+private struct MacClippySelectionSearchRevision {
+    let index: Int64
+    let clipboard: Int64
+}
+
 extension MacClippyRuntime {
+    func canMergeRecords(ids: [RecordID], shouldCancel: () -> Bool) throws -> Bool {
+        guard !ids.isEmpty else { return false }
+        for id in ids {
+            guard !shouldCancel() else { throw CancellationError() }
+            let record = try withStoreLock { try clipboardStore.body(for: id) }
+            switch record {
+            case .text, .html, .rtf: continue
+            case .image, .encryptedImage, .files: return false
+            }
+        }
+        return true
+    }
     private static let selectionRecordIDPageSize = 256
+    private static let selectionSearchAttempts = 4
 
     /// Resolves the complete ordered History selection without decrypting or
     /// materializing card bodies. Cmd+A uses this instead of loading every
@@ -13,23 +31,42 @@ extension MacClippyRuntime {
         query: String,
         shouldCancel: () -> Bool = { false }
     ) throws -> [RecordID] {
-        try historyRecordIDsLocked(query: query, shouldCancel: shouldCancel)
+        for _ in 0..<Self.selectionSearchAttempts {
+            guard !shouldCancel() else { return [] }
+            let revision = try withStoreLock {
+                MacClippySelectionSearchRevision(
+                    index: try searchStore.indexRevision(), clipboard: try clipboardStore.recordsRevision()
+                )
+            }
+            do {
+                let ids = try historyRecordIDsLocked(query: query, revision: revision, shouldCancel: shouldCancel)
+                guard !shouldCancel() else { return [] }
+                try withStoreLock { try ensureSelectionSearchRevisionLocked(revision) }
+                var seen = Set<RecordID>()
+                return ids.filter { seen.insert($0).inserted }
+            } catch MacClippyHistoryPageError.searchIndexChanged {
+                guard !shouldCancel() else { return [] }
+            }
+        }
+        throw MacClippyHistoryPageError.searchIndexChanged
     }
 
     private func historyRecordIDsLocked(
         query: String,
+        revision: MacClippySelectionSearchRevision,
         shouldCancel: () -> Bool
     ) throws -> [RecordID] {
         guard !shouldCancel() else { return [] }
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedQuery.isEmpty {
-            return try historyRecordIDsForEmptyQuery(shouldCancel: shouldCancel)
+            return try historyRecordIDsForEmptyQuery(revision: revision, shouldCancel: shouldCancel)
         }
 
         let parsed = MacClippySearchGrammar.parse(trimmedQuery)
         guard parsed.hasStructuredClauses else {
             return try historyRecordIDsForBareQuery(
                 parsed.bareTerms,
+                revision: revision,
                 shouldCancel: shouldCancel
             )
         }
@@ -50,16 +87,19 @@ extension MacClippyRuntime {
         if parsed.isStructuredOnly {
             return try historyRecordIDsForStructuredOnlyQuery(
                 context,
+                revision: revision,
                 shouldCancel: shouldCancel
             )
         }
         return try historyRecordIDsForBareAndStructuredQuery(
             context,
+            revision: revision,
             shouldCancel: shouldCancel
         )
     }
 
     private func historyRecordIDsForEmptyQuery(
+        revision: MacClippySelectionSearchRevision,
         shouldCancel: () -> Bool
     ) throws -> [RecordID] {
         var cursor: MacClippyClipboardHistoryCursor?
@@ -67,7 +107,8 @@ extension MacClippyRuntime {
         while true {
             guard !shouldCancel() else { return [] }
             let metas = try withStoreLock {
-                try clipboardStore.list(
+                try ensureSelectionSearchRevisionLocked(revision)
+                return try clipboardStore.list(
                     limit: Self.selectionRecordIDPageSize,
                     before: cursor
                 )
@@ -82,6 +123,7 @@ extension MacClippyRuntime {
 
     private func historyRecordIDsForBareQuery(
         _ terms: [String],
+        revision: MacClippySelectionSearchRevision,
         shouldCancel: () -> Bool
     ) throws -> [RecordID] {
         var cursor: MacClippySearchCursor?
@@ -89,6 +131,7 @@ extension MacClippyRuntime {
         while true {
             guard !shouldCancel() else { return [] }
             let (hits, metas) = try withStoreLock { () -> ([SearchHit], [ClipboardItemMeta]) in
+                try ensureSelectionSearchRevisionLocked(revision)
                 let hits = try searchStore.search(
                     terms: terms,
                     limit: Self.selectionRecordIDPageSize,
@@ -99,6 +142,9 @@ extension MacClippyRuntime {
             }
             guard !hits.isEmpty else { return MacClippyHistoryRecencyOrder.sortedIDs(collected) }
             collected.append(contentsOf: metas)
+            #if DEBUG
+            afterSelectionSearchBatchForTesting?(collected.count)
+            #endif
             guard hits.count == Self.selectionRecordIDPageSize, let last = hits.last else {
                 return MacClippyHistoryRecencyOrder.sortedIDs(collected)
             }
@@ -108,6 +154,7 @@ extension MacClippyRuntime {
 
     private func historyRecordIDsForStructuredOnlyQuery(
         _ context: MacClippyHistoryStructuredPageContext,
+        revision: MacClippySelectionSearchRevision,
         shouldCancel: () -> Bool
     ) throws -> [RecordID] {
         var cursor: MacClippyClipboardHistoryCursor?
@@ -116,6 +163,7 @@ extension MacClippyRuntime {
         while true {
             guard !shouldCancel() else { return [] }
             let (metas, matching) = try withStoreLock { () -> ([ClipboardItemMeta], [ClipboardItemMeta]) in
+                try ensureSelectionSearchRevisionLocked(revision)
                 let metas = try clipboardStore.list(
                     limit: Self.selectionRecordIDPageSize,
                     filter: filter,
@@ -145,40 +193,57 @@ extension MacClippyRuntime {
 
     private func historyRecordIDsForBareAndStructuredQuery(
         _ context: MacClippyHistoryStructuredPageContext,
+        revision: MacClippySelectionSearchRevision,
         shouldCancel: () -> Bool
     ) throws -> [RecordID] {
         var cursor: MacClippySearchCursor?
         var collected: [ClipboardItemMeta] = []
+        let scope = try historySearchScope(context, reusing: nil, shouldCancel: shouldCancel)
         while true {
             guard !shouldCancel() else { return [] }
             let (hits, matching) = try withStoreLock { () -> ([SearchHit], [(SearchHit, ClipboardItemMeta)]) in
-                let hits = try searchStore.search(
-                    terms: context.query.bareTerms,
-                    limit: Self.selectionRecordIDPageSize,
-                    after: cursor
+                try ensureSelectionSearchRevisionLocked(revision)
+                try ensureHistorySearchScopeLocked(scope, query: context.query)
+                return try selectionStructuredSearchBatch(
+                    context, scope: scope, after: cursor, shouldCancel: shouldCancel
                 )
-                let metas = try clipboardStore.metas(for: hits.map(\.id))
-                let metasByID = Dictionary(uniqueKeysWithValues: metas.map { ($0.id, $0) })
-                let knownKinds = context.needsKind
-                    ? try clipboardStore.contentKinds(for: hits.map(\.id))
-                    : [:]
-                let matching = try matchingStructuredHits(
-                    hits,
-                    metasByID: metasByID,
-                    limit: hits.count,
-                    query: context.query,
-                    needsKind: context.needsKind,
-                    knownKinds: knownKinds,
-                    shouldCancel: shouldCancel
-                )
-                return (hits, matching)
             }
             guard !hits.isEmpty else { return MacClippyHistoryRecencyOrder.sortedIDs(collected) }
             collected.append(contentsOf: matching.map(\.1))
+            #if DEBUG
+            afterSelectionSearchBatchForTesting?(collected.count)
+            #endif
             guard hits.count == Self.selectionRecordIDPageSize, let last = hits.last else {
                 return MacClippyHistoryRecencyOrder.sortedIDs(collected)
             }
             cursor = MacClippySearchCursor(rank: last.rank, rowID: last.rowID)
+        }
+    }
+
+    private func selectionStructuredSearchBatch(
+        _ context: MacClippyHistoryStructuredPageContext,
+        scope: MacClippyHistorySearchScope,
+        after cursor: MacClippySearchCursor?,
+        shouldCancel: () -> Bool
+    ) throws -> ([SearchHit], [(SearchHit, ClipboardItemMeta)]) {
+        let hits = try searchStore.searchScoped(
+            terms: context.query.bareTerms, limit: Self.selectionRecordIDPageSize,
+            after: cursor, scope: scope.recordScope
+        )
+        let metas = try clipboardStore.metas(for: hits.map(\.id))
+        let knownKinds = context.needsKind ? try clipboardStore.contentKinds(for: hits.map(\.id)) : [:]
+        let matching = try matchingStructuredHits(
+            hits, metasByID: Dictionary(uniqueKeysWithValues: metas.map { ($0.id, $0) }),
+            limit: hits.count, query: context.query, needsKind: context.needsKind,
+            knownKinds: knownKinds, shouldCancel: shouldCancel
+        )
+        return (hits, matching)
+    }
+
+    private func ensureSelectionSearchRevisionLocked(_ revision: MacClippySelectionSearchRevision) throws {
+        guard try searchStore.indexRevision() == revision.index,
+              try clipboardStore.recordsRevision() == revision.clipboard else {
+            throw MacClippyHistoryPageError.searchIndexChanged
         }
     }
 

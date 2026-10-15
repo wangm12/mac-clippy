@@ -5,6 +5,18 @@ import Foundation
 import MacClippyCore
 import MacClippyPlatform
 
+private struct MacClippyRuntimeDetailsSnapshot {
+    let details: MacClippyItemDetails
+    let spilledBlobIDs: [Int: String]
+}
+
+private struct MacClippyRuntimeDetailsContent {
+    let textContent: String?
+    let textContentPreview: String?
+    let fileURLs: [URL]
+    let imageDimensions: CGSize?
+}
+
 extension MacClippyRuntime {
     private static let cardPreviewCharacterLimit = 2_000
     private static let detailsOCRCharacterLimit = 16_000
@@ -84,19 +96,9 @@ extension MacClippyRuntime {
         folder: String? = nil
     ) throws -> MacClippySnippetEntry {
         try withStoreLock {
-            let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !normalizedName.isEmpty else {
-                throw MacClippySnippetCreationError.invalidName
-            }
-
-            guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                throw MacClippySnippetCreationError.emptyBody
-            }
-
-            let normalizedTrigger = normalizedSnippetTrigger(trigger)
-            if let normalizedTrigger, try snippetStore.find(trigger: normalizedTrigger) != nil {
-                throw MacClippySnippetCreationError.duplicateTrigger
-            }
+            let input = try validatedSnippetInput(name: name, trigger: trigger, body: body)
+            let normalizedName = input.name
+            let normalizedTrigger = input.trigger
 
             let snippet = try snippetStore.create(
                 name: normalizedName,
@@ -117,7 +119,7 @@ extension MacClippyRuntime {
         return String(normalized.prefix(48))
     }
 
-    private func normalizedSnippetTrigger(_ trigger: String?) -> String? {
+    func normalizedSnippetTrigger(_ trigger: String?) -> String? {
         guard let trigger = trigger?.trimmingCharacters(in: .whitespacesAndNewlines),
               !trigger.isEmpty else { return nil }
         return trigger.hasPrefix(";") ? trigger : ";\(trigger)"
@@ -127,135 +129,159 @@ extension MacClippyRuntime {
     // from the general preview enum so card rendering does not construct or
     // retain text/file preview values on the image path.
     func imageData(id: RecordID) throws -> Data {
-        let blobID = try withStoreLock { () -> String in
+        let (blobID, blobLease) = try withStoreLock { () throws -> (String, MacClippyBlobLease) in
             switch try clipboardStore.body(for: id) {
             case let .image(blobID, _, _), let .encryptedImage(blobID, _, _):
-                return blobID
+                return (blobID, try blobStore.acquireReadLease(for: [blobID]))
             case .text, .html, .rtf, .files:
                 throw MacClippyStoreError.invalidStoredRecord
             }
         }
+        defer { blobLease.release() }
+        #if DEBUG
+            afterImageBlobLeaseAcquiredForTesting?(blobID)
+        #endif
         return try readImageBlob(id: blobID, maxBytes: 128 * 1_024 * 1_024)
     }
 
     func details(id: RecordID) throws -> MacClippyItemDetails {
-        let locked = try withStoreLock { () -> (details: MacClippyItemDetails, spilledBlobIDs: [Int: String]) in
-            guard let meta = try clipboardStore.metas(for: [id]).first else {
-                throw MacClippyStoreError.recordNotFound
-            }
-            let record = try clipboardStore.body(for: id)
-            var spilledBlobIDs: [Int: String] = [:]
-            let representations = try clipboardStore.representationMetadata(for: id).enumerated().map { index, representation in
-                let byteCount: Int
-                let isAvailable: Bool
-                switch representation.payloadState {
-                case .present:
-                    byteCount = representation.inlineByteCount
-                    isAvailable = true
-                case .spilled:
-                    guard let blobID = representation.blobID else {
-                        throw MacClippyStoreError.invalidStoredRecord
-                    }
-                    spilledBlobIDs[index] = blobID
-                    byteCount = 0
-                    isAvailable = false
-                case .unavailable:
-                    byteCount = 0
-                    isAvailable = false
-                case .oversized:
-                    byteCount = 0
-                    isAvailable = false
-                }
-                return MacClippyItemRepresentationDetails(
-                    uti: representation.uti,
-                    payloadState: representation.payloadState,
-                    byteCount: byteCount,
-                    isAvailable: isAvailable
-                )
-            }
-            let boardNames = try pinboardStore.list().compactMap { board in
-                board.itemIDs.contains(id) ? board.name : nil
-            }
-            let textContent: String?
-            let textContentPreview: String?
-            let fileURLs: [URL]
-            let imageDimensions: CGSize?
-            func boundedText(_ value: String) -> (editable: String?, preview: String) {
-                guard value.count <= MacClippyDockPreviewTextPolicy.maxRenderedCharacters else {
-                    return (nil, MacClippyDockPreviewTextPolicy.displayText(for: value))
-                }
-                return (value, value)
-            }
-            switch record {
-            case let .text(value):
-                let bounded = boundedText(value)
-                textContent = bounded.editable
-                textContentPreview = bounded.preview
-                fileURLs = []
-                imageDimensions = nil
-            case let .html(value):
-                let bounded = boundedText(value)
-                textContent = bounded.editable
-                textContentPreview = bounded.preview
-                fileURLs = []
-                imageDimensions = nil
-            case let .rtf(data):
-                let value = String(data: data, encoding: .utf8)
-                    ?? MacClippyClipboardText.plainText(from: .rtf(data))
-                    ?? ""
-                let bounded = boundedText(value)
-                textContent = bounded.editable
-                textContentPreview = bounded.preview
-                fileURLs = []
-                imageDimensions = nil
-            case let .files(urls):
-                textContent = nil
-                textContentPreview = nil
-                fileURLs = urls
-                imageDimensions = nil
-            case let .image(_, width, height), let .encryptedImage(_, width, height):
-                textContent = nil
-                textContentPreview = nil
-                fileURLs = []
-                imageDimensions = CGSize(width: width, height: height)
-            }
-            return (
-                MacClippyItemDetails(
-                    id: id,
-                    title: meta.customLabel ?? meta.preview,
-                    contentKind: record.contentKind,
-                    sourceAppBundleID: meta.sourceAppBundleID,
-                    created: meta.created,
-                    modified: meta.modified,
-                    frequency: meta.frequency,
-                    lastAccessed: meta.lastAccessed,
-                    customLabel: meta.customLabel,
-                    ocrText: meta.ocrText.map {
-                        Self.boundedDisplayText($0, limit: Self.detailsOCRCharacterLimit)
-                    },
-                    preview: meta.preview,
-                    textContent: textContent,
-                    textContentPreview: textContentPreview,
-                    fileURLs: fileURLs,
-                    imageDimensions: imageDimensions,
-                    pinboardNames: boardNames,
-                    representations: representations
-                ),
-                spilledBlobIDs
-            )
-        }
-        var representations = locked.details.representations
-        for (index, blobID) in locked.spilledBlobIDs {
+        let snapshot = try withStoreLock { try makeDetailsSnapshotLocked(id: id) }
+        var representations = snapshot.details.representations
+        for (index, blobID) in snapshot.spilledBlobIDs {
             let available = try blobStore.containsChecked(id: blobID)
             representations[index] = MacClippyItemRepresentationDetails(
+                itemIndex: representations[index].itemIndex,
                 uti: representations[index].uti,
                 payloadState: representations[index].payloadState,
                 byteCount: available ? (try blobStore.byteSizeChecked(id: blobID)) : 0,
                 isAvailable: available
             )
         }
-        let details = locked.details
-        return MacClippyItemDetails(
+        return Self.copyDetails(snapshot.details, representations: representations)
+    }
+
+    private func makeDetailsSnapshotLocked(id: RecordID) throws -> MacClippyRuntimeDetailsSnapshot {
+        guard let meta = try clipboardStore.metas(for: [id]).first else {
+            throw MacClippyStoreError.recordNotFound
+        }
+        let record = try clipboardStore.body(for: id)
+        let representationSnapshot = try detailsRepresentationsLocked(id: id)
+        let content = detailsContent(for: record)
+        let boardNames = try pinboardStore.list().compactMap { board in
+            board.itemIDs.contains(id) ? board.name : nil
+        }
+        let details = MacClippyItemDetails(
+            id: id,
+            title: meta.customLabel ?? meta.preview,
+            contentKind: record.contentKind,
+            sourceAppBundleID: meta.sourceAppBundleID,
+            created: meta.created,
+            modified: meta.modified,
+            frequency: meta.frequency,
+            lastAccessed: meta.lastAccessed,
+            customLabel: meta.customLabel,
+            ocrText: meta.ocrText.map {
+                Self.boundedDisplayText($0, limit: Self.detailsOCRCharacterLimit)
+            },
+            preview: meta.preview,
+            textContent: content.textContent,
+            textContentPreview: content.textContentPreview,
+            fileURLs: content.fileURLs,
+            imageDimensions: content.imageDimensions,
+            pinboardNames: boardNames,
+            representations: representationSnapshot.representations
+        )
+        return MacClippyRuntimeDetailsSnapshot(
+            details: details,
+            spilledBlobIDs: representationSnapshot.spilledBlobIDs
+        )
+    }
+
+    private func detailsRepresentationsLocked(
+        id: RecordID
+    ) throws -> (representations: [MacClippyItemRepresentationDetails], spilledBlobIDs: [Int: String]) {
+        var spilledBlobIDs: [Int: String] = [:]
+        let representations = try clipboardStore.representationMetadata(for: id)
+            .enumerated()
+            .map { index, representation in
+            let byteCount: Int
+            let isAvailable: Bool
+            switch representation.payloadState {
+            case .present:
+                byteCount = representation.inlineByteCount
+                isAvailable = true
+            case .spilled:
+                guard let blobID = representation.blobID else {
+                    throw MacClippyStoreError.invalidStoredRecord
+                }
+                spilledBlobIDs[index] = blobID
+                byteCount = 0
+                isAvailable = false
+            case .unavailable, .oversized:
+                byteCount = 0
+                isAvailable = false
+            }
+            return MacClippyItemRepresentationDetails(
+                itemIndex: representation.itemIndex,
+                uti: representation.uti,
+                payloadState: representation.payloadState,
+                byteCount: byteCount,
+                isAvailable: isAvailable
+            )
+        }
+        return (representations, spilledBlobIDs)
+    }
+
+    private func detailsContent(for record: MacClippyClipboardRecord) -> MacClippyRuntimeDetailsContent {
+        func boundedText(_ value: String) -> (editable: String?, preview: String) {
+            guard value.count <= MacClippyDockPreviewTextPolicy.maxRenderedCharacters else {
+                return (nil, MacClippyDockPreviewTextPolicy.displayText(for: value))
+            }
+            return (value, value)
+        }
+
+        switch record {
+        case let .text(value), let .html(value):
+            let bounded = boundedText(value)
+            return MacClippyRuntimeDetailsContent(
+                textContent: bounded.editable,
+                textContentPreview: bounded.preview,
+                fileURLs: [],
+                imageDimensions: nil
+            )
+        case let .rtf(data):
+            let value = String(data: data, encoding: .utf8)
+                ?? MacClippyClipboardText.plainText(from: .rtf(data))
+                ?? ""
+            let bounded = boundedText(value)
+            return MacClippyRuntimeDetailsContent(
+                textContent: bounded.editable,
+                textContentPreview: bounded.preview,
+                fileURLs: [],
+                imageDimensions: nil
+            )
+        case let .files(urls):
+            return MacClippyRuntimeDetailsContent(
+                textContent: nil,
+                textContentPreview: nil,
+                fileURLs: urls,
+                imageDimensions: nil
+            )
+        case let .image(_, width, height), let .encryptedImage(_, width, height):
+            return MacClippyRuntimeDetailsContent(
+                textContent: nil,
+                textContentPreview: nil,
+                fileURLs: [],
+                imageDimensions: CGSize(width: width, height: height)
+            )
+        }
+    }
+
+    private static func copyDetails(
+        _ details: MacClippyItemDetails,
+        representations: [MacClippyItemRepresentationDetails]
+    ) -> MacClippyItemDetails {
+        MacClippyItemDetails(
             id: details.id,
             title: details.title,
             contentKind: details.contentKind,
@@ -275,123 +301,4 @@ extension MacClippyRuntime {
             representations: representations
         )
     }
-
-    @discardableResult
-    func edit(id: RecordID, text: String) throws -> ClipboardItemMeta {
-        try withStoreLock {
-            guard let oldMeta = try clipboardStore.metas(for: [id]).first else {
-                throw MacClippyStoreError.recordNotFound
-            }
-            let oldRecord = try clipboardStore.body(for: id)
-            let editedRecord: ClipboardRecord
-            switch oldRecord {
-            case .text:
-                editedRecord = .text(text)
-            case .html:
-                editedRecord = .html(text)
-            case .rtf:
-                if text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{\\rtf") {
-                    editedRecord = .rtf(Data(text.utf8))
-                } else {
-                    let range = NSRange(location: 0, length: text.utf16.count)
-                    let data = try NSAttributedString(string: text).data(
-                        from: range,
-                        documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]
-                    )
-                    editedRecord = .rtf(data)
-                }
-            case .image, .encryptedImage, .files:
-                throw MacClippyStoreError.invalidStoredRecord
-            }
-            let oldBlobIDs = try clipboardStore.blobIDs(for: id)
-            let oldRepresentations = try clipboardStore.representations(for: id)
-            let updated = try clipboardStore.update(id: id, with: editedRecord)
-            do {
-                let indexText = Self.searchableIndexText(
-                    for: editedRecord,
-                    ocrText: updated.ocrText,
-                    label: updated.customLabel,
-                    representationUTIs: try clipboardStore.representationUTIs(for: id),
-                    sourceAppBundleID: updated.sourceAppBundleID
-                )
-                if indexText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    try searchStore.remove(kind: .clipboardItem, id: id)
-                } else {
-                    try searchStore.upsert(kind: .clipboardItem, id: id, text: indexText)
-                }
-
-                // An edited text/HTML/RTF record may replace an oversized
-                // representation Blob with an inline payload. Reclaim only
-                // the blobs that disappeared from this record and are no
-                // longer referenced elsewhere; FTS failure above restores the
-                // old envelope before this cleanup can run.
-                let newBlobIDs = try clipboardStore.blobIDs(for: id)
-                let obsoleteBlobIDs = oldBlobIDs.subtracting(newBlobIDs)
-                if !obsoleteBlobIDs.isEmpty {
-                    let unreferenced = try clipboardStore.unreferencedBlobIDs(obsoleteBlobIDs)
-                    for blobID in unreferenced {
-                        do {
-                            try blobStore.delete(id: blobID)
-                        } catch {
-                            storageDegradedReasons.insert("orphan-blob-cleanup-failed")
-                            MacClippyLog.record(
-                                category: .blob,
-                                code: .blobCleanupFailed,
-                                operation: "edit_obsolete_blob_cleanup",
-                                recoveryAction: "run_storage_reconciliation",
-                                impact: "edited_record_saved_but_blob_cleanup_incomplete"
-                            )
-                        }
-                    }
-                }
-            } catch {
-                // Restore both the clipboard row and its old FTS projection.
-                // Restoring only the envelope would leave history displaying
-                // the old text while search still returns the edited text,
-                // and would lose a spilled representation's blob reference.
-                var rollbackSucceeded = false
-                do {
-                    let restoredMeta = try clipboardStore.update(id: id, with: oldRecord, now: oldMeta.modified)
-                    try clipboardStore.replaceRepresentations(for: id, with: oldRepresentations)
-                    let restoredIndexText = Self.searchableIndexText(
-                        for: oldRecord,
-                        ocrText: restoredMeta.ocrText,
-                        label: restoredMeta.customLabel,
-                        representationUTIs: try clipboardStore.representationUTIs(for: id),
-                        sourceAppBundleID: restoredMeta.sourceAppBundleID
-                    )
-                    if restoredIndexText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        try searchStore.remove(kind: .clipboardItem, id: id)
-                    } else {
-                        try searchStore.upsert(kind: .clipboardItem, id: id, text: restoredIndexText)
-                    }
-                    rollbackSucceeded = true
-                } catch {
-                    storageDegradedReasons.insert("edit-rollback-failed")
-                    MacClippyLog.record(
-                        category: .storage,
-                        code: .recoveryFailed,
-                        operation: "edit_record_rollback",
-                        recoveryAction: "restore_backup_or_repair_storage",
-                        impact: "edited_record_rollback_incomplete"
-                    )
-                }
-                if !rollbackSucceeded {
-                    markSearchRepairNeededLocked()
-                }
-                MacClippyLog.record(
-                    category: .fts,
-                    code: .ftsIndexFailed,
-                    operation: "edit_fts_update",
-                    recoveryAction: rollbackSucceeded ? "none" : "repair_search_index",
-                    impact: rollbackSucceeded
-                        ? "edit_reverted_after_search_failure"
-                        : "edited_record_search_state_needs_repair"
-                )
-                throw error
-            }
-            return updated
-        }
-    }
-
 }

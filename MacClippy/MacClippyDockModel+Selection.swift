@@ -8,8 +8,17 @@ extension MacClippyDockModel {
     func selectTab(_ tab: MacClippyDockTab) {
         guard tab != selectedTab else { return }
         let wasSnippets = selectedTab == .snippets
+        let parsed = MacClippySearchGrammar.parse(query)
+        if tab == .snippets { historySearchClauses = parsed.clauses }
         invalidateAllSelectionScope()
         selectedTab = tab
+        if tab == .snippets {
+            query = MacClippySearchWorkflowPolicy.keywords(in: query)
+        } else if wasSnippets {
+            query = MacClippySearchWorkflowPolicy.composing(
+                MacClippySearchWorkflowPolicy.keywords(in: query), clauses: historySearchClauses)
+        }
+        searchQueryProgrammaticWriteToken += 1
         focusedIndex = 0
         clearAllErrors()
         if case .pinboard = tab {
@@ -191,6 +200,9 @@ extension MacClippyDockModel {
     }
 
     func invalidateAllSelectionScope() {
+        isSelectingAllMatches = false
+        allSelectionFailed = false
+        allSelectionCanMerge = false
         selectAllWorkItem?.cancel()
         selectAllCancellationToken?.cancel()
         selectAllWorkItem = nil
@@ -274,16 +286,21 @@ extension MacClippyDockModel {
         requestFocusFollow()
     }
 
-    func moveFocus(_ direction: MacClippyDockSelectionDirection) {
+    func moveFocus(_ direction: MacClippyDockSelectionDirection, from target: MacClippyDockPreviewTarget? = nil) {
         guard currentCount > 0 else { return }
         if selectedTab == .snippets {
             let offset = direction == .left ? -1 : 1
-            focusedIndex = (focusedIndex + offset + currentCount) % currentCount
+            let origin = target.flatMap { shown in visibleSnippets.firstIndex { $0.id == shown.recordID } }
+                ?? focusedIndex
+            focusedIndex = (origin + offset + currentCount) % currentCount
             requestFocusFollow()
             return
         }
         invalidateAllSelectionScope()
         rebindSelection()
+        if let target, let index = visibleItems.firstIndex(where: { $0.id == target.recordID }) {
+            selection = MacClippyDockSelectionPolicy.focusing(selection, at: index)
+        }
         selection = MacClippyDockSelectionPolicy.movingFocus(selection, direction: direction)
         focusedIndex = selection.focusedIndex
         requestFocusFollow()
@@ -306,6 +323,7 @@ extension MacClippyDockModel {
 
     func clearSelection() {
         guard selectedTab != .snippets else { return }
+        beginUserOperation()
         invalidateAllSelectionScope()
         rebindSelection()
         selection = MacClippyDockSelectionPolicy.clearingSelection(selection)
@@ -349,6 +367,7 @@ extension MacClippyDockModel {
             after: .sessionBegan
         )
         query = ""
+        historySearchClauses = []
         isSessionActive = true
         focusedIndex = 0
         selection = MacClippyDockSelectionState()

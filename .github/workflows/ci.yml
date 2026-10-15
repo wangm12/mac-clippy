@@ -13,15 +13,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: macclippy-${{ github.workflow }}-${{ github.ref }}
+  group: macclippy-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   test:
+    name: Required regression suite
     runs-on: macos-26
-    # App tests plus package TSan and the opt-in fixtures can legitimately
-    # exceed an hour on a busy hosted runner. Keep the individual step limits
-    # as the tight failure boundaries and leave room for build/test startup.
+    # App tests plus package TSan and opt-in fixtures can exceed an hour on a
+    # busy hosted runner. Keep individual step limits as the tight boundaries.
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -30,17 +30,31 @@ jobs:
           set -euo pipefail
           test -f .swiftlint-baseline.yml
           test -x scripts/lint.sh
+          test -f scripts/lint-gate-fixture-test.py
           test -x scripts/verify-dmg.sh
           test -f scripts/pinned-tool-versions.sh
           test -x scripts/install-pinned-tools.sh
           test -x scripts/install-pinned-tools-test.sh
           test -x scripts/verify-tool-versions.sh
+          test -x scripts/verify-make-pinned-tools-test.sh
+          test -x scripts/clean-build.sh
+          test -x scripts/clean-build-test.sh
           test -x scripts/select-codesign-identity.sh
           test -x scripts/select-codesign-identity-test.sh
           test -x scripts/make-signing-cert.sh
           test -x scripts/import-signing-cert.sh
           test -x scripts/resolve-dmg-signing.sh
           test -x scripts/release.sh
+          test -x scripts/verify-required-ci.sh
+          test -x scripts/verify-required-ci-test.sh
+          test -x scripts/select-release-version.sh
+          test -x scripts/select-release-version-test.sh
+          test -x scripts/verify-build-metadata.sh
+          test -x scripts/verify-build-metadata-test.sh
+          test -x scripts/assert-opt-in-xctest-log.sh
+          test -x scripts/assert-opt-in-xctest-log-test.sh
+          test -x scripts/release-script-test.sh
+          test -x scripts/package-dmg-path-guard-test.sh
           test -f MacClippyKit/Package.resolved
           test -f MacClippy.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
       - name: Show toolchain
@@ -48,10 +62,12 @@ jobs:
           sw_vers
           xcodebuild -version
           swift --version
-      - name: Install pinned tools tests
-        run: ./scripts/install-pinned-tools-test.sh
-      # Homebrew floats these formulae (2.46.0 / 0.65.0 on macos-26). Pin
-      # GitHub release zips so xcodegen generate matches the committed project.
+      - name: Pinned-tool and Make PATH tests
+        run: |
+          ./scripts/install-pinned-tools-test.sh
+          ./scripts/verify-make-pinned-tools-test.sh
+      - name: Safe Make clean test
+        run: ./scripts/clean-build-test.sh
       - name: Install pinned build tools
         run: ./scripts/install-pinned-tools.sh
       - name: Generate project
@@ -63,17 +79,51 @@ jobs:
           test -z "$(git status --porcelain --untracked-files=all -- MacClippy.xcodeproj)"
       - name: SwiftLint baseline gate
         run: ./scripts/lint.sh
+      - name: SwiftLint clean and changed-file gate fixtures
+        run: python3 scripts/lint-gate-fixture-test.py
       - name: Signing identity selector tests
         run: ./scripts/select-codesign-identity-test.sh
+      - name: Release gate and metadata tests
+        run: |
+          ./scripts/verify-required-ci-test.sh
+          ./scripts/select-release-version-test.sh
+          ./scripts/verify-build-metadata-test.sh
+          ./scripts/assert-opt-in-xctest-log-test.sh
+          ./scripts/release-script-test.sh
+          ./scripts/package-dmg-path-guard-test.sh
+          python3 -m unittest scripts.e2e.test_macclippy_phase5
       - name: Package tests
         run: swift test --package-path MacClippyKit
       - name: Strict concurrency package tests
         run: swift test --package-path MacClippyKit -Xswiftc -strict-concurrency=complete
-      - name: Scale regression fixture
+      - name: Package scale regression fixture (opt-in)
         timeout-minutes: 10
         env:
           MACCLIPPY_RUN_SCALE_TESTS: "1"
-        run: swift test --package-path MacClippyKit --filter MacClippyScaleTests
+          TEST_RUNNER_MACCLIPPY_RUN_SCALE_TESTS: "1"
+        run: |
+          set -euo pipefail
+          mkdir -p build/ci-scale-package
+          log_file=build/ci-scale-package/swift-test.log
+          swift test --package-path MacClippyKit --filter MacClippyScaleTests 2>&1 | tee "${log_file}"
+          ./scripts/assert-opt-in-xctest-log.sh "${log_file}" MacClippyScaleTests
+      - name: Runtime search scale fixture (opt-in)
+        timeout-minutes: 10
+        env:
+          MACCLIPPY_RUN_SCALE_TESTS: "1"
+          TEST_RUNNER_MACCLIPPY_RUN_SCALE_TESTS: "1"
+        run: |
+          set -euo pipefail
+          mkdir -p build/ci-runtime-scale
+          log_file=build/ci-runtime-scale/xcodebuild-test.log
+          xcodebuild test -project MacClippy.xcodeproj -scheme MacClippy \
+            -configuration Debug -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath build/ci-runtime-scale/DerivedData \
+            -resultBundlePath build/ci-runtime-scale/runtime-scale.xcresult \
+            -parallel-testing-enabled NO -maximum-parallel-testing-workers 1 \
+            -only-testing:MacClippyTests/MacClippyRuntimeSearchScaleTests \
+            -skipPackagePluginValidation CODE_SIGNING_ALLOWED=NO 2>&1 | tee "${log_file}"
+          ./scripts/assert-opt-in-xctest-log.sh "${log_file}" MacClippyRuntimeSearchScaleTests
       - name: Lifecycle stress fixture
         timeout-minutes: 10
         env:
@@ -90,8 +140,9 @@ jobs:
           -derivedDataPath build/ci-app-tsan
           -resultBundlePath build/ci-app-tsan.xcresult
           -parallel-testing-enabled NO -maximum-parallel-testing-workers 1
-          -enableThreadSanitizer YES
-          -skipPackagePluginValidation CODE_SIGNING_ALLOWED=NO
+          -only-testing:MacClippyTests
+          -enableThreadSanitizer YES -skipPackagePluginValidation
+          CODE_SIGNING_ALLOWED=NO
       - name: App build
         run: >-
           xcodebuild -project MacClippy.xcodeproj -scheme MacClippy
@@ -121,7 +172,7 @@ jobs:
           fi
           ./scripts/verify-build-metadata.sh \
             build/ci-shipping/Build/Products/Release/MacClippy.app
-      - name: App tests
+      - name: App unit tests
         timeout-minutes: 20
         run: >-
           xcodebuild test -project MacClippy.xcodeproj -scheme MacClippy
@@ -129,6 +180,7 @@ jobs:
           -derivedDataPath build/ci-tests
           -resultBundlePath build/ci-app-tests.xcresult
           -parallel-testing-enabled NO -maximum-parallel-testing-workers 1
+          -only-testing:MacClippyTests
           -skipPackagePluginValidation CODE_SIGNING_ALLOWED=NO
       - name: Upload App XCTest result bundle
         if: always()

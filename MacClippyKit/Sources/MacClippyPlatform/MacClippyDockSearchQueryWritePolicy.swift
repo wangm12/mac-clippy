@@ -60,10 +60,12 @@ public enum MacClippyDockSearchQueryWritePolicy {
                 from: MacClippySearchGrammar.parse(current)
             ).map(\.token)
         )
-        return preservedTokens.sorted().reduce(visible) { partial, token in
-            guard active.contains(token) else { return partial }
-            return MacClippySearchFilterChipPolicy.appending(token: token, to: partial)
-        }
+        let incoming = Set(
+            MacClippySearchFilterChipPolicy.chips(from: MacClippySearchGrammar.parse(visible)).map(\.token))
+        let missing = preservedTokens.sorted().filter { active.contains($0) && !incoming.contains($0) }
+            .flatMap { MacClippySearchGrammar.parse($0).clauses }
+        guard !missing.isEmpty else { return visible }
+        return MacClippySearchWorkflowPolicy.composing(visible, clauses: missing)
     }
 
     public static func allowsEmptyOverwrite(
@@ -194,10 +196,15 @@ public enum MacClippyDockSearchQueryWritePolicy {
         hasMarkedText: Bool,
         incoming: String,
         current: String,
-        isEditing _: Bool = false,
-        programmaticSync _: Bool = false
+        isEditing: Bool = false,
+        programmaticSync: Bool = false
     ) -> Bool {
-        !hasMarkedText && incoming != current
+        guard !hasMarkedText, incoming != current else { return false }
+        // A normalized echo must not remove the separator the user just
+        // typed. Explicit filter/clear/focus changes still synchronize.
+        if isEditing, !programmaticSync,
+           incoming == current.trimmingCharacters(in: .whitespacesAndNewlines) { return false }
+        return true
     }
 
     public static func shouldMakeSearchFieldFirstResponder(
@@ -227,10 +234,9 @@ public enum MacClippyDockSearchQueryWritePolicy {
         queryChanged || collapseTokenChanged
     }
 
-    /// Leaving search (click away / picker mode) must drop the query so
-    /// the next focus does not inherit the previous filter.
+    /// Query lifetime belongs to the session, not the field editor's focus.
     public static func shouldClearQueryWhenLeavingSearch() -> Bool {
-        true
+        false
     }
 }
 

@@ -152,6 +152,40 @@ final class MacClippyLabelTests: XCTestCase {
         XCTAssertFalse(snapshot.isEditable)
     }
 
+    func testDetailsDistinguishRepeatedUTIAcrossPresentAndSpilledItems() throws {
+        let uti = "com.example.repeated-details"
+        let spilledBytes = Data("spilled details payload".utf8)
+        let blobID = try runtime.blobStore.write(spilledBytes)
+        let meta = try runtime.appendTestRecord(
+            .text("details with repeated UTI"),
+            representations: [
+                MacClippyClipboardRepresentation(
+                    itemIndex: 0,
+                    uti: uti,
+                    payloadBytes: Data("inline details payload".utf8)
+                ),
+                MacClippyClipboardRepresentation(
+                    itemIndex: 1,
+                    uti: uti,
+                    payloadBytes: nil,
+                    blobID: blobID,
+                    payloadState: .spilled
+                )
+            ]
+        )
+
+        let details = try runtime.details(id: meta.id)
+
+        XCTAssertEqual(details.representations.map(\.itemIndex), [0, 1])
+        XCTAssertEqual(details.representations.map(\.uti), [uti, uti])
+        XCTAssertEqual(Set(details.representations.map(\.id)).count, 2)
+        XCTAssertEqual(details.representations.map(\.payloadState), [.present, .spilled])
+        XCTAssertEqual(details.representations.map(\.isAvailable), [true, true])
+        let storedMetadata = try runtime.clipboardStore.representationMetadata(for: meta.id)
+        XCTAssertEqual(details.representations[0].byteCount, storedMetadata[0].inlineByteCount)
+        XCTAssertEqual(details.representations[1].byteCount, try runtime.blobStore.byteSizeChecked(id: blobID))
+    }
+
     // MARK: - Dock model: nameSaved feedback + reload action path
 
     @MainActor
@@ -275,6 +309,14 @@ final class MacClippyLabelTests: XCTestCase {
         XCTAssertEqual(clearedEntry?.displayTitle, clearedEntry?.preview)
     }
 
+    // MARK: - Helpers
+
+    private func wait(until condition: () -> Bool, timeout: TimeInterval = 2.0) {
+        MacClippyTestWait.until(condition, timeout: timeout)
+    }
+}
+
+extension MacClippyLabelTests {
     func testInsertRemoteClipboardSampleIsMarkedRemote() throws {
         let meta = try runtime.insertRemoteClipboardSample()
         let entry = try runtime.history(limit: 10, query: "").first(where: { $0.id == meta.id })
@@ -311,11 +353,5 @@ final class MacClippyLabelTests: XCTestCase {
         let htmlEntry = try runtime.history(limit: 10, query: "").first(where: { $0.id == htmlMeta.id })
         XCTAssertNil(textEntry?.typeMetadataSubtitle)
         XCTAssertNil(htmlEntry?.typeMetadataSubtitle)
-    }
-
-    // MARK: - Helpers
-
-    private func wait(until condition: () -> Bool, timeout: TimeInterval = 2.0) {
-        MacClippyTestWait.until(condition, timeout: timeout)
     }
 }

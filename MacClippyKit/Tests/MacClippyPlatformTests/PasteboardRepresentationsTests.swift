@@ -49,7 +49,7 @@ final class PasteboardRepresentationsTests: XCTestCase {
         }
     }
 
-    func testRepresentationsPreservesItemOrderAndDedupesAcrossItems() throws {
+    func testRepresentationsPreservesItemOrderAndRepeatedUTIsAcrossItems() throws {
         let change = PasteboardChange(
             changeCount: 2,
             items: [
@@ -66,10 +66,12 @@ final class PasteboardRepresentationsTests: XCTestCase {
 
         let representations = MacClippyCaptureMapper.representations(for: change)
 
-        // The first occurrence of a UTI wins; subsequent duplicates are
-        // dropped so the side table stays one row per UTI.
-        XCTAssertEqual(representations.map(\.uti), ["public.utf8-plain-text", "public.html", "com.second"])
+        XCTAssertEqual(representations.map(\.uti), [
+            "public.utf8-plain-text", "public.html", "public.utf8-plain-text", "com.second"
+        ])
+        XCTAssertEqual(representations.map(\.itemIndex), [0, 0, 1, 1])
         XCTAssertEqual(representations[0].payloadBytes, Data("first".utf8))
+        XCTAssertEqual(representations[2].payloadBytes, Data("second".utf8))
     }
 
     func testRepresentationsRetainsEmptyAndUnavailablePayloadsAsMarkers() throws {

@@ -27,6 +27,7 @@ settings:
 packages:
   MacClippyKit:
     path: MacClippyKit
+    # Swift package sources and tests are discovered from Package.swift.
 
 targets:
   MacClippy:
@@ -34,13 +35,40 @@ targets:
     platform: macOS
     sources:
       - path: MacClippy/MacClippyApp.swift
+      - path: MacClippy/MacClippyDockController+PreviewLifecycle.swift
+      - path: MacClippy/MacClippyDockModel+SearchInput.swift
+      - path: MacClippy/MacClippyDockModel+Navigation.swift
+      - path: MacClippy/MacClippyDockModel+Details.swift
+      - path: MacClippy/MacClippyDockController+PreviewActions.swift
+      - path: MacClippy/MacClippyDockView+Modals.swift
+      - path: MacClippy/MacClippyDockActionFeedback.swift
+      - path: MacClippy/MacClippyRenameItemEditor.swift
+      - path: MacClippy/MacClippyClipboardCardLabel+Content.swift
+      - path: MacClippy/MacClippyDockPreview+Header.swift
+      - path: MacClippy/MacClippyDockNavigation.swift
+      - path: MacClippy/MacClippyDockSearchFilters.swift
+      - path: MacClippy/MacClippyDockSelectionHeader.swift
+      - path: MacClippy/MacClippyDockModel+Workflow.swift
+      - path: MacClippy/MacClippyDetailsEditSession.swift
+      - path: MacClippy/MacClippySnippetEditor.swift
+      - path: MacClippy/MacClippyRuntime+Snippets.swift
+      - path: MacClippy/MacClippyCardQuickActions.swift
+      - path: MacClippy/MacClippyHelp.swift
+      - path: MacClippy/MacClippyE2EBuildIdentity.swift
+      - path: MacClippy/MacClippyAppDelegate+Lifecycle.swift
+      - path: MacClippy/MacClippyAppDelegate+Startup.swift
+      - path: MacClippy/MacClippyAppDelegate+HotKeys.swift
       - path: MacClippy/MacClippyAppDelegate+Maintenance.swift
+      - path: MacClippy/MacClippyAppDelegate+BackupRestore.swift
+      - path: MacClippy/MacClippyAppDelegate+Presentation.swift
       - path: MacClippy/MacClippyAppDelegate+DisplayLifecycle.swift
       - path: MacClippy/MacClippyDisplayLifecycleCoordinator.swift
       - path: MacClippy/MacClippyLaunchAtLoginRegistration.swift
       - path: MacClippy/MacClippyDockSessionOpen.swift
       - path: MacClippy/MacClippyMainHop.swift
+      - path: MacClippy/MacClippyDockController+FocusDiagnostics.swift
       - path: MacClippy/MacClippySettings.swift
+      - path: MacClippy/MacClippySettingsDefaultsProvider.swift
       - path: MacClippy/MacClippySettingsPreferences.swift
       - path: MacClippy/MacClippySettings+Sections.swift
       - path: MacClippy/MacClippySettings+Permissions.swift
@@ -50,29 +78,47 @@ targets:
       - path: MacClippy/MacClippyHotKeyRecorder.swift
       - path: MacClippy/MacClippyRuntime.swift
       - path: MacClippy/MacClippyRuntimeModels.swift
+      - path: MacClippy/MacClippyRuntimeStorageBootstrap.swift
+      - path: MacClippy/MacClippyRuntime+Synchronization.swift
       - path: MacClippy/MacClippyRuntime+StorageHealth.swift
       - path: MacClippy/MacClippyRuntime+OCR.swift
+      - path: MacClippy/MacClippyAsyncOperation.swift
       - path: MacClippy/MacClippyRuntime+Lifecycle.swift
+      - path: MacClippy/MacClippyCaptureQueueAdmission.swift
+      - path: MacClippy/MacClippyRuntime+Backup.swift
+      - path: MacClippy/MacClippyRuntime+StorageHealthReports.swift
+      - path: MacClippy/MacClippyRuntime+StorageUsage.swift
+      - path: MacClippy/MacClippyRuntime+ImageCompression.swift
+      - path: MacClippy/MacClippyRuntime+ImageCompressionCommit.swift
+      - path: MacClippy/MacClippyMaintenanceIOCoordinator.swift
+      - path: MacClippy/MacClippyMaintenanceIOTestHooks.swift
       - path: MacClippy/MacClippyRuntime+Search.swift
       - path: MacClippy/MacClippyRuntime+HistoryPagination.swift
+      - path: MacClippy/MacClippyRuntime+SearchScope.swift
       - path: MacClippy/MacClippyRuntime+HistoryPaginationModels.swift
       - path: MacClippy/MacClippyRuntime+Selection.swift
       - path: MacClippy/MacClippyRuntime+HistoryPaginationProjection.swift
       - path: MacClippy/MacClippyRuntime+SearchMaintenance.swift
+      - path: MacClippy/MacClippyRuntime+SearchRepair.swift
       - path: MacClippy/MacClippyRuntime+SearchProjection.swift
       - path: MacClippy/MacClippyRuntime+History.swift
+      - path: MacClippy/MacClippyRuntime+HistoryEditing.swift
       - path: MacClippy/MacClippyRuntime+HistoryProjection.swift
       - path: MacClippy/MacClippyRuntime+Preview.swift
       - path: MacClippy/MacClippyRuntime+Pinboard.swift
       - path: MacClippy/MacClippyRuntime+PinboardSearch.swift
       - path: MacClippy/MacClippyRuntime+ClipboardActions.swift
+      - path: MacClippy/MacClippyRuntime+DragPayloads.swift
+      - path: MacClippy/MacClippyRuntime+ClipboardTestSupport.swift
       - path: MacClippy/MacClippyRuntime+Maintenance.swift
+      - path: MacClippy/MacClippyRuntime+StorageReconciliation.swift
       - path: MacClippy/MacClippyRuntime+MaintenanceHealth.swift
       - path: MacClippy/MacClippyRuntime+MaintenanceRepair.swift
       - path: MacClippy/MacClippyRuntime+BatchActions.swift
       - path: MacClippy/MacClippyRuntime+OrderedActions.swift
       - path: MacClippy/MacClippyRuntime+QueueActions.swift
       - path: MacClippy/MacClippyDockPolicies.swift
+      - path: MacClippy/MacClippyDockCardPolicies.swift
       - path: MacClippy/MacClippyDockEmptyState.swift
       - path: MacClippy/MacClippyDockPinboardVisibleItems.swift
       - path: MacClippy/MacClippyUserFacingError+Typed.swift
@@ -99,6 +145,7 @@ targets:
       - path: MacClippy/MacClippyDockView+DropActions.swift
       - path: MacClippy/MacClippyDockView+CarouselModal.swift
       - path: MacClippy/MacClippyDockCard.swift
+      - path: MacClippy/MacClippyDockCard+Drag.swift
       - path: MacClippy/MacClippyClipboardCardLabel.swift
       - path: MacClippy/MacClippyDockCardContent.swift
       - path: MacClippy/MacClippyDockCardAccessibility.swift
@@ -124,6 +171,7 @@ targets:
       - path: MacClippy/MacClippyVideoPreview.swift
       - path: MacClippy/MacClippyFileIconLoader.swift
       - path: MacClippy/MacClippyFileThumbnailLoader.swift
+      - path: MacClippy/MacClippyFileThumbnailScheduler.swift
       - path: MacClippy/MacClippyQuickLookPreview.swift
       - path: MacClippy/MacClippySystemQuickLook.swift
       - path: MacClippy/MacClippyVideoPlayerPreview.swift
@@ -131,7 +179,10 @@ targets:
       - path: MacClippy/MacClippyDetails+Sections.swift
       - path: MacClippy/MacClippyDockController.swift
       - path: MacClippy/MacClippyDockController+Lifecycle.swift
+      - path: MacClippy/MacClippyDockController+AnimationLifecycle.swift
       - path: MacClippy/MacClippyDockController+Input.swift
+      - path: MacClippy/MacClippyDockController+InputPasteTarget.swift
+      - path: MacClippy/MacClippyDockController+KeyRouting.swift
       - path: MacClippy/MacClippyDockController+KeyActions.swift
       - path: MacClippy/MacClippyDockController+Details.swift
       - path: MacClippy/MacClippyDockController+Preview.swift
@@ -142,6 +193,8 @@ targets:
     info:
       path: MacClippy/Info.plist
       properties:
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NSAccessibilityUsageDescription: Mac Clippy uses Accessibility access to paste clipboard items into the active app and expand Snippets.
         NSInputMonitoringUsageDescription: Mac Clippy uses Input Monitoring to detect the global clipboard shortcut and Snippet trigger keystrokes.
         UTExportedTypeDeclarations:
@@ -155,6 +208,34 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_ENTITLEMENTS: MacClippy/MacClippy.entitlements
         GENERATE_INFOPLIST_FILE: NO
+        SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+    dependencies:
+      - package: MacClippyKit
+        product: MacClippyCore
+      - package: MacClippyKit
+        product: MacClippyPlatform
+      - sdk: QuickLookUI.framework
+      - sdk: AVKit.framework
+      - sdk: AVFoundation.framework
+
+  MacClippyE2E:
+    type: application
+    platform: macOS
+    sources:
+      - path: MacClippy
+        excludes:
+          - Info.plist
+          - E2E-Info.plist
+          - MacClippy.entitlements
+    settings:
+      base:
+        PRODUCT_NAME: MacClippyE2E
+        PRODUCT_BUNDLE_IDENTIFIER: com.macallyouneed.macclippy.e2e
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_ENTITLEMENTS: MacClippy/MacClippy.entitlements
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: MacClippy/E2E-Info.plist
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) MACCLIPPY_E2E"
         SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
     dependencies:
       - package: MacClippyKit
@@ -192,7 +273,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.macallyouneed.macclippy.uitests
         SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
     dependencies:
-      - target: MacClippy
+      - target: MacClippyE2E
 
 schemes:
   MacClippy:
@@ -205,3 +286,8 @@ schemes:
       targets:
         - MacClippyTests
         - MacClippyUITests
+
+  MacClippyE2E:
+    build:
+      targets:
+        MacClippyE2E: all

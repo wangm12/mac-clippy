@@ -21,6 +21,34 @@ private final class MacClippyLockedOCRCounter: @unchecked Sendable {
     }
 }
 
+private final class MacClippyAsyncTestGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if isOpen {
+                lock.unlock()
+                continuation.resume()
+            } else {
+                waiters.append(continuation)
+                lock.unlock()
+            }
+        }
+    }
+
+    func open() {
+        lock.lock()
+        isOpen = true
+        let waiters = self.waiters
+        self.waiters.removeAll()
+        lock.unlock()
+        waiters.forEach { $0.resume() }
+    }
+}
+
 final class MacClippyRuntimeOCRConcurrencyTests: XCTestCase {
     func testQueuedOCRCancellationDrainsPendingJobs() throws {
         let controlledRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -34,8 +62,13 @@ final class MacClippyRuntimeOCRConcurrencyTests: XCTestCase {
             try? await Task.sleep(nanoseconds: 100_000_000)
             return "cancelled OCR"
         }
+        let pasteboardEnvironment = MacClippyAppTestPasteboardEnvironment(label: "MacClippyOCRCancellation")
         let controlledRuntime = try MacClippyRuntime(
             paths: try MacClippyPaths(rootURL: controlledRoot),
+            observer: pasteboardEnvironment.observer,
+            pasteInjector: pasteboardEnvironment.injector,
+            enableSnippetExpansion: false,
+            preferencesDefaults: pasteboardEnvironment.preferencesDefaults,
             ocrRecognizer: recognizer
         )
         defer {
@@ -75,8 +108,13 @@ final class MacClippyRuntimeOCRConcurrencyTests: XCTestCase {
             try await Task.sleep(nanoseconds: 100_000_000)
             return "bounded OCR"
         }
+        let pasteboardEnvironment = MacClippyAppTestPasteboardEnvironment(label: "MacClippyOCRByteBudget")
         let controlledRuntime = try MacClippyRuntime(
             paths: try MacClippyPaths(rootURL: controlledRoot),
+            observer: pasteboardEnvironment.observer,
+            pasteInjector: pasteboardEnvironment.injector,
+            enableSnippetExpansion: false,
+            preferencesDefaults: pasteboardEnvironment.preferencesDefaults,
             ocrRecognizer: recognizer
         )
         defer {
@@ -114,8 +152,13 @@ final class MacClippyRuntimeOCRConcurrencyTests: XCTestCase {
             try? await Task.sleep(nanoseconds: 150_000_000)
             return "stale OCR"
         }
+        let pasteboardEnvironment = MacClippyAppTestPasteboardEnvironment(label: "MacClippyOCRGeneration")
         let controlledRuntime = try MacClippyRuntime(
             paths: try MacClippyPaths(rootURL: controlledRoot),
+            observer: pasteboardEnvironment.observer,
+            pasteInjector: pasteboardEnvironment.injector,
+            enableSnippetExpansion: false,
+            preferencesDefaults: pasteboardEnvironment.preferencesDefaults,
             ocrRecognizer: recognizer
         )
         defer {
@@ -146,8 +189,13 @@ final class MacClippyRuntimeOCRConcurrencyTests: XCTestCase {
         try FileManager.default.createDirectory(at: controlledRoot, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: controlledRoot) }
 
+        let pasteboardEnvironment = MacClippyAppTestPasteboardEnvironment(label: "MacClippyOCRUpsertFailure")
         let controlledRuntime = try MacClippyRuntime(
             paths: try MacClippyPaths(rootURL: controlledRoot),
+            observer: pasteboardEnvironment.observer,
+            pasteInjector: pasteboardEnvironment.injector,
+            enableSnippetExpansion: false,
+            preferencesDefaults: pasteboardEnvironment.preferencesDefaults,
             ocrRecognizer: { _ in "unindexed recognized text" }
         )
         defer {
@@ -179,8 +227,13 @@ final class MacClippyRuntimeOCRConcurrencyTests: XCTestCase {
         try FileManager.default.createDirectory(at: controlledRoot, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: controlledRoot) }
 
+        let pasteboardEnvironment = MacClippyAppTestPasteboardEnvironment(label: "MacClippyOCRSearchSuccess")
         let controlledRuntime = try MacClippyRuntime(
             paths: try MacClippyPaths(rootURL: controlledRoot),
+            observer: pasteboardEnvironment.observer,
+            pasteInjector: pasteboardEnvironment.injector,
+            enableSnippetExpansion: false,
+            preferencesDefaults: pasteboardEnvironment.preferencesDefaults,
             ocrRecognizer: { _ in "searchable recognized text" }
         )
         defer {
@@ -217,8 +270,13 @@ final class MacClippyRuntimeOCRConcurrencyTests: XCTestCase {
             recognized.increment()
             return "scheduled OCR"
         }
+        let pasteboardEnvironment = MacClippyAppTestPasteboardEnvironment(label: "MacClippyOCRSchedule")
         let controlledRuntime = try MacClippyRuntime(
             paths: try MacClippyPaths(rootURL: controlledRoot),
+            observer: pasteboardEnvironment.observer,
+            pasteInjector: pasteboardEnvironment.injector,
+            enableSnippetExpansion: false,
+            preferencesDefaults: pasteboardEnvironment.preferencesDefaults,
             ocrRecognizer: recognizer
         )
         defer {
@@ -250,5 +308,77 @@ final class MacClippyRuntimeOCRConcurrencyTests: XCTestCase {
 
     private func waitUntil(timeout: TimeInterval, condition: () -> Bool) {
         MacClippyTestWait.until(condition, timeout: timeout)
+    }
+}
+
+extension MacClippyRuntimeOCRConcurrencyTests {
+    func testStoppedOCRRetainsGlobalByteReservationUntilRecognizerReturns() throws {
+        let controlledRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "MacClippyOCRRetainedPayloadTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: controlledRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: controlledRoot) }
+
+        let oldRecognitionStarted = DispatchSemaphore(value: 0)
+        let oldRecognitionGate = MacClippyAsyncTestGate()
+        let recognizer: @Sendable (Data) async throws -> String = { data in
+            guard data.first == 1 else { return "fresh recognition" }
+            oldRecognitionStarted.signal()
+            await oldRecognitionGate.wait()
+            return "stale recognition"
+        }
+        let environment = MacClippyAppTestPasteboardEnvironment(label: "MacClippyOCRRetainedPayload")
+        let runtime = try makeOCRRuntime(
+            root: controlledRoot,
+            environment: environment,
+            recognizer: recognizer
+        )
+        defer {
+            oldRecognitionGate.open()
+            runtime.stop()
+            runtime.closeForTesting()
+        }
+
+        let record = try runtime.appendTestRecord(.text("source"))
+        runtime.start()
+        scheduleOCR(runtime, byte: 1, count: 40 * 1_024 * 1_024, recordID: record.id)
+        XCTAssertEqual(oldRecognitionStarted.wait(timeout: .now() + 3), .success)
+
+        runtime.stop()
+        runtime.start()
+        scheduleOCR(runtime, byte: 2, count: 32 * 1_024 * 1_024, recordID: record.id)
+        XCTAssertEqual(runtime.pendingOCRJobsForTest(), 1)
+        XCTAssertEqual(runtime.pendingOCRBytesForTest(), 40 * 1_024 * 1_024)
+
+        oldRecognitionGate.open()
+        waitUntil(timeout: 3) { runtime.pendingOCRJobsForTest() == 0 }
+        scheduleOCR(runtime, byte: 2, count: 32 * 1_024 * 1_024, recordID: record.id)
+        waitUntil(timeout: 3) { runtime.pendingOCRJobsForTest() == 0 }
+        XCTAssertEqual(try runtime.history(limit: 10, query: "").first?.meta.ocrText, "fresh recognition")
+    }
+
+    private func makeOCRRuntime(
+        root: URL,
+        environment: MacClippyAppTestPasteboardEnvironment,
+        recognizer: @escaping @Sendable (Data) async throws -> String
+    ) throws -> MacClippyRuntime {
+        try MacClippyRuntime(
+            paths: try MacClippyPaths(rootURL: root),
+            observer: environment.observer,
+            pasteInjector: environment.injector,
+            enableSnippetExpansion: false,
+            preferencesDefaults: environment.preferencesDefaults,
+            ocrRecognizer: recognizer
+        )
+    }
+
+    private func scheduleOCR(
+        _ runtime: MacClippyRuntime,
+        byte: UInt8,
+        count: Int,
+        recordID: RecordID
+    ) {
+        runtime.scheduleOCRForTest(data: Data(repeating: byte, count: count), recordID: recordID)
     }
 }

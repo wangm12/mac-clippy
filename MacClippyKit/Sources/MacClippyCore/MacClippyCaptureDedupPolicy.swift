@@ -11,11 +11,13 @@ public enum MacClippyCaptureDedupPrimary: Equatable, Sendable {
 }
 
 public struct MacClippyCaptureDedupRepresentation: Equatable, Sendable {
+    public let itemIndex: Int
     public let uti: String
     public let payloadState: String
     public let payloadBytes: Data?
 
-    public init(uti: String, payloadState: String, payloadBytes: Data?) {
+    public init(itemIndex: Int = 0, uti: String, payloadState: String, payloadBytes: Data?) {
+        self.itemIndex = itemIndex
         self.uti = uti
         self.payloadState = payloadState
         self.payloadBytes = payloadBytes
@@ -40,10 +42,12 @@ public enum MacClippyCaptureDedupPolicy {
         representations: [MacClippyCaptureDedupRepresentation]
     ) -> String {
         var hasher = SHA256()
-        append(&hasher, "v1")
+        let isMultiItem = representations.contains { $0.itemIndex != 0 }
+        append(&hasher, isMultiItem ? "v2-items" : "v1")
         append(&hasher, primary)
         appendCount(&hasher, representations.count)
         for representation in representations {
+            if isMultiItem { append(&hasher, UInt64(representation.itemIndex)) }
             append(&hasher, representation.uti)
             append(&hasher, representation.payloadState)
             append(&hasher, representation.payloadBytes ?? Data())

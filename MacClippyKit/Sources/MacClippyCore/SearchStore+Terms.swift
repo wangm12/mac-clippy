@@ -1,6 +1,22 @@
 import Foundation
 import GRDB
 
+private struct MacClippySearchTermsScope {
+    let connection: Database
+    let kind: RecordKind?
+    let restricted: Bool
+
+    // Keep FTS on its MATCH scan. A rowid IN scope makes SQLite restart MATCH
+    // for each eligible row, turning a broad query into quadratic work.
+    var predicate: String {
+        restricted ? """
+             AND record_id IN (
+                SELECT record_id FROM temp.macclippy_search_scope
+            )
+            """ : ""
+    }
+}
+
 extension MacClippySearchStore {
     /// Substring pages continue by rowid and stamp this rank on the cursor so
     /// a later page does not restart the prefix MATCH pass.
@@ -10,7 +26,46 @@ extension MacClippySearchStore {
         kind: RecordKind? = .clipboardItem,
         terms: [String],
         limit: Int,
-        after cursor: MacClippySearchCursor? = nil
+        after cursor: MacClippySearchCursor? = nil,
+        matchingRecordIDs: [RecordID]? = nil
+    ) throws -> [SearchHit] {
+        guard limit > 0 else { return [] }
+        if let matchingRecordIDs {
+            return try searchScoped(
+                kind: kind, terms: terms, limit: limit, after: cursor,
+                scope: MacClippySearchRecordScope(recordIDs: matchingRecordIDs)
+            )
+        }
+        return try database.queue.read { connection in
+            try searchTerms(
+                scope: MacClippySearchTermsScope(connection: connection, kind: kind, restricted: false),
+                terms: terms, limit: limit, after: cursor
+            )
+        }
+    }
+
+    public func searchScoped(
+        kind: RecordKind? = .clipboardItem,
+        terms: [String],
+        limit: Int,
+        after cursor: MacClippySearchCursor? = nil,
+        scope: MacClippySearchRecordScope
+    ) throws -> [SearchHit] {
+        guard limit > 0, !scope.recordIDs.isEmpty else { return [] }
+        return try database.queue.write { connection in
+            try prepareSearchScope(scope, on: connection)
+            return try searchTerms(
+                scope: MacClippySearchTermsScope(connection: connection, kind: kind, restricted: true),
+                terms: terms, limit: limit, after: cursor
+            )
+        }
+    }
+
+    private func searchTerms(
+        scope: MacClippySearchTermsScope,
+        terms: [String],
+        limit: Int,
+        after cursor: MacClippySearchCursor?
     ) throws -> [SearchHit] {
         let normalized = terms
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -21,11 +76,11 @@ extension MacClippySearchStore {
         let infixTerms = MacClippySearchQuery.infixTerms(in: normalized)
         let asciiInfixTerms = infixTerms.filter { !MacClippySearchQuery.containsCJK($0) }
         if ftsTerms.isEmpty {
-            return try substringSearch(kind: kind, terms: cjkTerms, limit: limit, after: cursor)
+            return try substringSearch(scope: scope, terms: cjkTerms, limit: limit, after: cursor)
         }
         if asciiInfixTerms.isEmpty {
             return try matchRawFTS(
-                kind: kind,
+                scope: scope,
                 query: MacClippySearchQuery.ftsMatchQuery(from: ftsTerms),
                 likePatterns: MacClippySearchQuery.likePatterns(for: cjkTerms),
                 limit: limit,
@@ -33,7 +88,7 @@ extension MacClippySearchStore {
             )
         }
         return try searchPrefixThenInfix(
-            kind: kind,
+            scope: scope,
             ftsTerms: ftsTerms,
             cjkTerms: cjkTerms,
             infixTerms: infixTerms,
@@ -44,7 +99,7 @@ extension MacClippySearchStore {
     }
 
     private func searchPrefixThenInfix(
-        kind: RecordKind?,
+        scope: MacClippySearchTermsScope,
         ftsTerms: [String],
         cjkTerms: [String],
         infixTerms: [String],
@@ -59,7 +114,7 @@ extension MacClippySearchStore {
             prefixHits = []
         } else {
             prefixHits = try matchRawFTS(
-                kind: kind,
+                scope: scope,
                 query: prefixQuery,
                 likePatterns: cjkPatterns,
                 limit: limit,
@@ -75,7 +130,7 @@ extension MacClippySearchStore {
         }
         let matchOnlyQuery = MacClippySearchQuery.ftsMatchQuery(from: matchOnlyTerms)
         let infixHits = try substringSearch(
-            kind: kind,
+            scope: scope,
             terms: infixTerms,
             matchQuery: matchOnlyQuery.isEmpty ? nil : matchOnlyQuery,
             excludingMatchQuery: prefixQuery,
@@ -91,54 +146,55 @@ extension MacClippySearchStore {
     }
 
     private func matchRawFTS(
-        kind: RecordKind?,
+        scope: MacClippySearchTermsScope,
         query: String,
         likePatterns: [String] = [],
         limit: Int,
         after cursor: MacClippySearchCursor?
     ) throws -> [SearchHit] {
         guard !query.isEmpty else { return [] }
-        return try database.queue.read { connection in
-            var sql = """
-                SELECT kind, record_id,
-                       snippet(macclippy_search_index, 2, char(30), char(31), '...', 12) AS snippet,
-                       rank AS search_rank,
-                       macclippy_search_index.rowid AS search_rowid
-                FROM macclippy_search_index
-                WHERE macclippy_search_index MATCH ?
-            """
-            var arguments: [Any] = [query]
-            if let kind {
-                sql += " AND kind = ?"
-                arguments.append(kind.rawValue)
-            }
-            for pattern in likePatterns {
-                sql += " AND content LIKE ? ESCAPE '\\'"
-                arguments.append(pattern)
-            }
-            if let cursor {
-                sql += " AND (rank > ? OR (rank = ? AND macclippy_search_index.rowid > ?))"
-                arguments += [cursor.rank, cursor.rank, cursor.rowID]
-            }
-            sql += " ORDER BY rank ASC, macclippy_search_index.rowid ASC LIMIT ?"
-            arguments.append(limit)
-            guard let statementArguments = StatementArguments(arguments) else {
+        let connection = scope.connection
+        let kind = scope.kind
+        var sql = """
+            SELECT kind, record_id,
+                   snippet(macclippy_search_index, 2, char(30), char(31), '...', 12) AS snippet,
+                   rank AS search_rank,
+                   macclippy_search_index.rowid AS search_rowid
+            FROM macclippy_search_index
+            WHERE macclippy_search_index MATCH ?
+        """
+        sql += scope.predicate
+        var arguments: [Any] = [query]
+        if let kind {
+            sql += " AND kind = ?"
+            arguments.append(kind.rawValue)
+        }
+        for pattern in likePatterns {
+            sql += " AND content LIKE ? ESCAPE '\\'"
+            arguments.append(pattern)
+        }
+        if let cursor {
+            sql += " AND (rank > ? OR (rank = ? AND macclippy_search_index.rowid > ?))"
+            arguments += [cursor.rank, cursor.rank, cursor.rowID]
+        }
+        sql += " ORDER BY rank ASC, macclippy_search_index.rowid ASC LIMIT ?"
+        arguments.append(limit)
+        guard let statementArguments = StatementArguments(arguments) else {
+            throw MacClippyStoreError.invalidStoredRecord
+        }
+        return try Row.fetchAll(connection, sql: sql, arguments: statementArguments).map { row in
+            guard let kind = RecordKind(rawValue: row["kind"]),
+                  let id = RecordID(rawValue: row["record_id"]),
+                  let rank: Double = row["search_rank"],
+                  let rowID: Int64 = row["search_rowid"] else {
                 throw MacClippyStoreError.invalidStoredRecord
             }
-            return try Row.fetchAll(connection, sql: sql, arguments: statementArguments).map { row in
-                guard let kind = RecordKind(rawValue: row["kind"]),
-                      let id = RecordID(rawValue: row["record_id"]),
-                      let rank: Double = row["search_rank"],
-                      let rowID: Int64 = row["search_rowid"] else {
-                    throw MacClippyStoreError.invalidStoredRecord
-                }
-                return SearchHit(kind: kind, id: id, snippet: row["snippet"], rank: rank, rowID: rowID)
-            }
+            return SearchHit(kind: kind, id: id, snippet: row["snippet"], rank: rank, rowID: rowID)
         }
     }
 
     private func substringSearch(
-        kind: RecordKind?,
+        scope: MacClippySearchTermsScope,
         terms: [String],
         matchQuery: String? = nil,
         excludingMatchQuery: String? = nil,
@@ -147,68 +203,81 @@ extension MacClippySearchStore {
         after cursor: MacClippySearchCursor?
     ) throws -> [SearchHit] {
         let patterns = MacClippySearchQuery.likePatterns(for: terms)
-        return try database.queue.read { connection in
-            var sql = """
-                SELECT kind, record_id, content,
-                       macclippy_search_index.rowid AS search_rowid
-                FROM macclippy_search_index
-                WHERE 1 = 1
-            """
-            var arguments: [Any] = []
-            if let kind {
-                sql += " AND kind = ?"
-                arguments.append(kind.rawValue)
-            }
-            if let matchQuery, !matchQuery.isEmpty {
-                sql += " AND macclippy_search_index MATCH ?"
-                arguments.append(matchQuery)
-            }
-            for pattern in patterns {
-                sql += " AND content LIKE ? ESCAPE '\\'"
-                arguments.append(pattern)
-            }
-            if let excludingMatchQuery, !excludingMatchQuery.isEmpty {
-                sql += """
-                     AND macclippy_search_index.rowid NOT IN (
-                        SELECT rowid FROM macclippy_search_index
-                        WHERE macclippy_search_index MATCH ?
-                    """
-                arguments.append(excludingMatchQuery)
-                if let kind {
-                    sql += " AND kind = ?"
-                    arguments.append(kind.rawValue)
-                }
-                for pattern in excludingLikePatterns {
-                    sql += " AND content LIKE ? ESCAPE '\\'"
-                    arguments.append(pattern)
-                }
-                sql += ")"
-            }
-            if let cursor {
-                sql += " AND macclippy_search_index.rowid > ?"
-                arguments.append(cursor.rowID)
-            }
-            sql += " ORDER BY macclippy_search_index.rowid ASC LIMIT ?"
-            arguments.append(limit)
-            guard let statementArguments = StatementArguments(arguments) else {
-                throw MacClippyStoreError.invalidStoredRecord
-            }
-            return try Row.fetchAll(connection, sql: sql, arguments: statementArguments).map { row in
-                guard let kind = RecordKind(rawValue: row["kind"]),
-                      let id = RecordID(rawValue: row["record_id"]),
-                      let content: String = row["content"],
-                      let rowID: Int64 = row["search_rowid"] else {
-                    throw MacClippyStoreError.invalidStoredRecord
-                }
-                return SearchHit(
-                    kind: kind,
-                    id: id,
-                    snippet: Self.substringSnippet(content, terms: terms),
-                    rank: Self.substringRank,
-                    rowID: rowID
-                )
-            }
+        let connection = scope.connection
+        let kind = scope.kind
+        var sql = """
+            SELECT kind, record_id, content,
+                   macclippy_search_index.rowid AS search_rowid
+            FROM macclippy_search_index
+            WHERE 1 = 1
+        """
+        sql += scope.predicate
+        var arguments: [Any] = []
+        if let kind {
+            sql += " AND kind = ?"
+            arguments.append(kind.rawValue)
         }
+        if let matchQuery, !matchQuery.isEmpty {
+            sql += " AND macclippy_search_index MATCH ?"
+            arguments.append(matchQuery)
+        }
+        for pattern in patterns {
+            sql += " AND content LIKE ? ESCAPE '\\'"
+            arguments.append(pattern)
+        }
+        appendPrefixExclusion(
+            to: &sql, arguments: &arguments, scope: scope,
+            query: excludingMatchQuery, likePatterns: excludingLikePatterns
+        )
+        if let cursor {
+            sql += " AND macclippy_search_index.rowid > ?"
+            arguments.append(cursor.rowID)
+        }
+        sql += " ORDER BY macclippy_search_index.rowid ASC LIMIT ?"
+        arguments.append(limit)
+        guard let statementArguments = StatementArguments(arguments) else {
+            throw MacClippyStoreError.invalidStoredRecord
+        }
+        return try Row.fetchAll(connection, sql: sql, arguments: statementArguments)
+            .map { try Self.substringHit($0, terms: terms) }
+    }
+
+    private static func substringHit(_ row: Row, terms: [String]) throws -> SearchHit {
+        guard let kind = RecordKind(rawValue: row["kind"]),
+              let id = RecordID(rawValue: row["record_id"]),
+              let content: String = row["content"],
+              let rowID: Int64 = row["search_rowid"] else {
+            throw MacClippyStoreError.invalidStoredRecord
+        }
+        return SearchHit(
+            kind: kind, id: id, snippet: substringSnippet(content, terms: terms),
+            rank: substringRank, rowID: rowID
+        )
+    }
+
+    private func appendPrefixExclusion(
+        to sql: inout String,
+        arguments: inout [Any],
+        scope: MacClippySearchTermsScope,
+        query: String?,
+        likePatterns: [String]
+    ) {
+        guard let query, !query.isEmpty else { return }
+        sql += """
+             AND macclippy_search_index.rowid NOT IN (
+                SELECT rowid FROM macclippy_search_index
+                WHERE macclippy_search_index MATCH ?
+            """
+        arguments.append(query)
+        if let kind = scope.kind {
+            sql += " AND kind = ?"
+            arguments.append(kind.rawValue)
+        }
+        for pattern in likePatterns {
+            sql += " AND content LIKE ? ESCAPE '\\'"
+            arguments.append(pattern)
+        }
+        sql += ")"
     }
 
     private static func substringSnippet(_ content: String, terms: [String]) -> String {

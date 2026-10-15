@@ -1,8 +1,10 @@
 import CryptoKit
 import Foundation
+import Darwin
 
 public enum MacClippyBlobError: Error, Sendable {
     case invalidIdentifier
+    case activeReadLease
     case missingBlob
     case payloadTooLarge
 }
@@ -11,12 +13,16 @@ public final class MacClippyBlobStore {
     private let rootURL: URL
     private let key: SymmetricKey
     private let fileManager: FileManager
+    private let leaseRootKey: String
 
     public init(rootURL: URL, key: SymmetricKey, fileManager: FileManager = .default) throws {
-        self.rootURL = rootURL.standardizedFileURL
+        let standardizedRoot = rootURL.standardizedFileURL
+        try fileManager.createDirectory(at: standardizedRoot, withIntermediateDirectories: true)
+        let canonicalRoot = standardizedRoot.resolvingSymlinksInPath().standardizedFileURL
+        self.rootURL = canonicalRoot
         self.key = key
         self.fileManager = fileManager
-        try fileManager.createDirectory(at: self.rootURL, withIntermediateDirectories: true)
+        leaseRootKey = canonicalRoot.path
     }
 
     @discardableResult
@@ -28,7 +34,14 @@ public final class MacClippyBlobStore {
     public func write(_ data: Data, id: String) throws -> String {
         let url = try url(for: id)
         let envelope = try MacClippyCipher.seal(data, with: key)
-        try envelope.combined.write(to: url, options: .atomic)
+        try MacClippyBlobLeaseRegistry.shared.write(
+            rootKey: leaseRootKey,
+            blobID: id,
+            targetExists: { fileManager.fileExists(atPath: url.path) },
+            write: {
+                try writeExclusive(envelope.combined, to: url)
+            }
+        )
         return id
     }
 
@@ -42,6 +55,8 @@ public final class MacClippyBlobStore {
     /// image merely to discover that it cannot be decoded cheaply.
     public func read(id: String, maxBytes: Int?) throws -> Data {
         let url = try url(for: id)
+        let readLease = try acquireReadLease(for: [id])
+        defer { readLease.release() }
         let values = try resourceValues(for: url)
         if let maxBytes, values.fileSize ?? 0 > maxBytes + 64 {
             throw MacClippyBlobError.payloadTooLarge
@@ -51,11 +66,38 @@ public final class MacClippyBlobStore {
 
     public func delete(id: String) throws {
         let url = try url(for: id)
-        do {
-            try fileManager.removeItem(at: url)
-        } catch let error as NSError where Self.isMissingFileError(error) {
-            return
+        try MacClippyBlobLeaseRegistry.shared.deleteOrDefer(rootKey: leaseRootKey, blobID: id) {
+            do {
+                try fileManager.removeItem(at: url)
+            } catch let error as NSError where Self.isMissingFileError(error) {
+                return
+            }
         }
+    }
+
+    /// Keeps the selected blobs present while a compression or image-read
+    /// operation is in flight. Leases are process-local and canonical-root
+    /// scoped, so separate BlobStore instances for the same directory share
+    /// the protection.
+    public func acquireReadLease(for blobIDs: Set<String>) throws -> MacClippyBlobLease {
+        guard blobIDs.allSatisfy(Self.isSafeIdentifier) else {
+            throw MacClippyBlobError.invalidIdentifier
+        }
+        return MacClippyBlobLeaseRegistry.shared.acquire(rootKey: leaseRootKey, blobIDs: blobIDs)
+    }
+
+    /// Keeps every blob under this root present while a consistent backup
+    /// snapshot is copied or validated.
+    public func acquireRootReadLease() throws -> MacClippyBlobLease {
+        MacClippyBlobLeaseRegistry.shared.acquire(rootKey: leaseRootKey, blobIDs: nil)
+    }
+
+    /// Installs the Runtime callback used to recheck database references and
+    /// retry deferred deletion after the last active lease ends. The callback
+    /// is invoked outside the registry lock and should schedule work rather
+    /// than perform storage I/O inline.
+    public func setDeferredDeleteHandler(_ handler: (@Sendable (String) -> Void)?) {
+        MacClippyBlobLeaseRegistry.shared.setDeferredDeleteHandler(rootKey: leaseRootKey, handler: handler)
     }
 
     public func contains(id: String) throws -> Bool {
@@ -146,6 +188,21 @@ public final class MacClippyBlobStore {
         return rootURL.appendingPathComponent(id + ".bin", isDirectory: false).standardizedFileURL
     }
 
+    private func writeExclusive(_ data: Data, to url: URL) throws {
+        let stagingURL = rootURL.appendingPathComponent(".macclippy-blob-\(UUID().uuidString).tmp")
+        defer { try? fileManager.removeItem(at: stagingURL) }
+        try data.write(to: stagingURL, options: .atomic)
+        let result = stagingURL.path.withCString { source in
+            url.path.withCString { destination in Darwin.link(source, destination) }
+        }
+        guard result == 0 else {
+            if errno == EEXIST {
+                throw CocoaError(.fileWriteFileExists, userInfo: [NSFilePathErrorKey: url.path])
+            }
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+    }
+
     private func resourceValues(for url: URL) throws -> URLResourceValues {
         do {
             let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
@@ -163,7 +220,7 @@ public final class MacClippyBlobStore {
         return error.code == NSFileNoSuchFileError || error.code == NSFileReadNoSuchFileError
     }
 
-    private static func isSafeIdentifier(_ id: String) -> Bool {
+    static func isSafeIdentifier(_ id: String) -> Bool {
         guard !id.isEmpty, id != ".", id != "..", !id.contains("/"), !id.contains("\\") else { return false }
         return id.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }
     }

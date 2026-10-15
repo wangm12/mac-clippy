@@ -88,7 +88,8 @@ public enum MacClippyBackupSettingsPolicy {
     }
 
     public static func canRestore(_ validation: MacClippyBackupValidation) -> Bool {
-        Set(validation.manifest.databaseNames) == Set(requiredDatabaseNames)
+        validation.keyCompatible
+            && Set(validation.manifest.databaseNames) == Set(requiredDatabaseNames)
             && requiredDatabaseNames.allSatisfy { name in
                 guard let health = validation.databaseHealth[name] else { return false }
                 return health.quickCheckPassed && health.status != .unrecoverable
@@ -111,6 +112,17 @@ public enum MacClippyBackupSettingsPolicy {
             return "This backup is incomplete (missing \(name))."
         case let .checksumMismatch(name):
             return "This backup is damaged (\(name) does not match)."
+        case .keyRequired:
+            return "Mac Clippy could not verify this backup because its local encryption key is unavailable."
+        case .keyMismatch:
+            return "This backup was encrypted with a different Mac Clippy key and cannot be restored here."
+        case .keyCompatibilityUnproven:
+            return "This older backup has no encrypted data to verify its key. "
+                + "Restore is blocked to protect your current history."
+        case let .databaseCopyFailed(name):
+            return "Mac Clippy could not read the backup database \(name)."
+        case .restoreInterrupted:
+            return "Restore was interrupted. Mac Clippy will recover the previous data before starting."
         }
     }
 

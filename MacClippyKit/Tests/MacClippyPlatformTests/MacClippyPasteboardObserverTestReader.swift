@@ -7,6 +7,7 @@ import Foundation
 final class SteppingTestPasteboardReader: PasteboardReading {
     var change: PasteboardChange
     var rereadResult: PasteboardChange?
+    var rereadHandler: ((PasteboardChange, [(itemIndex: Int, uti: String)]) -> PasteboardChange)?
     var forcedChangeCounts: [Int] = []
     private(set) var readCount = 0
     private(set) var rereadCount = 0
@@ -29,6 +30,7 @@ final class SteppingTestPasteboardReader: PasteboardReading {
 
     func reread(change: PasteboardChange, unavailableTypes: [(itemIndex: Int, uti: String)]) -> PasteboardChange {
         rereadCount += 1
+        if let rereadHandler { return rereadHandler(change, unavailableTypes) }
         return rereadResult ?? change
     }
 }

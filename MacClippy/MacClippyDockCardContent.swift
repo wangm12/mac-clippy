@@ -27,6 +27,7 @@ extension MacClippyDockView {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .padding(MacClippyDockCardMetrics.padding)
+        .padding(.top, 16)
         .frame(
             width: MacClippyDockCardMetrics.width,
             height: MacClippyDockCardMetrics.height(for: dynamicTypeSize),

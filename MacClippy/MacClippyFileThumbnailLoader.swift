@@ -11,110 +11,114 @@ enum MacClippyFileThumbnailPolicy {
     }
 }
 
+enum MacClippyFileThumbnailRasterPolicy {
+    static let maximumPointDimension: CGFloat = 1_536
+    static let maximumPixelDimension = 3_072
+    static let maximumDecodedBytes = 36 * 1_024 * 1_024
+
+    static func normalizedPointSize(_ size: CGSize) -> CGSize {
+        let width = safeDimension(size.width)
+        let height = safeDimension(size.height)
+        let longestEdge = max(width, height)
+        let scale = min(1, maximumPointDimension / longestEdge)
+        return CGSize(width: max(1, width * scale), height: max(1, height * scale))
+    }
+
+    static func cacheDimension(_ dimension: CGFloat) -> Int {
+        Int(safeDimension(dimension).rounded())
+    }
+
+    static func maximumPixelSize(for size: CGSize, scale: CGFloat) -> Int {
+        let normalized = normalizedPointSize(size)
+        let safeScale = scale.isFinite && scale > 0 ? scale : 1
+        let pixels = max(normalized.width, normalized.height) * safeScale
+        return Int(min(CGFloat(maximumPixelDimension), max(1, pixels)).rounded(.up))
+    }
+
+    private static func safeDimension(_ value: CGFloat) -> CGFloat {
+        guard value.isFinite, value > 0 else { return 1 }
+        return min(maximumPointDimension, value)
+    }
+}
+
 /// Raster files use ImageIO. Quick Look's best-representation path talks to
 /// WindowServer and freezes fullscreen Spaces for WeChat/Library JPEGs.
 enum MacClippyFileThumbnailLoader {
-    private static let cache = MacClippyFileThumbnailCache()
-    private static let flights = MacClippyFileThumbnailFlights()
+    private static let service = MacClippyFileThumbnailService(
+        imageIODecoder: { url, pointSize, isCancelled in
+            imageIOThumbnail(
+                url: url,
+                pointSize: pointSize,
+                scale: 2,
+                isCancelled: isCancelled
+            )
+        },
+        workspaceIconRenderer: { url, pointSize, isCancelled in
+            workspaceIcon(for: url, pointSize: pointSize, isCancelled: isCancelled)
+        }
+    )
 
     static func cacheKey(url: URL, pointSize: CGSize) -> String {
-        "\(url.path)|\(Int(pointSize.width.rounded()))x\(Int(pointSize.height.rounded()))"
+        let normalized = MacClippyFileThumbnailRasterPolicy.normalizedPointSize(pointSize)
+        let width = MacClippyFileThumbnailRasterPolicy.cacheDimension(normalized.width)
+        let height = MacClippyFileThumbnailRasterPolicy.cacheDimension(normalized.height)
+        return "\(url.path)|\(width)x\(height)"
     }
 
     static func resetForSessionEnd() {
-        cache.removeAllObjects()
+        service.resetForSessionEnd()
     }
 
     static func cachedImage(for url: URL, pointSize: CGSize) -> CGImage? {
-        cache.object(for: cacheKey(url: url, pointSize: pointSize))
+        service.cachedImage(forKey: cacheKey(url: url, pointSize: pointSize))
     }
 
     static func image(for url: URL, pointSize: CGSize) async -> CGImage? {
-        let key = cacheKey(url: url, pointSize: pointSize)
-        if let cached = cache.object(for: key) {
-            return cached
-        }
-        let image = await flights.takeoff(key: key) {
-            await render(url: url, pointSize: pointSize)
-        }
-        if let image {
-            cache.setObject(image, for: key)
-        }
-        return Task.isCancelled ? nil : image
+        await service.image(
+            for: url,
+            pointSize: MacClippyFileThumbnailRasterPolicy.normalizedPointSize(pointSize)
+        )
     }
 
-    private static func render(url: URL, pointSize: CGSize) async -> CGImage? {
-        if MacClippyFileThumbnailPolicy.usesImageIO(for: url) {
-            return imageIOThumbnail(url: url, pointSize: pointSize, scale: 2)
-        }
-        return await MainActor.run {
-            workspaceIcon(for: url, pointSize: pointSize)
-        }
-    }
-
-    private static func imageIOThumbnail(url: URL, pointSize: CGSize, scale: CGFloat) -> CGImage? {
-        let maxPixel = max(1, Int(max(pointSize.width, pointSize.height) * scale))
+    private static func imageIOThumbnail(
+        url: URL,
+        pointSize: CGSize,
+        scale: CGFloat,
+        isCancelled: @Sendable () -> Bool
+    ) -> CGImage? {
+        guard !isCancelled() else { return nil }
+        let maxPixel = MacClippyFileThumbnailRasterPolicy.maximumPixelSize(
+            for: pointSize,
+            scale: scale
+        )
         let sourceOptions: [CFString: Any] = [kCGImageSourceShouldCache: false]
         guard let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions as CFDictionary) else {
             return nil
         }
+        guard !isCancelled() else { return nil }
         let options: [CFString: Any] = [
             kCGImageSourceShouldCache: false,
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceThumbnailMaxPixelSize: maxPixel,
             kCGImageSourceCreateThumbnailWithTransform: true
         ]
-        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+        let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+        return isCancelled() ? nil : image
     }
 
-    private static func workspaceIcon(for url: URL, pointSize: CGSize) -> CGImage? {
+    @MainActor
+    private static func workspaceIcon(
+        for url: URL,
+        pointSize: CGSize,
+        isCancelled: @Sendable () -> Bool
+    ) -> CGImage? {
+        guard !isCancelled() else { return nil }
         let icon = NSWorkspace.shared.icon(forFile: url.path)
+        guard !isCancelled() else { return nil }
         return MacClippySourceAppIcon.rasterized(
             icon,
             pointSize: max(pointSize.width, pointSize.height)
         )
-    }
-}
-
-private actor MacClippyFileThumbnailFlights {
-    private var inFlight: [String: Task<CGImage?, Never>] = [:]
-
-    func takeoff(
-        key: String,
-        work: @escaping @Sendable () async -> CGImage?
-    ) async -> CGImage? {
-        if let existing = inFlight[key] {
-            return await existing.value
-        }
-        let task = Task.detached(priority: .utility) {
-            await work()
-        }
-        inFlight[key] = task
-        let image = await task.value
-        inFlight[key] = nil
-        return image
-    }
-}
-
-private final class MacClippyFileThumbnailCache: @unchecked Sendable {
-    private let storage = NSCache<NSString, CGImage>()
-
-    init() {
-        storage.countLimit = 48
-        storage.totalCostLimit = 32 * 1_024 * 1_024
-    }
-
-    func object(for key: String) -> CGImage? {
-        storage.object(forKey: key as NSString)
-    }
-
-    func setObject(_ image: CGImage, for key: String) {
-        let cost = max(1, image.width * image.height * 4)
-        storage.setObject(image, forKey: key as NSString, cost: cost)
-    }
-
-    func removeAllObjects() {
-        storage.removeAllObjects()
     }
 }
 

@@ -14,21 +14,96 @@ import Foundation
 /// detection.
 public final class MacClippySnippetKeyPoster {
     public typealias Post = (CGEvent, CGEvent, CGEventTapLocation) -> Void
+    public typealias PostEvent = (CGEvent, CGEventTapLocation) -> Void
+    public typealias PostToProcess = (CGEvent, CGEvent, Int32) -> Void
+    public typealias PostEventToProcess = (CGEvent, Int32) -> Void
 
     public static let tapLocation: CGEventTapLocation = .cgAnnotatedSessionEventTap
 
     private let postEvents: Post
+    private let postEvent: PostEvent
+    private let postEventsToProcess: PostToProcess?
+    private let postEventToProcess: PostEventToProcess?
 
     public init(
         postEvents: @escaping Post = { keyDown, keyUp, tap in
             keyDown.post(tap: tap)
             keyUp.post(tap: tap)
-        }
+        },
+        postEvent: @escaping PostEvent = { event, tap in event.post(tap: tap) },
+        postEventsToProcess: PostToProcess? = nil,
+        postEventToProcess: PostEventToProcess? = nil
     ) {
         self.postEvents = postEvents
+        self.postEvent = postEvent
+        self.postEventsToProcess = postEventsToProcess
+        self.postEventToProcess = postEventToProcess
     }
 
-    public func post(keyCode: UInt16) {
+    @discardableResult
+    public func post(
+        keyCode: UInt16,
+        gate: MacClippyPasteInjectionGate? = nil,
+        targetProcessIdentifier: Int32? = nil
+    ) -> Bool {
+        post(keyCodes: [keyCode], gate: gate, targetProcessIdentifier: targetProcessIdentifier)
+    }
+
+    /// Prepares and admits a complete key sequence as one cancellable commit.
+    /// Once admitted, every key pair is posted even if the gate closes; callers
+    /// use this for edits that must be completed before their matching paste.
+    @discardableResult
+    public func post(
+        keyCodes: [UInt16],
+        gate: MacClippyPasteInjectionGate? = nil,
+        targetProcessIdentifier: Int32? = nil
+    ) -> Bool {
+        let events = keyCodes.compactMap(makeEvents)
+        guard events.count == keyCodes.count else { return false }
+        let operation = {
+            events.forEach { self.post($0, targetProcessIdentifier: targetProcessIdentifier) }
+        }
+        if let gate {
+            return gate.withCommitGate(operation) != nil
+        }
+        operation()
+        return true
+    }
+
+    /// Replays a captured event after a previously suppressed Tab delimiter.
+    /// This runs on a worker queue so the event-tap callback never waits for
+    /// event delivery or an injected test hook.
+    public func post(event: CGEvent, targetProcessIdentifier: Int32? = nil) {
+        if let targetProcessIdentifier {
+            if let postEventToProcess {
+                postEventToProcess(event, targetProcessIdentifier)
+            } else {
+                event.postToPid(pid_t(targetProcessIdentifier))
+            }
+        } else {
+            postEvent(event, Self.tapLocation)
+        }
+    }
+
+    private func post(_ events: KeyEvents, targetProcessIdentifier: Int32?) {
+        guard let targetProcessIdentifier else {
+            postEvents(events.keyDown, events.keyUp, Self.tapLocation)
+            return
+        }
+        if let postEventsToProcess {
+            postEventsToProcess(events.keyDown, events.keyUp, targetProcessIdentifier)
+        } else {
+            events.keyDown.postToPid(pid_t(targetProcessIdentifier))
+            events.keyUp.postToPid(pid_t(targetProcessIdentifier))
+        }
+    }
+
+    private struct KeyEvents {
+        let keyDown: CGEvent
+        let keyUp: CGEvent
+    }
+
+    private func makeEvents(_ keyCode: UInt16) -> KeyEvents? {
         guard let source = CGEventSource(stateID: .combinedSessionState),
               let keyDown = CGEvent(
                   keyboardEventSource: source,
@@ -41,8 +116,8 @@ public final class MacClippySnippetKeyPoster {
                   keyDown: false
               )
         else {
-            return
+            return nil
         }
-        postEvents(keyDown, keyUp, Self.tapLocation)
+        return KeyEvents(keyDown: keyDown, keyUp: keyUp)
     }
 }

@@ -12,6 +12,7 @@ extension MacClippyDockView {
     func handleCardClick(
         clickCount: Int,
         modifiers: NSEvent.ModifierFlags,
+        target: MacClippyDockPreviewTarget,
         focus: () -> Void,
         selection: ((MacClippyDockSelectionClickPolicy.Action) -> Void)? = nil
     ) {
@@ -23,10 +24,9 @@ extension MacClippyDockView {
         switch action {
         case .copy:
             focus()
-            model.copyFocused(
-                plain: false,
+            model.copyTarget(
+                target,
                 completion: {
-                    onCopyToast(MacClippyDockActionFeedback.copied(plain: false).title)
                     onClose()
                 }
             )

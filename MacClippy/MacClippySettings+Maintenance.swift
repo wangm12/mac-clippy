@@ -204,6 +204,11 @@ extension MacClippySettingsView {
     }
 
     func updateLaunchAtLogin(_ enabled: Bool) {
+#if MACCLIPPY_E2E
+        launchAtLogin = false
+        launchAtLoginError = nil
+        return
+#else
         do {
             try MacClippyLaunchAtLoginRegistration.setEnabled(enabled)
             launchAtLoginError = nil
@@ -223,6 +228,7 @@ extension MacClippySettingsView {
             )
             launchAtLoginError = "Could not update Launch at Login. Check System Settings and try again."
         }
+#endif
     }
 
     func deleteUnpinnedHistory() {

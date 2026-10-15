@@ -4,6 +4,10 @@ import MacClippyCore
 import MacClippyPlatform
 import SwiftUI
 
+// Defaults to the production main hop; injectable so lifecycle tests can delay
+// and reorder the real queue callbacks deterministically.
+typealias MacClippyQueuePasteMainHop = @Sendable (@escaping @MainActor () -> Void) -> Void
+
 extension MacClippyDockModel {
     /// Mixed-content sequential queue paste for the current ordered multi-
     /// selection. Processes the selected IDs one at a time in visual order,
@@ -17,7 +21,13 @@ extension MacClippyDockModel {
     /// existing completion; partial completion (some unavailable) and manual-
     /// paste stop keep the dock open so the explicit result is visible. No
     /// success is reported for skipped or unconsumed IDs.
-    func pasteQueued(completion: @escaping @MainActor @Sendable () -> Void) {
+    func pasteQueued(
+        completion: @escaping @MainActor @Sendable () -> Void,
+        enqueueMainHop: @escaping MacClippyQueuePasteMainHop = { work in
+            MacClippyMainHop.async(work)
+        }
+    ) {
+        guard selectionIsReady else { return }
         guard selectedTab != .snippets, hasMultipleSelection else {
             pasteFocused(completion: completion)
             return
@@ -31,25 +41,30 @@ extension MacClippyDockModel {
         let opGeneration = operationGeneration
         let session = sessionGeneration
         let runtime = runtime
+        let targetPID = pasteTargetProcessIdentifier
         let sideEffectGate = MacClippyPasteInjectionGate()
         self.sideEffectGate = sideEffectGate
         clearActionError()
 
         workQueue.async { [weak self, runtime, cancellationToken, sideEffectGate] in
-            let model = self
             let result = Result {
                 try runtime.pasteQueued(
                     ids: orderedIDs,
                     shouldCancel: { cancellationToken.isCancelled },
                     sideEffectGate: sideEffectGate,
-                    onProgress: { done, total in
-                        MacClippyMainHop.async {
-                            model?.queuePasteProgress = (done, total)
+                    targetProcessIdentifier: targetPID,
+                    onProgress: { [weak self] done, total in
+                        enqueueMainHop { [weak self] in
+                            guard let self,
+                                  self.sessionGeneration == session,
+                                  self.operationGeneration == opGeneration,
+                                  self.queuePasteCancellationToken === cancellationToken else { return }
+                            self.queuePasteProgress = (done, total)
                         }
                     }
                 )
             }
-            MacClippyMainHop.async { [weak self] in
+            enqueueMainHop { [weak self] in
                 self?.finishQueuedPaste(
                     result: result,
                     session: session,
@@ -68,12 +83,12 @@ extension MacClippyDockModel {
         cancellationToken: MacClippyCancellationToken,
         completion: @escaping @MainActor @Sendable () -> Void
     ) {
+        guard sessionGeneration == session,
+              operationGeneration == operation,
+              queuePasteCancellationToken === cancellationToken else { return }
+
+        queuePasteCancellationToken = nil
         queuePasteProgress = nil
-        guard sessionGeneration == session else { return }
-        if queuePasteCancellationToken === cancellationToken {
-            queuePasteCancellationToken = nil
-        }
-        guard operationGeneration == operation else { return }
 
         switch result {
         case let .success(queueResult):
@@ -92,17 +107,24 @@ extension MacClippyDockModel {
                         unavailableKinds: unavailableKinds
                     ))
                 }
-            case let .manualPasteRequired(
+            case let .preparedForManualPaste(
                 injectedIDs,
                 unavailableIDs,
                 unavailableKinds,
-                manualPasteRequiredID,
+                preparedID,
                 remainingIDs
             ):
                 _ = unavailableIDs
                 _ = unavailableKinds
-                _ = manualPasteRequiredID
+                _ = preparedID
                 showActionFeedback(.queuePasteManualStop(
+                    injectedCount: injectedIDs.count,
+                    remainingCount: remainingIDs.count
+                ))
+            case let .failed(_, _, _, _, failure, _):
+                setActionError(failure.localizedDescription)
+            case let .cancelled(injectedIDs, _, _, remainingIDs):
+                showActionFeedback(.queuePasteCancelled(
                     injectedCount: injectedIDs.count,
                     remainingCount: remainingIDs.count
                 ))
@@ -112,12 +134,13 @@ extension MacClippyDockModel {
         }
     }
 
-    func deleteSelected() {
-        guard selectedTab != .snippets, hasAnySelectedRecords else {
+    func deleteSelected(confirmedIDs: [RecordID]? = nil) {
+        guard confirmedIDs != nil || selectionIsReady else { return }
+        guard confirmedIDs != nil || (selectedTab != .snippets && hasAnySelectedRecords) else {
             deleteFocused()
             return
         }
-        let orderedIDs = orderedSelectedRecordIDs
+        let orderedIDs = confirmedIDs ?? orderedSelectedRecordIDs
         guard !orderedIDs.isEmpty else { return }
 
         beginUserOperation()
@@ -158,13 +181,15 @@ extension MacClippyDockModel {
         }
     }
 
-    func pinSelected() {
-        guard selectedTab != .snippets, hasAnySelectedRecords,
-              let target = batchPinTarget
+    func pinSelected(to boardID: RecordID? = nil, ids: [RecordID]? = nil) {
+        guard ids != nil || selectionIsReady else { return }
+        let chosenBoard = boardID.flatMap { id in pinboards.first { $0.id == id } }
+        guard ids != nil || (selectedTab != .snippets && hasAnySelectedRecords),
+              let target = boardID == nil ? batchPinTarget : chosenBoard
         else {
             return
         }
-        let orderedIDs = orderedSelectedRecordIDs
+        let orderedIDs = ids ?? orderedSelectedRecordIDs
         guard !orderedIDs.isEmpty else { return }
 
         beginUserOperation()

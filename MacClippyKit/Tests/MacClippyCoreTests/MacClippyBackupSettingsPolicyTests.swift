@@ -84,7 +84,8 @@ final class MacClippyBackupSettingsPolicyTests: XCTestCase {
                 files: files
             ),
             databaseHealth: Dictionary(uniqueKeysWithValues: names.map { ($0, healthy) }),
-            databaseRowCounts: Dictionary(uniqueKeysWithValues: names.map { ($0, Int64(1)) })
+            databaseRowCounts: Dictionary(uniqueKeysWithValues: names.map { ($0, Int64(1)) }),
+            keyCompatible: true
         )
         XCTAssertTrue(MacClippyBackupSettingsPolicy.canRestore(complete))
 

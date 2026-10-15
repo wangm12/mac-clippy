@@ -110,7 +110,24 @@ struct MacClippyGlassContainer<Content: View>: View {
     }
 }
 
+private struct MacClippyChromePressFeedbackStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.55 : 1)
+            .animation(nil, value: configuration.isPressed)
+    }
+}
+
 extension View {
+    @ViewBuilder
+    private func macClippyChipButtonInteraction(pressFeedback: Bool) -> some View {
+        if pressFeedback {
+            buttonStyle(MacClippyChromePressFeedbackStyle())
+        } else {
+            buttonStyle(.plain)
+        }
+    }
+
     @ViewBuilder
     func macClippyFloatingGlass<S: Shape>(in shape: S, interactive: Bool = false) -> some View {
         if #available(macOS 26, *) {
@@ -168,18 +185,20 @@ extension View {
     // washes so the glass recipe never changes. `.interactive()` press
     // plus a tinted recipe each flashed the chip on click.
     @ViewBuilder
-    func macClippyFilterChipStyle(selected: Bool, hovered: Bool = false, tint: Color) -> some View {
+    func macClippyFilterChipStyle(
+        selected: Bool, hovered: Bool = false, tint: Color, pressFeedback: Bool = false
+    ) -> some View {
         let wash = tint.opacity(
             MacClippyDockFilterPillWashPolicy.opacity(selected: selected, hovered: hovered)
         )
         if #available(macOS 26, *) {
             self
-                .buttonStyle(.plain)
+                .macClippyChipButtonInteraction(pressFeedback: pressFeedback)
                 .background(wash, in: Capsule())
                 .glassEffect(.regular, in: .capsule)
         } else {
             self
-                .buttonStyle(.plain)
+                .macClippyChipButtonInteraction(pressFeedback: pressFeedback)
                 .background(wash, in: Capsule())
         }
     }

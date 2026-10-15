@@ -17,13 +17,23 @@ final class MacClippySettingsWindowCoordinator: NSObject, NSWindowDelegate {
     static let shared = MacClippySettingsWindowCoordinator()
 
     private weak var window: NSWindow?
+    // A closed Settings window stays cached. The registered scene replaces it
+    // when available; opening it again must not rebuild the whole SwiftUI form.
     private var fallbackWindow: NSWindow?
     private var fallbackHostingView: NSView?
     private var retiringWindows: [NSWindow] = []
     private var shouldBringRegisteredWindowToFront = false
+    private var defaultsProvider: MacClippySettingsDefaultsProvider?
     private(set) var lastBroughtToFrontWindow: NSWindow?
 
+    func configureDefaultsProvider(_ provider: MacClippySettingsDefaultsProvider) {
+        defaultsProvider = provider
+    }
+
     func register(_ window: NSWindow) {
+#if MACCLIPPY_E2E
+        if self.window !== window { MacClippyE2EUIInteractionProbe.shared.mark("settings-registered") }
+#endif
         self.window = window
         if let fallbackWindow, fallbackWindow !== window {
             discardFallbackWindow()
@@ -46,16 +56,25 @@ final class MacClippySettingsWindowCoordinator: NSObject, NSWindowDelegate {
         if let window {
             shouldBringRegisteredWindowToFront = false
             activateAndBringToFront(window)
+#if MACCLIPPY_E2E
+            MacClippyE2EUIInteractionProbe.shared.mark("settings-reused")
+#endif
             return
         }
         if let fallbackWindow {
             activateAndBringToFront(fallbackWindow)
+#if MACCLIPPY_E2E
+            MacClippyE2EUIInteractionProbe.shared.mark("settings-reused")
+#endif
             return
         }
         presentFallbackWindow()
     }
 
     private func presentFallbackWindow() {
+#if MACCLIPPY_E2E
+        MacClippyE2EUIInteractionProbe.shared.mark("settings-fallback-start")
+#endif
         let hostingView = NSHostingView(rootView: fallbackRootView())
         let fallbackWindow = NSWindow(
             contentRect: NSRect(
@@ -81,21 +100,18 @@ final class MacClippySettingsWindowCoordinator: NSObject, NSWindowDelegate {
         self.fallbackWindow = fallbackWindow
         fallbackWindow.center()
         activateAndBringToFront(fallbackWindow)
-    }
-
-    func windowWillClose(_ notification: Notification) {
-        guard let closedWindow = notification.object as? NSWindow,
-              closedWindow === fallbackWindow else { return }
-        fallbackHostingView = nil
-        fallbackWindow = nil
+#if MACCLIPPY_E2E
+        MacClippyE2EUIInteractionProbe.shared.mark("settings-fallback-mounted")
+#endif
     }
 
     private func fallbackRootView() -> AnyView {
         if isRunningUnderXCTest {
             return AnyView(Color.clear)
         }
+        guard let defaultsProvider else { return AnyView(Color.clear) }
         return AnyView(
-            MacClippySettingsView()
+            MacClippySettingsDefaultsHost(provider: defaultsProvider)
                 .environment(\.macClippyShouldRegisterSettingsWindow, false)
         )
     }

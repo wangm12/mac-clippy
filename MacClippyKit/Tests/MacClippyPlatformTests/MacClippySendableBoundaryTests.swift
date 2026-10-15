@@ -56,14 +56,14 @@ final class MacClippySendableBoundaryTests: XCTestCase {
         XCTAssertNil(snapshot.body(for: ";initial"))
     }
 
-    func testPasteboardSentinelConcurrentlyRegistersAndConsumesEveryToken() {
+    func testPasteboardSentinelConcurrentlyBoundsAndConsumesRecentTokens() {
         let sentinel = MacClippyPasteboardWriteSentinel()
         let base = 10_000
 
         DispatchQueue.concurrentPerform(iterations: 128) { index in
             sentinel.beginWrite(expectedChangeCount: base + index)
         }
-        XCTAssertEqual(sentinel.pendingCount, 128)
+        XCTAssertEqual(sentinel.pendingCount, 32)
 
         let matchedCount = LockedCounter()
         DispatchQueue.concurrentPerform(iterations: 128) { index in
@@ -72,7 +72,7 @@ final class MacClippySendableBoundaryTests: XCTestCase {
             }
         }
 
-        XCTAssertEqual(matchedCount.value, 128)
+        XCTAssertEqual(matchedCount.value, 32)
         XCTAssertEqual(sentinel.pendingCount, 0)
     }
 

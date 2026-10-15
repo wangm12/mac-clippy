@@ -10,12 +10,13 @@ extension MacClippyRuntime {
     /// selection, merge the plain-text payloads in visual order with a newline
     /// delimiter and inject a single paste (preserving the target app). For a
     /// mixed selection, never paste a subset: return an explicit
-    /// manualPasteRequired result carrying the supported and unsupported IDs so
+    /// explicit result carrying the supported and unsupported IDs so
     /// the caller can report exactly what was not pasted. No item is silently
     /// dropped. The frequency of every pasted (text-merged) record is bumped.
     @discardableResult
     func pasteOrdered(
         ids: [RecordID],
+        targetProcessIdentifier: Int32? = nil,
         sideEffectGate: MacClippyPasteInjectionGate? = nil
     ) throws -> MacClippyMultiPasteResult {
         try measureDiagnosticMetric("paste_ordered") {
@@ -26,9 +27,10 @@ extension MacClippyRuntime {
                 let injection = injectPasteboardContent(
                     .text(text),
                     frequencyIDs: ids,
+                    targetProcessIdentifier: targetProcessIdentifier,
                     sideEffectGate: sideEffectGate
                 )
-                return .merged(injected: injection == .injected)
+                return .merged(result: injection)
             case let .mixed(supportedIDs, unsupportedIDs, unsupportedKinds):
                 return .mixed(
                     supportedIDs: supportedIDs,
