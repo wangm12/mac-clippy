@@ -68,6 +68,12 @@ struct MacClippyE2EUIInteractionSample: Codable, Sendable {
     var pointerX: Double?
     var pointerY: Double?
     var primaryScreenMaxY: Double?
+    var buttonNumber: Int?
+    var clickCount: Int?
+    var pressedMouseButtons: Int?
+    var modifierFlags: UInt?
+    var hitViewClass: String?
+    var hitViewFrame: String?
 }
 
 /// Measures in-app event and presentation timing; never generates input.
@@ -121,6 +127,17 @@ final class MacClippyE2EUIInteractionProbe {
             sample.pointerX = Double(NSEvent.mouseLocation.x)
             sample.pointerY = Double(NSEvent.mouseLocation.y)
             sample.primaryScreenMaxY = NSScreen.screens.first.map { Double($0.frame.maxY) }
+            sample.buttonNumber = event.buttonNumber
+            sample.clickCount = event.clickCount
+            sample.pressedMouseButtons = Int(NSEvent.pressedMouseButtons)
+            sample.modifierFlags = event.modifierFlags.rawValue
+            if let content = event.window?.contentView {
+                let point = content.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow
+                if let hit = content.hitTest(point) {
+                    sample.hitViewClass = NSStringFromClass(type(of: hit))
+                    sample.hitViewFrame = NSStringFromRect(hit.frame)
+                }
+            }
         }
         samples.append(sample)
         if samples.count > 128 { samples.removeFirst(samples.count - 128) }

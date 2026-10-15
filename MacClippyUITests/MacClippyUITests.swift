@@ -43,6 +43,14 @@ final class MacClippyUITests: XCTestCase {
     }
 
     func testNativeNavigationRespondsToOneClick() throws {
+        try exerciseNativeNavigation(held: false)
+    }
+
+    func testNativeNavigationWithHeldClick() throws {
+        try exerciseNativeNavigation(held: true)
+    }
+
+    private func exerciseNativeNavigation(held: Bool) throws {
         continueAfterFailure = false
         let application = try launchIsolatedApplication()
         defer { application.terminate() }
@@ -52,7 +60,11 @@ final class MacClippyUITests: XCTestCase {
         XCTAssertTrue(snippets.isEnabled)
         let coordinate = snippets.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5))
         coordinate.hover()
-        coordinate.click()
+        if held {
+            coordinate.click(forDuration: 0.15, thenDragTo: coordinate)
+        } else {
+            coordinate.click()
+        }
         let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: snippets)
         XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 5), .completed,
                        "One native navigation click must select Snippets\n\(failureContext(application))")
@@ -69,7 +81,11 @@ final class MacClippyUITests: XCTestCase {
         // accessibility performPress would not detect the original dead area.
         let coordinate = control.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).withOffset(offset)
         coordinate.hover()
-        coordinate.click()
+        if control.elementType == .menuButton {
+            coordinate.click()
+        } else {
+            coordinate.click(forDuration: 0.15, thenDragTo: coordinate)
+        }
     }
 
     private func waitForDismissal(_ element: XCUIElement) {
