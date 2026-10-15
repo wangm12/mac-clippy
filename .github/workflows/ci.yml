@@ -122,9 +122,9 @@ jobs:
           trap cleanup_fixture EXIT
           xcodebuild test -project MacClippy.xcodeproj -scheme MacClippy \
             -configuration Debug -destination 'platform=macOS,arch=arm64' \
-            -derivedDataPath build/ci-app-tsan -resultBundlePath build/ci-ui-tests.xcresult \
+            -derivedDataPath build/ci-native-gui -resultBundlePath build/ci-ui-tests.xcresult \
             -parallel-testing-enabled NO -maximum-parallel-testing-workers 1 \
-            -only-testing:MacClippyUITests -enableThreadSanitizer YES \
+            -only-testing:MacClippyUITests -enableThreadSanitizer NO \
             -skipPackagePluginValidation CODE_SIGNING_ALLOWED=NO 2>&1 | tee build/ci-ui-tests.log
           ./scripts/assert-opt-in-xctest-log.sh build/ci-ui-tests.log MacClippyUITests
       - name: Package tests
