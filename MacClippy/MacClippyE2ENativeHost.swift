@@ -76,6 +76,9 @@ struct MacClippyE2EUIInteractionSample: Codable, Sendable {
     var hitViewFrame: String?
     var hitViewCanMoveWindow: Bool?
     var windowMovable: Bool?
+    var hitSharesEventWindow: Bool?
+    var hitLocalX: Double?
+    var hitLocalY: Double?
 }
 
 /// Measures in-app event and presentation timing; never generates input.
@@ -139,6 +142,10 @@ final class MacClippyE2EUIInteractionProbe {
                     sample.hitViewClass = NSStringFromClass(type(of: hit))
                     sample.hitViewFrame = NSStringFromRect(hit.frame)
                     sample.hitViewCanMoveWindow = hit.mouseDownCanMoveWindow
+                    sample.hitSharesEventWindow = hit.window != nil && hit.window === event.window
+                    let local = hit.convert(event.locationInWindow, from: nil)
+                    sample.hitLocalX = Double(local.x)
+                    sample.hitLocalY = Double(local.y)
                 }
             }
             sample.windowMovable = event.window?.isMovable

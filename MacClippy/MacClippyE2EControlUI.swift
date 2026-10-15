@@ -17,6 +17,10 @@ extension AppDelegate {
         guard await waitForE2EPanel(controller) else {
             return MacClippyE2EControlResponse(isOK: false, errorCode: "panel-interactive-timeout")
         }
+        if ProcessInfo.processInfo.environment["MACCLIPPY_E2E_SOLID_BACKDROP"] == "1" {
+            controller.panelContentView?.backdropView.applyTransparencyPolicy(reduceTransparency: true)
+            await flushE2EPanelRendering(controller)
+        }
         let completed = DispatchTime.now().uptimeNanoseconds
         return MacClippyE2EControlResponse(
             isOK: true,

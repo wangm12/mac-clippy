@@ -62,6 +62,7 @@ extension AppDelegate {
         return [
             "applicationActive": NSApp.isActive,
             "visible": controller.panel?.isVisible == true,
+            "glassBackdrop": controller.panelContentView?.backdropView.isShowingGlass == true,
             "keyWindow": controller.panel?.isKeyWindow == true,
             "initialPaint": controller.model.hasCompletedInitialPaint,
             "loading": controller.model.isLoading,

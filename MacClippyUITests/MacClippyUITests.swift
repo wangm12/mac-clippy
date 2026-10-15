@@ -50,11 +50,22 @@ final class MacClippyUITests: XCTestCase {
         try exerciseNativeNavigation(held: true)
     }
 
-    private func exerciseNativeNavigation(held: Bool) throws {
+    func testNativeNavigationWithSolidBackdrop() throws {
+        try exerciseNativeNavigation(held: false, solidBackdrop: true)
+    }
+
+    private func exerciseNativeNavigation(held: Bool, solidBackdrop: Bool = false) throws {
         continueAfterFailure = false
-        let application = try launchIsolatedApplication()
+        let application = try launchIsolatedApplication(solidBackdrop: solidBackdrop)
         defer { application.terminate() }
         try showPanel(in: application)
+        if solidBackdrop {
+            let data = Data(try controlRequest("metrics").utf8)
+            let result = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let response = try XCTUnwrap(result["response"] as? [String: Any])
+            let readiness = try XCTUnwrap(response["panelReadiness"] as? [String: Bool])
+            XCTAssertEqual(readiness["glassBackdrop"], false)
+        }
         let snippets = application.buttons["Snippets"]
         XCTAssertTrue(snippets.waitForExistence(timeout: 5))
         XCTAssertTrue(snippets.isEnabled)
@@ -126,7 +137,7 @@ final class MacClippyUITests: XCTestCase {
         return response
     }
 
-    private func launchIsolatedApplication() throws -> XCUIApplication {
+    private func launchIsolatedApplication(solidBackdrop: Bool = false) throws -> XCUIApplication {
         let environment = ProcessInfo.processInfo.environment
         guard let root = environment["MACCLIPPY_E2E_ROOT"],
               let runID = environment["MACCLIPPY_E2E_RUN_ID"],
@@ -142,6 +153,7 @@ final class MacClippyUITests: XCTestCase {
         let application = XCUIApplication()
         application.launchEnvironment["MACCLIPPY_E2E_ROOT"] = root
         application.launchEnvironment["MACCLIPPY_E2E_RUN_ID"] = runID
+        if solidBackdrop { application.launchEnvironment["MACCLIPPY_E2E_SOLID_BACKDROP"] = "1" }
         application.launch()
 
         // The isolated app starts as a background accessory. Foreground state
