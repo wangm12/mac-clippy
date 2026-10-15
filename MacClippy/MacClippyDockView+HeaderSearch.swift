@@ -28,6 +28,7 @@ struct MacClippyDockSearchFieldWell<Content: View>: View {
                 Capsule()
                     .inset(by: MacClippyDockTheme.pillBorderInset)
                     .stroke(searchStrokeColor, lineWidth: searchStrokeWidth)
+                    .allowsHitTesting(false)
             }
             .shadow(
                 color: isSearchFocused && !highContrast ? MacClippyDockTheme.searchFocusGlow : .clear,

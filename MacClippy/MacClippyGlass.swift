@@ -204,7 +204,13 @@ extension View {
             self
                 .macClippyChipButtonInteraction(pressFeedback: pressFeedback)
                 .background(wash, in: Capsule())
-                .glassEffect(.regular, in: .capsule)
+                // Decoration must not wrap the control's native hit region.
+                .background {
+                    Capsule()
+                        .fill(.clear)
+                        .glassEffect(.regular, in: .capsule)
+                        .allowsHitTesting(false)
+                }
         } else {
             self
                 .macClippyChipButtonInteraction(pressFeedback: pressFeedback)
