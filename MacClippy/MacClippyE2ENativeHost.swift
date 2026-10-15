@@ -74,6 +74,8 @@ struct MacClippyE2EUIInteractionSample: Codable, Sendable {
     var modifierFlags: UInt?
     var hitViewClass: String?
     var hitViewFrame: String?
+    var hitViewCanMoveWindow: Bool?
+    var windowMovable: Bool?
 }
 
 /// Measures in-app event and presentation timing; never generates input.
@@ -136,8 +138,10 @@ final class MacClippyE2EUIInteractionProbe {
                 if let hit = content.hitTest(point) {
                     sample.hitViewClass = NSStringFromClass(type(of: hit))
                     sample.hitViewFrame = NSStringFromRect(hit.frame)
+                    sample.hitViewCanMoveWindow = hit.mouseDownCanMoveWindow
                 }
             }
+            sample.windowMovable = event.window?.isMovable
         }
         samples.append(sample)
         if samples.count > 128 { samples.removeFirst(samples.count - 128) }

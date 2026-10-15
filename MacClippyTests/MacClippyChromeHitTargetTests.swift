@@ -5,6 +5,14 @@ import XCTest
 
 final class MacClippyChromeHitTargetTests: XCTestCase {
     @MainActor
+    func testDockCannotCaptureControlClicksForWindowDragging() {
+        let panel = MacClippyDockPanel(contentRect: NSRect(x: 0, y: 0, width: 1_024, height: 360))
+        defer { panel.close() }
+        XCTAssertFalse(panel.isMovable, "The bottom dock must not capture control clicks for window dragging")
+        XCTAssertFalse(panel.isMovableByWindowBackground)
+    }
+
+    @MainActor
     func testNativeClickHarnessDeliversOneClickToAppKit() async throws {
         let target = ChromeClickTarget()
         let button = NSButton(frame: NSRect(x: 32, y: 22, width: 36, height: 36))
