@@ -142,7 +142,6 @@ final class MacClippyUITests: XCTestCase {
         let application = XCUIApplication()
         application.launchEnvironment["MACCLIPPY_E2E_ROOT"] = root
         application.launchEnvironment["MACCLIPPY_E2E_RUN_ID"] = runID
-        application.launchArguments.append("-XCTest")
         application.launch()
 
         // The isolated app starts as a background accessory. Foreground state
