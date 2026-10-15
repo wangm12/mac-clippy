@@ -60,6 +60,14 @@ struct MacClippyE2EUIInteractionSample: Codable, Sendable {
     let eventAgeMS: Double?
     let sinceMouseDownMS: Double?
     let sinceMouseUpMS: Double?
+    var windowNumber: Int?
+    var windowLocalX: Double?
+    var windowLocalY: Double?
+    var windowFrameX: Double?
+    var windowFrameY: Double?
+    var pointerX: Double?
+    var pointerY: Double?
+    var primaryScreenMaxY: Double?
 }
 
 /// Measures in-app event and presentation timing; never generates input.
@@ -99,11 +107,22 @@ final class MacClippyE2EUIInteractionProbe {
     func mark(_ name: String, event: NSEvent? = nil) {
         guard mouseMonitor != nil else { return }
         let now = ProcessInfo.processInfo.systemUptime
-        samples.append(.init(
+        var sample = MacClippyE2EUIInteractionSample(
             event: name, uptime: now, applicationActive: NSApp.isActive,
             eventAgeMS: event.map { (now - $0.timestamp) * 1_000 },
             sinceMouseDownMS: mouseDown.map { (now - $0) * 1_000 },
-            sinceMouseUpMS: mouseUp.map { (now - $0) * 1_000 }))
+            sinceMouseUpMS: mouseUp.map { (now - $0) * 1_000 })
+        if let event {
+            sample.windowNumber = event.windowNumber
+            sample.windowLocalX = Double(event.locationInWindow.x)
+            sample.windowLocalY = Double(event.locationInWindow.y)
+            sample.windowFrameX = event.window.map { Double($0.frame.minX) }
+            sample.windowFrameY = event.window.map { Double($0.frame.minY) }
+            sample.pointerX = Double(NSEvent.mouseLocation.x)
+            sample.pointerY = Double(NSEvent.mouseLocation.y)
+            sample.primaryScreenMaxY = NSScreen.screens.first.map { Double($0.frame.maxY) }
+        }
+        samples.append(sample)
         if samples.count > 128 { samples.removeFirst(samples.count - 128) }
     }
 }

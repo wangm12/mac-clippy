@@ -65,6 +65,8 @@ extension AppDelegate {
             "keyWindow": controller.panel?.isKeyWindow == true,
             "initialPaint": controller.model.hasCompletedInitialPaint,
             "loading": controller.model.isLoading,
+            "detailsSaving": controller.model.isDetailsSaving,
+            "selecting": controller.model.isSelecting,
             "closing": controller.isClosing,
             "menuTracking": controller.nativeMenuTrackingDepth > 0,
             "filterPopover": controller.model.isFilterPopoverPresented,

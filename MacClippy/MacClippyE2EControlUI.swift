@@ -11,6 +11,7 @@ extension AppDelegate {
         guard let controller = dockController else {
             return MacClippyE2EControlResponse(isOK: false, errorCode: "dock-unavailable")
         }
+        MacClippyE2EUIInteractionProbe.shared.start()
         if activateApplication { activateE2EForVisibleUI(controller) }
         controller.show()
         guard await waitForE2EPanel(controller) else {

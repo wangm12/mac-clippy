@@ -46,11 +46,14 @@ final class MacClippyUITests: XCTestCase {
         let control = application.descendants(matching: .any).matching(identifier: identifier).firstMatch
         XCTAssertTrue(control.waitForExistence(timeout: 5), "Missing chrome control: \(identifier)")
         XCTAssertTrue(control.isHittable, "Chrome control is not hittable: \(identifier)")
+        XCTAssertTrue(control.isEnabled, "Chrome control is disabled: \(identifier)")
         XCTAssertEqual(control.frame.width, 36, accuracy: 1)
         XCTAssertEqual(control.frame.height, 36, accuracy: 1)
         // A coordinate click must hit the circle, including unpainted pixels;
         // accessibility performPress would not detect the original dead area.
-        control.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).withOffset(offset).click()
+        let coordinate = control.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).withOffset(offset)
+        coordinate.hover()
+        coordinate.click()
     }
 
     private func waitForDismissal(_ element: XCUIElement) {
