@@ -141,10 +141,16 @@ final class MacClippySettingsWindowCoordinator: NSObject, NSWindowDelegate {
     }
 
     private var isRunningUnderXCTest: Bool {
+#if MACCLIPPY_E2E
+        // The isolated UI target must mount real settings even when XCTest
+        // launches it. Only in-process unit hosts suppress native windows.
+        return false
+#else
         let environment = ProcessInfo.processInfo.environment
         return NSClassFromString("XCTestCase") != nil
             || environment["XCTestConfigurationFilePath"] != nil
             || environment["XCInjectBundleInto"] != nil
+#endif
     }
 }
 

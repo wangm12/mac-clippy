@@ -92,7 +92,7 @@ jobs:
           ./scripts/release-script-test.sh
           PATH=/usr/bin:/bin:/usr/sbin:/sbin ./scripts/package-dmg-path-guard-test.sh
           python3 -m unittest scripts.e2e.test_macclippy_phase5
-      - name: Native chrome cold-start regression (TSan)
+      - name: Native AppKit event-queue calibration (TSan)
         timeout-minutes: 10
         run: >-
           xcodebuild test -project MacClippy.xcodeproj -scheme MacClippy
@@ -103,6 +103,30 @@ jobs:
           -only-testing:MacClippyTests/MacClippyChromeHitTargetTests
           -enableThreadSanitizer YES -skipPackagePluginValidation
           CODE_SIGNING_ALLOWED=NO
+      - name: Native chrome GUI regression
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          python3 scripts/e2e/macclippy-phase5.py prepare > build/ci-ui-fixture.json
+          export MACCLIPPY_E2E_ROOT="$(python3 -c 'import json; print(json.load(open("build/ci-ui-fixture.json"))["root"])')"
+          export MACCLIPPY_E2E_RUN_ID="$(python3 -c 'import json; print(json.load(open("build/ci-ui-fixture.json"))["runID"])')"
+          export TEST_RUNNER_MACCLIPPY_E2E_ROOT="${MACCLIPPY_E2E_ROOT}"
+          export TEST_RUNNER_MACCLIPPY_E2E_RUN_ID="${MACCLIPPY_E2E_RUN_ID}"
+          cleanup_fixture() {
+            python3 scripts/e2e/macclippy-phase5.py request \
+              --root "${MACCLIPPY_E2E_ROOT}" --run-id "${MACCLIPPY_E2E_RUN_ID}" \
+              --control-command terminate --socket-timeout 5 >/dev/null 2>&1 || true
+            python3 scripts/e2e/macclippy-phase5.py soak clean \
+              --root "${MACCLIPPY_E2E_ROOT}" --run-id "${MACCLIPPY_E2E_RUN_ID}"
+          }
+          trap cleanup_fixture EXIT
+          xcodebuild test -project MacClippy.xcodeproj -scheme MacClippy \
+            -configuration Debug -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath build/ci-app-tsan -resultBundlePath build/ci-ui-tests.xcresult \
+            -parallel-testing-enabled NO -maximum-parallel-testing-workers 1 \
+            -only-testing:MacClippyUITests -enableThreadSanitizer YES \
+            -skipPackagePluginValidation CODE_SIGNING_ALLOWED=NO 2>&1 | tee build/ci-ui-tests.log
+          ./scripts/assert-opt-in-xctest-log.sh build/ci-ui-tests.log MacClippyUITests
       - name: Package tests
         run: swift test --package-path MacClippyKit
       - name: Strict concurrency package tests
@@ -208,4 +232,5 @@ jobs:
           path: |
             build/ci-app-tsan.xcresult
             build/ci-chrome-tsan.xcresult
+            build/ci-ui-tests.xcresult
           if-no-files-found: warn
