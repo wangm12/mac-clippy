@@ -8,6 +8,25 @@ final class MacClippyUITests: XCTestCase {
         application.terminate()
     }
 
+    func testNativeInputCanary() throws {
+        let application = try launchIsolatedApplication(inputCanary: true)
+        defer { application.terminate() }
+        application.activate()
+        _ = try controlRequest("native-host-show")
+        for (title, expected) in [("Plain SwiftUI", "Plain count: 1"),
+                                  ("Bordered SwiftUI", "Bordered count: 1"),
+                                  ("AppKit count: 0", "AppKit count: 1")] {
+            let button = application.buttons[title]
+            XCTAssertTrue(button.waitForExistence(timeout: 5))
+            let coordinate = button.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5))
+            coordinate.hover()
+            coordinate.click()
+            let result = application.descendants(matching: .any).matching(identifier: expected).firstMatch
+            XCTAssertTrue(result.waitForExistence(timeout: 5),
+                          "\(title) did not respond\n\(failureContext(application))")
+        }
+    }
+
     func testChromeRespondsToOneClickAtCenterAndEdges() throws {
         continueAfterFailure = false
         let application = try launchIsolatedApplication()
@@ -137,7 +156,9 @@ final class MacClippyUITests: XCTestCase {
         return response
     }
 
-    private func launchIsolatedApplication(solidBackdrop: Bool = false) throws -> XCUIApplication {
+    private func launchIsolatedApplication(
+        solidBackdrop: Bool = false, inputCanary: Bool = false
+    ) throws -> XCUIApplication {
         let environment = ProcessInfo.processInfo.environment
         guard let root = environment["MACCLIPPY_E2E_ROOT"],
               let runID = environment["MACCLIPPY_E2E_RUN_ID"],
@@ -154,6 +175,7 @@ final class MacClippyUITests: XCTestCase {
         application.launchEnvironment["MACCLIPPY_E2E_ROOT"] = root
         application.launchEnvironment["MACCLIPPY_E2E_RUN_ID"] = runID
         if solidBackdrop { application.launchEnvironment["MACCLIPPY_E2E_SOLID_BACKDROP"] = "1" }
+        if inputCanary { application.launchEnvironment["MACCLIPPY_E2E_INPUT_CANARY"] = "1" }
         application.launch()
 
         // The isolated app starts as a background accessory. Foreground state

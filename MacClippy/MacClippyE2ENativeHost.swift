@@ -1,5 +1,6 @@
 #if MACCLIPPY_E2E
 import AppKit
+import SwiftUI
 
 /// Explicitly requested GUI fixture; background/soak runs never create it.
 /// Keeps a native AX window available after the transient Dock and toast close.
@@ -30,6 +31,15 @@ final class MacClippyE2ENativeHost {
         textView.autoresizingMask = [.width]
         scrollView.documentView = textView
         window.contentView = scrollView
+        if ProcessInfo.processInfo.environment["MACCLIPPY_E2E_INPUT_CANARY"] == "1" {
+            let content = NSView(frame: scrollView.frame)
+            let hosting = NSHostingView(rootView: MacClippyE2EInputCanary())
+            hosting.frame = NSRect(x: 0, y: 120, width: 800, height: 280)
+            content.addSubview(hosting)
+            let button = MacClippyE2EInputCanaryButton(frame: NSRect(x: 300, y: 40, width: 200, height: 32))
+            content.addSubview(button)
+            window.contentView = content
+        }
         window.center()
     }
 
@@ -50,6 +60,43 @@ final class MacClippyE2ENativeHost {
 
     func display(_ text: String) {
         textView.string = text
+    }
+}
+
+private struct MacClippyE2EInputCanary: View {
+    @State private var plainCount = 0
+    @State private var borderedCount = 0
+
+    var body: some View {
+        VStack(spacing: 24) {
+            Button("Plain SwiftUI") { plainCount += 1 }
+                .buttonStyle(.plain)
+            Text("Plain count: \(plainCount)")
+            Button("Bordered SwiftUI") { borderedCount += 1 }
+                .buttonStyle(.bordered)
+            Text("Bordered count: \(borderedCount)")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private final class MacClippyE2EInputCanaryButton: NSButton {
+    private var count = 0
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        title = "AppKit count: 0"
+        bezelStyle = .rounded
+        target = self
+        action = #selector(increment)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    @objc private func increment() {
+        count += 1
+        title = "AppKit count: \(count)"
     }
 }
 
