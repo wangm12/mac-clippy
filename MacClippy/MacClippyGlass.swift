@@ -120,6 +120,15 @@ private struct MacClippyChromePressFeedbackStyle: ButtonStyle {
 
 extension View {
     @ViewBuilder
+    func macClippyAcceptWindowActivationClicks() -> some View {
+        if #available(macOS 15, *) {
+            allowsWindowActivationEvents()
+        } else {
+            self
+        }
+    }
+
+    @ViewBuilder
     private func macClippyChipButtonInteraction(pressFeedback: Bool) -> some View {
         if pressFeedback {
             buttonStyle(MacClippyChromePressFeedbackStyle())

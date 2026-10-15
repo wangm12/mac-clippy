@@ -164,6 +164,9 @@ struct MacClippyDockView: View {
         .padding(.top, 12)
         .padding(.bottom, 10)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        // The quick panel accepts the activation click in both AppKit and
+        // SwiftUI's gesture hierarchy, including plain/custom-styled buttons.
+        .macClippyAcceptWindowActivationClicks()
         .background {
             MacClippyDockCardWell()
                 .allowsHitTesting(false)
