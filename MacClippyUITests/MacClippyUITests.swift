@@ -42,6 +42,22 @@ final class MacClippyUITests: XCTestCase {
         }
     }
 
+    func testNativeNavigationRespondsToOneClick() throws {
+        continueAfterFailure = false
+        let application = try launchIsolatedApplication()
+        defer { application.terminate() }
+        try showPanel(in: application)
+        let snippets = application.buttons["Snippets"]
+        XCTAssertTrue(snippets.waitForExistence(timeout: 5))
+        XCTAssertTrue(snippets.isEnabled)
+        let coordinate = snippets.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5))
+        coordinate.hover()
+        coordinate.click()
+        let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: snippets)
+        XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 5), .completed,
+                       "One native navigation click must select Snippets\n\(failureContext(application))")
+    }
+
     private func clickOnce(_ identifier: String, offset: CGVector, in application: XCUIApplication) {
         let control = application.descendants(matching: .any).matching(identifier: identifier).firstMatch
         XCTAssertTrue(control.waitForExistence(timeout: 5), "Missing chrome control: \(identifier)")
