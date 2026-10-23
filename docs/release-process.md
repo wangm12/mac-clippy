@@ -19,6 +19,21 @@ Ordinary App unit and Thread Sanitizer commands select `MacClippyTests` only. Sc
 
 `make release VERSION=X.Y.Z` creates and pushes a tag. It is a user-operated command and is not part of offline validation. Workflow and shell tests use mocked GitHub/Git commands and do not create tags or releases.
 
+## Local cleanup and packaging
+
+`make clean` removes the managed build caches, archives and test results while preserving `dist/` and review evidence. It does not remove clipboard history, pinboards, snippets, preferences or recovery backups. Remove disposable external DerivedData / isolated E2E fixtures separately after their processes have exited; do not clear unrelated projects' global Xcode or SwiftPM caches.
+
+Spotlight can discover `.app` bundles inside upgrade backups as separate applications. Store backup applications as verified ZIP archives, keep their data backups, and eject old installer volumes. After removing unused development bundles, run:
+
+```sh
+python3 scripts/refresh-app-registration.py         # Preview only
+python3 scripts/refresh-app-registration.py --apply # Keep the installed copy registered
+```
+
+The script targets only MacClippy, its isolated E2E app and UI test runner. It verifies the installed bundle identifier, unregisters their other paths (including stale paths), registers `/Applications/MacClippy.app`, and checks the resulting registrations. It never resets the entire Launch Services database. Existing unarchived copies can be indexed again, so archive or remove those copies first. Spotlight results may take time to refresh.
+
+For a local package with the existing signing identity, use `make dmg`. To stamp source provenance before signing, first run `make build-release-unsigned MARKETING_VERSION=1.0.0 CURRENT_PROJECT_VERSION=YYYY.MM.DD`, add the source revision to the built app's Info.plist, sign and verify it, then package that app with `PREBUILT_APP` under the repository's `build/` directory. Verify the mounted DMG's app signature and version before installing. Keep only the distribution artifacts after running `make clean`; unregister the removed build paths again. Local packaging does not create a stable release tag or publish a GitHub Release.
+
 ## Minimum macOS runtime gate
 
 The required CI workflow currently runs its package and App regression suites on macOS 26. The project sets `MACOSX_DEPLOYMENT_TARGET=14.0`, but that only checks compilation against the declared deployment target; it does not demonstrate runtime behavior on macOS 14. **macOS 14 runtime acceptance has not been run.** No macOS 14 test machine or compatible hosted CI runner is currently configured, and no remote environment is provisioned by this workflow.

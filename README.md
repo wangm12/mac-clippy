@@ -289,6 +289,8 @@ make ci             # Run the CI build and verification workflow
 make clean          # Remove managed caches, test results, and archives; preserve dist/ and review evidence
 ```
 
+If Spotlight shows duplicate MacClippy icons after development, remove unused build bundles and keep backup apps in ZIP archives. Run `python3 scripts/refresh-app-registration.py` to preview obsolete MacClippy registrations, then add `--apply` to keep only `/Applications/MacClippy.app` registered. This leaves other applications and clipboard data untouched. See [local cleanup and packaging](docs/release-process.md#local-cleanup-and-packaging).
+
 ---
 
 ## Architecture & Tech Stack
