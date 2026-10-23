@@ -1,4 +1,6 @@
 import AppKit
+import MacClippyCore
+import SwiftUI
 import XCTest
 
 @testable import MacClippy
@@ -31,6 +33,63 @@ final class MacClippyChromeHitTargetTests: XCTestCase {
         try await sendClick(to: window, at: NSPoint(x: 50, y: 40))
         let received = await waitUntil { target.clicks == 1 }
         XCTAssertTrue(received, "AppKit did not receive exactly one action from one mouse down/up pair")
+    }
+
+    @MainActor
+    func testActiveCategoryPillsDeselectThroughNativeClicksAtWideAndOverflowWidths() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("MacClippyTagClicks-\(UUID())")
+        let runtime = try MacClippyRuntime(paths: MacClippyPaths(rootURL: root), enableSnippetExpansion: false)
+        defer {
+            runtime.closeForTesting()
+            try? FileManager.default.removeItem(at: root)
+        }
+        for width: CGFloat in [1440, 1024] {
+            let model = MacClippyDockModel(runtime: runtime)
+            let count = width == 1440 ? 1 : 12
+            model.pinboards = try (0..<count).map {
+                MacClippyPinboardEntry(
+                    board: try runtime.createPinboard(name: "Review board \($0)", color: nil), items: [])
+            }
+            let board = try XCTUnwrap(model.pinboards.last)
+            model.query = "invoice type:text app:Safari"
+            model.selectTab(.pinboard(board.id))
+            let view = MacClippyDockView(
+                model: model, onClose: {}, onCreateSnippet: {}, onOpenSettings: {}, onEnterPickerMode: {},
+                onPreview: {}, onSearchModeChange: { _ in }, onSearchCompositionChange: { _ in },
+                onModalPresentationChange: { _ in }, onReduceMotionChange: { _ in }, onLayoutHeightChange: { _ in })
+            let window = MacClippyDockPanel(contentRect: NSRect(x: 50, y: 100, width: width, height: 360))
+            let host = NSHostingView(rootView: view)
+            window.contentView = host
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+            defer { window.close() }
+            let ready = await waitUntil { NSApp.isActive && window.isKeyWindow }
+            guard ready else { return XCTFail("Category fixture did not become ready") }
+            try await Task.sleep(nanoseconds: 200_000_000)
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                .write(to: URL(fileURLWithPath: "/tmp/macclippy-tag-review-\(Int(width)).png"))
+            // Points are inside the rendered header pills at these fixture widths.
+            // The overflow rail scrolls the selected final board into view.
+            let boardPoint = NSPoint(x: width == 1440 ? 290 : 205, y: 329)
+            try await sendClick(to: window, at: boardPoint)
+            let boardDeselected = await waitUntil { model.selectedTab == .history }
+            XCTAssertTrue(boardDeselected, "Active board must deselect from a native click at width \(width)")
+            XCTAssertEqual(model.query, "invoice type:text app:Safari")
+
+            try await Task.sleep(nanoseconds: 100_000_000)
+            try await sendClick(to: window, at: NSPoint(x: 164, y: 329))
+            let snippetsSelected = await waitUntil { model.selectedTab == .snippets }
+            XCTAssertTrue(snippetsSelected)
+            XCTAssertEqual(model.query, "invoice")
+            try await Task.sleep(nanoseconds: 100_000_000)
+            try await sendClick(to: window, at: NSPoint(x: 164, y: 329))
+            let snippetsDeselected = await waitUntil { model.selectedTab == .history }
+            XCTAssertTrue(snippetsDeselected, "Active Snippets must deselect from a native click at width \(width)")
+            XCTAssertEqual(model.query, "invoice type:text app:Safari")
+        }
     }
 
     @MainActor
