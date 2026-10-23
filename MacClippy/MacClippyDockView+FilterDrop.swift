@@ -213,7 +213,7 @@ extension MacClippyDockView {
                 isDropTarget: dropTargetSnippets,
                 isDropConfirmed: dropConfirmedSnippets
             ) {
-                model.selectSnippetsFilter()
+                model.toggleTabFilter(.snippets)
             }
             .onDrop(
                 of: clipboardRecordDragTypes,
@@ -249,7 +249,7 @@ extension MacClippyDockView {
                     isDropConfirmed: dropConfirmedPinboardID == pinboard.id,
                     accentHex: pinboard.colorHex
                 ) {
-                    model.selectTab(.pinboard(pinboard.id))
+                    model.toggleTabFilter(.pinboard(pinboard.id))
                 }
                 .contextMenu { pinboardContextMenu(pinboard) }
                 .onDrop(

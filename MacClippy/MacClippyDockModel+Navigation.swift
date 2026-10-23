@@ -65,6 +65,17 @@ extension MacClippyDockModel {
         scheduleSnippetFilter()
     }
 
+    /// User clicks toggle a category; programmatic selection stays idempotent.
+    func toggleTabFilter(_ tab: MacClippyDockTab) {
+        if tab == .history || selectedTab == tab {
+            selectAllFilter()
+        } else if tab == .snippets {
+            selectSnippetsFilter()
+        } else {
+            selectTab(tab)
+        }
+    }
+
     func hideSmartList(_ list: MacClippySmartList) {
         if MacClippySmartListPolicy.isActive(list, in: query) {
             query = MacClippySmartListPolicy.apply(list, to: query)

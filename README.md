@@ -54,6 +54,7 @@ This guide describes the current repository implementation. **History / All** op
 - File entries retain references rather than archiving the original file. Moving or deleting that file can break the reference.
 - Oversized or unreadable representations can be marked unavailable. Replay of every app-specific private format is not guaranteed; inspect retained formats and availability in Details.
 - History loads in pages. Built-in URL and Image shortcuts filter existing history; deleting one of these shortcuts from its context menu hides the shortcut without deleting records.
+- Click an active URL/Image shortcut again to remove that type filter. Click the active Snippets or Pinboard tab again to return to History, preserving keywords and history filters. History remains the default when clicked repeatedly.
 - The native floating panel supports multiple displays and full-screen spaces, with adaptations for light/dark appearance, Reduce Motion, Reduce Transparency, and increased contrast.
 
 ### Copy, Paste, Duplicate Capture, and Ordering

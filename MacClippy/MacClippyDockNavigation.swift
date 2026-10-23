@@ -123,7 +123,7 @@ extension MacClippyDockView {
                 title: "Snippets", selected: model.selectedTab == .snippets, systemImage: "text.quote",
                 isDropTarget: dropTargetSnippets, isDropConfirmed: dropConfirmedSnippets
             ) {
-                model.selectSnippetsFilter()
+                model.toggleTabFilter(.snippets)
             }
             .fixedSize()
             .id(MacClippyDockTab.snippets)
@@ -142,7 +142,7 @@ extension MacClippyDockView {
             isDropTarget: dropTargetPinboardID == board.id,
             isDropConfirmed: dropConfirmedPinboardID == board.id, accentHex: board.colorHex
         ) {
-            model.selectTab(.pinboard(board.id))
+            model.toggleTabFilter(.pinboard(board.id))
         }
         .frame(maxWidth: 168)
         .help(board.name)

@@ -44,6 +44,59 @@ final class MacClippySearchWorkflowTests: XCTestCase {
     }
 
     @MainActor
+    func testClickingActiveSnippetsReturnsToHistoryWithEditedKeywordsAndFilters() {
+        let model = MacClippyDockModel(runtime: runtime)
+        model.query = "invoice type:image app:Safari"
+
+        model.toggleTabFilter(.snippets)
+        XCTAssertEqual(model.selectedTab, .snippets)
+        XCTAssertEqual(model.query, "invoice")
+        model.query = "receipt"
+
+        model.toggleTabFilter(.snippets)
+
+        XCTAssertEqual(model.selectedTab, .history)
+        let parsed = MacClippySearchGrammar.parse(model.query)
+        XCTAssertEqual(parsed.bareTerms, ["receipt"])
+        XCTAssertEqual(parsed.clauses, [.type(.image), .app("Safari")])
+    }
+
+    @MainActor
+    func testClickingActivePinboardDeselectsItWithoutClearingSearch() throws {
+        let board = try runtime.createPinboard(name: "Work", color: nil)
+        let model = MacClippyDockModel(runtime: runtime)
+        model.query = "invoice app:Safari"
+
+        model.toggleTabFilter(.pinboard(board.id))
+        XCTAssertEqual(model.selectedTab, .pinboard(board.id))
+        model.selectTab(.pinboard(board.id))
+        XCTAssertEqual(model.selectedTab, .pinboard(board.id), "Programmatic selection must remain idempotent")
+
+        model.toggleTabFilter(.pinboard(board.id))
+
+        XCTAssertEqual(model.selectedTab, .history)
+        XCTAssertEqual(model.query, "invoice app:Safari")
+        XCTAssertTrue(model.isAllFilterSelected)
+    }
+
+    @MainActor
+    func testClickingDifferentPinboardSwitchesDirectlyAndHistoryRemainsTheDefault() throws {
+        let first = try runtime.createPinboard(name: "Work", color: nil)
+        let second = try runtime.createPinboard(name: "Personal", color: nil)
+        let model = MacClippyDockModel(runtime: runtime)
+        model.query = "invoice"
+
+        model.toggleTabFilter(.pinboard(first.id))
+        model.toggleTabFilter(.pinboard(second.id))
+        XCTAssertEqual(model.selectedTab, .pinboard(second.id))
+
+        model.toggleTabFilter(.history)
+        model.toggleTabFilter(.history)
+        XCTAssertEqual(model.selectedTab, .history)
+        XCTAssertEqual(model.query, "invoice")
+    }
+
+    @MainActor
     func testPickerTypingEditsKeywordsWhileKeepingMountedFilters() {
         for raw in ["type:image", "invoice type:image", "\"two words\" app:Safari type:image has:ocr"] {
             let controller = MacClippyDockController(runtime: runtime)
