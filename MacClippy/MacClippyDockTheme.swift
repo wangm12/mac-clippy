@@ -58,24 +58,49 @@ enum MacClippyDockTheme {
         return cachedIsDark
     }
 
-    static var panel: NSColor { isDark ? panelDark : panelLight }
-    static var panelStrong: NSColor { isDark ? panelStrongDark : panelStrongLight }
-    static var card: NSColor { isDark ? cardDark : cardLight }
-    static var cardHover: NSColor { isDark ? cardHoverDark : cardHoverLight }
-    static var text: NSColor { isDark ? textDark : textLight }
-    static var muted: NSColor { isDark ? mutedDark : mutedLight }
-    static var muted2: NSColor { isDark ? muted2Dark : muted2Light }
-    static var line: NSColor { isDark ? lineDark : lineLight }
+    // SwiftUI may retain equatable card labels across appearance changes.
+    // A dynamic NSColor resolves for the drawing appearance without requiring
+    // the card's body to be rebuilt.
+    static func adaptive(light: NSColor, dark: NSColor) -> NSColor {
+        NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
+        }
+    }
+
+    static var panel: NSColor { adaptive(light: panelLight, dark: panelDark) }
+    static var panelStrong: NSColor { adaptive(light: panelStrongLight, dark: panelStrongDark) }
+    static var card: NSColor { adaptive(light: cardLight, dark: cardDark) }
+    static var cardHover: NSColor { adaptive(light: cardHoverLight, dark: cardHoverDark) }
+    static var text: NSColor { adaptive(light: textLight, dark: textDark) }
+    static var muted: NSColor { adaptive(light: mutedLight, dark: mutedDark) }
+    static var muted2: NSColor { adaptive(light: muted2Light, dark: muted2Dark) }
+    static var line: NSColor { adaptive(light: lineLight, dark: lineDark) }
 
     static var accentColor: Color { Color(nsColor: accent) }
-    static var accentForegroundColor: Color {
-        guard let rgb = accent.usingColorSpace(.deviceRGB) else {
-            return Color(nsColor: textDark)
+    static func accentFillColor(hovered: Bool) -> Color {
+        Color(nsColor: accentSurface(hovered: hovered))
+    }
+
+    static func accentForegroundColor(hovered: Bool) -> Color {
+        Color(nsColor: contrastingForeground(for: accentSurface(hovered: hovered)))
+    }
+
+    private static func accentSurface(hovered: Bool) -> NSColor {
+        let color = accent.usingColorSpace(.sRGB) ?? accent
+        // Keep this surface opaque so its text contrast does not depend on
+        // the desktop sampled by the surrounding glass.
+        return hovered ? (color.blended(withFraction: 0.06, of: .white) ?? color) : color
+    }
+
+    static func contrastingForeground(for background: NSColor) -> NSColor {
+        guard let rgb = background.usingColorSpace(.sRGB) else { return .white }
+        let linear = [rgb.redComponent, rgb.greenComponent, rgb.blueComponent].map { component -> CGFloat in
+            component <= 0.04045 ? component / 12.92 : pow((component + 0.055) / 1.055, 2.4)
         }
-        let brightness = (0.2126 * rgb.redComponent)
-            + (0.7152 * rgb.greenComponent)
-            + (0.0722 * rgb.blueComponent)
-        return Color(nsColor: brightness > 0.62 ? textLight : textDark)
+        let luminance = 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+        let blackContrast = (luminance + 0.05) / 0.05
+        let whiteContrast = 1.05 / (luminance + 0.05)
+        return blackContrast >= whiteContrast ? .black : .white
     }
     static var accentSoftColor: Color { Color(nsColor: accentSoft) }
     static var textColor: Color { Color(nsColor: text) }
@@ -84,7 +109,7 @@ enum MacClippyDockTheme {
     // Lightest text tone for low-priority metadata like the below-card
     // timestamp, so the copied content stays first and the caption recedes.
     static var muted3Color: Color {
-        return Color(nsColor: isDark ? muted2Dark : mutedLight)
+        return Color(nsColor: adaptive(light: mutedLight, dark: muted2Dark))
     }
     static var lineColor: Color { Color(nsColor: line) }
     static var cardColor: Color { Color(nsColor: card) }
@@ -92,8 +117,8 @@ enum MacClippyDockTheme {
     static var panelStrongColor: Color { Color(nsColor: panelStrong) }
     // Matches the AppKit dock backdrop gradient's top stop so edge fades
     // do not paint a cooler, near-white stripe over bg0/bg1.
-    static var backdropColor: Color { Color(nsColor: isDark ? bg0Dark : bg0) }
-    static var wellColor: Color { Color(nsColor: isDark ? bg1Dark : bg1) }
+    static var backdropColor: Color { Color(nsColor: adaptive(light: bg0, dark: bg0Dark)) }
+    static var wellColor: Color { Color(nsColor: adaptive(light: bg1, dark: bg1Dark)) }
 
     // Settings-style recessed search well: a quiet charcoal capsule sitting
     // on the glass dock, not a second glass pill with a loud rest ring.
@@ -101,14 +126,14 @@ enum MacClippyDockTheme {
     static let searchFieldHoverLight = NSColor(calibratedRed: 0.882, green: 0.886, blue: 0.894, alpha: 1)
     static let searchFieldDark = NSColor(calibratedRed: 0.196, green: 0.204, blue: 0.220, alpha: 1)
     static let searchFieldHoverDark = NSColor(calibratedRed: 0.235, green: 0.243, blue: 0.259, alpha: 1)
-    static var searchField: NSColor { isDark ? searchFieldDark : searchFieldLight }
-    static var searchFieldHover: NSColor { isDark ? searchFieldHoverDark : searchFieldHoverLight }
+    static var searchField: NSColor { adaptive(light: searchFieldLight, dark: searchFieldDark) }
+    static var searchFieldHover: NSColor { adaptive(light: searchFieldHoverLight, dark: searchFieldHoverDark) }
     static var searchFieldColor: Color { Color(nsColor: searchField) }
     static var searchFieldHoverColor: Color { Color(nsColor: searchFieldHover) }
     static var searchFieldEdge: Color {
-        Color(nsColor: isDark
-            ? NSColor(calibratedWhite: 1, alpha: 0.08)
-            : NSColor(calibratedWhite: 0, alpha: 0.08))
+        Color(nsColor: adaptive(
+            light: NSColor(calibratedWhite: 0, alpha: 0.08),
+            dark: NSColor(calibratedWhite: 1, alpha: 0.08)))
     }
     static var searchFocusRing: Color { interactiveFocusBorder }
     static var searchFocusGlow: Color { .clear }
@@ -119,9 +144,9 @@ enum MacClippyDockTheme {
     // fully opaque; glass belongs on chrome buttons only.
     static let previewSurfaceLight = NSColor(calibratedRed: 0.985, green: 0.987, blue: 0.992, alpha: 1)
     static let previewSurfaceDark = NSColor(calibratedRed: 0.184, green: 0.192, blue: 0.208, alpha: 1)
-    static var previewSurface: NSColor { isDark ? previewSurfaceDark : previewSurfaceLight }
+    static var previewSurface: NSColor { adaptive(light: previewSurfaceLight, dark: previewSurfaceDark) }
     static var previewSurfaceColor: Color { Color(nsColor: previewSurface) }
-    static var previewWell: NSColor { isDark ? bg1Dark : bg1 }
+    static var previewWell: NSColor { adaptive(light: bg1, dark: bg1Dark) }
 
     // Clipboard cards sit on the shared cool-neutral fill, then a low-alpha
     // wash from the source app's icon accent. Image cards still fill the
@@ -136,7 +161,9 @@ enum MacClippyDockTheme {
     ) -> some View {
         shape.fill(elevated ? cardHoverColor : cardColor)
             .overlay {
-                shape.fill(Color(nsColor: accent).opacity(isDark ? 0.18 : 0.12))
+                shape.fill(Color(nsColor: adaptive(
+                    light: accent.withAlphaComponent(0.12),
+                    dark: accent.withAlphaComponent(0.18))))
             }
     }
 

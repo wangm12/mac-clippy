@@ -3850,7 +3850,7 @@ def build_parser() -> argparse.ArgumentParser:
     request.add_argument(
         "--control-command",
         choices=[
-            "ping", "metrics", "search-db", "verify-record", "search-ui", "panel-show",
+            "ping", "metrics", "search-db", "verify-record", "search-ui", "panel-show", "appearance-set", "surface-show",
             "panel-show-preserving-activation", "panel-hide",
             "preview-loop", "paste", "paste-injection-probe", "paste-begin-cancelable", "paste-barrier-status", "paste-cancel",
             "native-host-show", "native-host-hide", "recipient-reset", "terminate",

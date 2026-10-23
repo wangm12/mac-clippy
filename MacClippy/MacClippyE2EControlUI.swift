@@ -277,5 +277,45 @@ extension AppDelegate {
         await Task.yield()
     }
 
+    func setE2EReviewAppearance(_ appearance: String?) -> MacClippyE2EControlResponse {
+        switch appearance {
+        case "light": NSApp.appearance = NSAppearance(named: .aqua)
+        case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
+        case "system": NSApp.appearance = nil
+        default: return MacClippyE2EControlResponse(isOK: false, errorCode: "invalid-appearance")
+        }
+        return MacClippyE2EControlResponse(isOK: true, message: NSApp.effectiveAppearance.name.rawValue)
+    }
+
+    /// Render production surfaces using only the isolated run's records.
+    /// This does not claim coverage of the keyboard or menu activation path.
+    func showE2EReviewSurface(_ surface: String?) -> MacClippyE2EControlResponse {
+        guard let controller = dockController else {
+            return MacClippyE2EControlResponse(isOK: false, errorCode: "dock-unavailable")
+        }
+        guard let surface, ["preview", "details", "edit", "pinboard", "settings"].contains(surface) else {
+            return MacClippyE2EControlResponse(isOK: false, errorCode: "invalid-review-surface")
+        }
+        if surface == "settings" {
+            controller.openSettingsAfterHide()
+            return MacClippyE2EControlResponse(isOK: true)
+        }
+        guard controller.panel?.isVisible == true else {
+            return MacClippyE2EControlResponse(isOK: false, errorCode: "panel-hidden")
+        }
+        if surface == "pinboard" {
+            controller.model.presentCreateCategory()
+            return MacClippyE2EControlResponse(isOK: true)
+        }
+        guard let item = controller.model.visibleItems.first(where: { $0.supportsPlainCopy }) else {
+            return MacClippyE2EControlResponse(isOK: false, errorCode: "text-fixture-required")
+        }
+        if surface == "preview" {
+            controller.showPreview(for: .item(item.id))
+        } else {
+            controller.showDetails(editing: surface == "edit" ? .content : .none, targetID: item.id)
+        }
+        return MacClippyE2EControlResponse(isOK: true, recordID: item.id.rawValue)
+    }
 }
 #endif

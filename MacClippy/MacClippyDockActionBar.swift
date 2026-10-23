@@ -140,7 +140,7 @@ struct SelectionBarButton: View {
             Label(title, systemImage: systemImage)
                 .font(.body.weight(.semibold))
                 .foregroundStyle(
-                    isPrimary ? MacClippyDockTheme.accentForegroundColor :
+                    isPrimary ? MacClippyDockTheme.accentForegroundColor(hovered: isHovered) :
                     (isDestructive ? (isHovered ? Color.red : Color.red.opacity(0.9)) :
                         (isHovered ? MacClippyDockTheme.accentColor : MacClippyDockTheme.textColor))
                 )
@@ -184,7 +184,7 @@ private struct MacClippySelectionGlassStyle: ViewModifier {
         if isPrimary {
             content
                 .background(
-                    MacClippyDockTheme.accentColor.opacity(isHovered ? 0.9 : 1.0),
+                    MacClippyDockTheme.accentFillColor(hovered: isHovered),
                     in: Capsule()
                 )
         } else {

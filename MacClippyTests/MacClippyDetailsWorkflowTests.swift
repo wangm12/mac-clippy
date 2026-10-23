@@ -10,6 +10,14 @@ final class MacClippyDetailsWorkflowTests: XCTestCase {
     private var board: NSPasteboard!
     private var runtime: MacClippyRuntime!
 
+    // The async copy worker uses the same AppKit pasteboard object. Polling
+    // it without the production coordinator can race AppKit's type cache.
+    private var clipboardText: String? {
+        MacClippyPasteboardAccessCoordinator.shared(for: board).withAccess {
+            board.string(forType: .string)
+        }
+    }
+
     override func setUpWithError() throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "MacClippyDetailsWorkflow-\(UUID())")
@@ -53,8 +61,8 @@ final class MacClippyDetailsWorkflowTests: XCTestCase {
         controller.model.focusedIndex =
             controller.model.visibleItems.firstIndex { $0.id == otherRecord.id } ?? 0
         controller.saveDetailsContent("edited A", intent: .saveAndPaste)
-        MacClippyTestWait.until({ self.board.string(forType: .string) == "edited A" }, failOnTimeout: true)
-        XCTAssertEqual(board.string(forType: .string), "edited A")
+        MacClippyTestWait.until({ self.clipboardText == "edited A" }, failOnTimeout: true)
+        XCTAssertEqual(clipboardText, "edited A")
         XCTAssertEqual(try runtime.clipboardStore.body(for: otherRecord.id), .text("needle B"))
         XCTAssertEqual(try runtime.clipboardStore.body(for: shownRecord.id), .text("edited A"))
     }
@@ -67,8 +75,8 @@ final class MacClippyDetailsWorkflowTests: XCTestCase {
         controller.detailsEditing = .none
         controller.model.historyItems = [try XCTUnwrap(runtime.entry(for: otherRecord))]
         _ = controller.applyKeyAction(.copy)
-        MacClippyTestWait.until({ self.board.string(forType: .string) == "Shown A" }, failOnTimeout: true)
-        XCTAssertEqual(board.string(forType: .string), "Shown A")
+        MacClippyTestWait.until({ self.clipboardText == "Shown A" }, failOnTimeout: true)
+        XCTAssertEqual(clipboardText, "Shown A")
     }
 
     @MainActor
@@ -113,7 +121,7 @@ final class MacClippyDetailsWorkflowTests: XCTestCase {
         XCTAssertEqual(controller.detailsEditSession?.contentDraft, "Unsaved draft")
         XCTAssertTrue(controller.detailsEditSession?.isDirty(editing: .content) == true)
         XCTAssertFalse(controller.model.isDetailsSaving)
-        XCTAssertEqual(board.string(forType: .string), "previous clipboard")
+        XCTAssertEqual(clipboardText, "previous clipboard")
     }
 
     @MainActor
@@ -123,9 +131,9 @@ final class MacClippyDetailsWorkflowTests: XCTestCase {
         let model = MacClippyDockModel(runtime: runtime)
         model.historyItems = [try XCTUnwrap(runtime.entry(for: other))]
         model.copyTarget(.item(shown.id))
-        MacClippyTestWait.until({ self.board.string(forType: .string) == "Shown A" }, failOnTimeout: true)
+        MacClippyTestWait.until({ self.clipboardText == "Shown A" }, failOnTimeout: true)
         XCTAssertEqual(model.focusedItem?.id, other.id)
-        XCTAssertEqual(board.string(forType: .string), "Shown A")
+        XCTAssertEqual(clipboardText, "Shown A")
     }
 
     @MainActor
@@ -139,7 +147,7 @@ final class MacClippyDetailsWorkflowTests: XCTestCase {
         defer { controller.cleanup() }
         controller.model.selectRecord(id: record.id, completion: { controller.hide() })
         MacClippyTestWait.until({ !panel.isVisible }, failOnTimeout: true)
-        XCTAssertEqual(board.string(forType: .string), "Manual paste")
+        XCTAssertEqual(clipboardText, "Manual paste")
         XCTAssertTrue(controller.toastPanel?.isVisible == true)
         XCTAssertEqual(MacClippyDockActionFeedback.pasted(manual: true).title, "Copied — press ⌘V to paste")
     }

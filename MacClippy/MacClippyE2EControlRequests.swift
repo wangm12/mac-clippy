@@ -80,6 +80,10 @@ extension AppDelegate {
             return MacClippyE2EControlResponse(isOK: false, errorCode: "runtime-not-ready")
         }
         switch request.command {
+        case "surface-show":
+            return showE2EReviewSurface(request.text)
+        case "appearance-set":
+            return setE2EReviewAppearance(request.text)
         case "ping":
             return e2ePingResponse(isolation: e2eIsolation)
         case "metrics":
