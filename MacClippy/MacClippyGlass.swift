@@ -129,7 +129,7 @@ extension View {
     }
 
     @ViewBuilder
-    private func macClippyChipButtonInteraction(pressFeedback: Bool) -> some View {
+    func macClippyChipButtonInteraction(pressFeedback: Bool) -> some View {
         if pressFeedback {
             buttonStyle(MacClippyChromePressFeedbackStyle())
         } else {
@@ -190,30 +190,23 @@ extension View {
         }
     }
 
-    // Filter chips stay Regular glass. Selection and hover are overlay
-    // washes so the glass recipe never changes. `.interactive()` press
-    // plus a tinted recipe each flashed the chip on click.
+    // Apply glass to the control's label so its foreground receives the same
+    // material treatment. A separate glass background washes out the label
+    // inside the panel's NSGlassEffectView; wrapping the Button itself can
+    // interfere with native hit testing.
     @ViewBuilder
     func macClippyFilterChipStyle(
-        selected: Bool, hovered: Bool = false, tint: Color, pressFeedback: Bool = false
+        selected: Bool, hovered: Bool = false, tint: Color
     ) -> some View {
         let wash = tint.opacity(
             MacClippyDockFilterPillWashPolicy.opacity(selected: selected, hovered: hovered)
         )
         if #available(macOS 26, *) {
             self
-                .macClippyChipButtonInteraction(pressFeedback: pressFeedback)
                 .background(wash, in: Capsule())
-                // Decoration must not wrap the control's native hit region.
-                .background {
-                    Capsule()
-                        .fill(.clear)
-                        .glassEffect(.regular, in: .capsule)
-                        .allowsHitTesting(false)
-                }
+                .glassEffect(.regular, in: .capsule)
         } else {
             self
-                .macClippyChipButtonInteraction(pressFeedback: pressFeedback)
                 .background(wash, in: Capsule())
         }
     }

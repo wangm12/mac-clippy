@@ -58,8 +58,10 @@ final class MacClippyChromeHitTargetTests: XCTestCase {
                 onPreview: {}, onSearchModeChange: { _ in }, onSearchCompositionChange: { _ in },
                 onModalPresentationChange: { _ in }, onReduceMotionChange: { _ in }, onLayoutHeightChange: { _ in })
             let window = MacClippyDockPanel(contentRect: NSRect(x: 50, y: 100, width: width, height: 360))
-            let host = NSHostingView(rootView: view)
-            window.contentView = host
+            let host = MacClippyDockHostingView(rootView: view)
+            let content = MacClippyDockPanelContentView(foregroundView: host)
+            content.backdropView.applyTransparencyPolicy(reduceTransparency: false)
+            window.contentView = content
             NSApp.activate(ignoringOtherApps: true)
             window.makeKeyAndOrderFront(nil)
             defer { window.close() }
@@ -67,10 +69,7 @@ final class MacClippyChromeHitTargetTests: XCTestCase {
             guard ready else { return XCTFail("Category fixture did not become ready") }
             try await Task.sleep(nanoseconds: 200_000_000)
             host.layoutSubtreeIfNeeded()
-            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-            host.cacheDisplay(in: host.bounds, to: bitmap)
-            try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-                .write(to: URL(fileURLWithPath: "/tmp/macclippy-tag-review-\(Int(width)).png"))
+            try saveSnapshot(host, width: width)
             // Points are inside the rendered header pills at these fixture widths.
             // The overflow rail scrolls the selected final board into view.
             let boardPoint = NSPoint(x: width == 1440 ? 290 : 205, y: 329)
@@ -90,6 +89,14 @@ final class MacClippyChromeHitTargetTests: XCTestCase {
             XCTAssertTrue(snippetsDeselected, "Active Snippets must deselect from a native click at width \(width)")
             XCTAssertEqual(model.query, "invoice type:text app:Safari")
         }
+    }
+
+    @MainActor
+    private func saveSnapshot(_ host: NSView, width: CGFloat) throws {
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            .write(to: URL(fileURLWithPath: "/tmp/macclippy-tag-review-\(Int(width)).png"))
     }
 
     @MainActor

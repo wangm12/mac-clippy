@@ -18,15 +18,11 @@ struct MacClippyDockChromeIconButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: systemImage)
-                .frame(width: 36, height: 36)
-                // The hit shape belongs to the label. Putting it outside the
-                // Button only decorates the chrome and leaves its edges inert.
-                .contentShape(Circle())
+            MacClippyDockChromeIconLabel(
+                systemImage: systemImage, glassID: glassID, namespace: namespace,
+                reduceMotion: reduceMotion, highContrast: highContrast, selected: selected)
         }
-        .modifier(MacClippyDockChromeIconStyle(
-            glassID: glassID, namespace: namespace, reduceMotion: reduceMotion,
-            highContrast: highContrast, selected: selected, showsPressFeedback: true))
+        .macClippyChipButtonInteraction(pressFeedback: true)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityIdentifier(accessibilityIdentifier)
         .help(help)
@@ -46,46 +42,44 @@ struct MacClippyDockChromeIconMenu<Content: View>: View {
 
     var body: some View {
         Menu(content: content) {
-            Image(systemName: systemImage)
-                .frame(width: 36, height: 36)
-                .contentShape(Circle())
+            MacClippyDockChromeIconLabel(
+                systemImage: systemImage, glassID: glassID, namespace: namespace,
+                reduceMotion: reduceMotion, highContrast: highContrast)
         }
         .menuStyle(.button)
         .menuIndicator(.hidden)
-        .modifier(MacClippyDockChromeIconStyle(
-            glassID: glassID, namespace: namespace, reduceMotion: reduceMotion,
-            highContrast: highContrast))
+        .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityIdentifier(accessibilityIdentifier)
         .help(help)
     }
 }
 
-private struct MacClippyDockChromeIconStyle: ViewModifier {
+private struct MacClippyDockChromeIconLabel: View {
+    let systemImage: String
     let glassID: String
     let namespace: Namespace.ID
     let reduceMotion: Bool
     let highContrast: Bool
     var selected = false
-    var showsPressFeedback = false
 
     @State private var isHovered = false
 
-    func body(content: Content) -> some View {
+    var body: some View {
         let ringWidth: CGFloat = highContrast ? 2 : MacClippyDockTheme.pillBorderWidth
         let ringColor = isHovered
             ? MacClippyDockTheme.interactiveFocusBorder
             : MacClippyDockTheme.pillRestBorder
-        return content
+        return Image(systemName: systemImage)
         .font(.body.weight(.semibold))
         .foregroundStyle(isHovered || selected ? MacClippyDockTheme.accentColor : MacClippyDockTheme.textColor)
         .frame(width: 36, height: 36)
+        .contentShape(Circle())
         .macClippyGlassEffectID(glassID, in: namespace, enabled: !reduceMotion)
         .macClippyFilterChipStyle(
             selected: selected,
             hovered: isHovered,
-            tint: MacClippyDockTheme.accentColor,
-            pressFeedback: showsPressFeedback
+            tint: MacClippyDockTheme.accentColor
         )
         .overlay(
             Capsule()
@@ -144,12 +138,13 @@ struct MacClippyDockFilterPill: View {
             .padding(.horizontal, 14)
             .frame(height: 36)
             .contentShape(Capsule())
+            .macClippyFilterChipStyle(
+                selected: selected || isDropConfirmed || isDropTarget,
+                hovered: isHovered,
+                tint: accentColor ?? MacClippyDockTheme.accentColor
+            )
         }
-        .macClippyFilterChipStyle(
-            selected: selected || isDropConfirmed || isDropTarget,
-            hovered: isHovered,
-            tint: accentColor ?? MacClippyDockTheme.accentColor
-        )
+        .buttonStyle(.plain)
         .overlay(
             Capsule()
                 .inset(by: MacClippyDockTheme.pillBorderInset)
