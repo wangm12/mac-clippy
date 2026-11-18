@@ -78,7 +78,7 @@ enum MacClippyPasteboardPrivacyHTML {
         if pendingBoundary && !output.isEmpty && output.last != "\n" { output += "\n" }
     }
 
-    private static func updateTag(_ scalar: Unicode.Scalar, quote: inout Unicode.Scalar?, inTag: inout Bool) {
+    fileprivate static func updateTag(_ scalar: Unicode.Scalar, quote: inout Unicode.Scalar?, inTag: inout Bool) {
         if scalar == quote {
             quote = nil
         } else if quote == nil && (scalar == "\"" || scalar == "'") {
@@ -129,6 +129,216 @@ enum MacClippyPasteboardPrivacyHTML {
               let scalar = Unicode.Scalar(value) else { return nil }
         if index < scalars.count && scalars[index] == ";" { index += 1 }
         return String(scalar)
+    }
+
+    private static let digitTable = "0123456789"
+}
+
+private struct PlainTextScanState {
+    var output = ""
+    var inTag = false
+    var quote: Unicode.Scalar?
+    var tagName = ""
+    var capturingTagName = false
+    var isClosingTag = false
+    var pendingSpace = false
+    var pendingNewline = false
+
+    mutating func stepTagScalar(
+        _ scalar: Unicode.Scalar,
+        blockBreakTags: Set<String>,
+        inlineSpaceTags: Set<String>
+    ) {
+        if capturingTagName {
+            if scalar == "/" && tagName.isEmpty {
+                isClosingTag = true
+            } else if MacClippyPasteboardPrivacyHTML.isASCIILetterOrDigit(scalar) {
+                tagName.unicodeScalars.append(scalar)
+            } else {
+                capturingTagName = false
+            }
+        }
+        MacClippyPasteboardPrivacyHTML.updateTag(scalar, quote: &quote, inTag: &inTag)
+        guard !inTag else { return }
+        let lower = tagName.lowercased()
+        if blockBreakTags.contains(lower) {
+            pendingNewline = !output.isEmpty
+        } else if (!isClosingTag && (lower == "td" || lower == "th")) || inlineSpaceTags.contains(lower) {
+            pendingSpace = !output.isEmpty
+        }
+    }
+}
+
+extension MacClippyPasteboardPrivacyHTML {
+    /// Pure-Swift HTML-to-plain-text extraction without WebKit/AppKit
+    /// `NSAttributedString(html:)`, network resource fetches, or main-queue hops.
+    static func plainText(from html: String) -> String {
+        guard !html.isEmpty else { return "" }
+        let scalars = Array(stripNonVisibleHTMLSections(html).unicodeScalars)
+        var state = PlainTextScanState()
+        state.output.reserveCapacity(min(scalars.count, 4_096))
+        var index = 0
+
+        while index < scalars.count {
+            let scalar = scalars[index]
+            if state.inTag {
+                state.stepTagScalar(scalar, blockBreakTags: blockBreakTags, inlineSpaceTags: inlineSpaceTags)
+                index += 1
+                continue
+            }
+            if scalar == "&" {
+                var probe = index
+                if let decoded = entity(scalars, index: &probe) {
+                    index = probe
+                    appendExtractedFragment(
+                        decoded,
+                        to: &state.output,
+                        pendingSpace: &state.pendingSpace,
+                        pendingNewline: &state.pendingNewline
+                    )
+                    continue
+                }
+            }
+            if scalar == "<" && startsTag(scalars, at: index + 1) {
+                state.inTag = true
+                state.quote = nil
+                state.tagName = ""
+                state.capturingTagName = true
+                state.isClosingTag = false
+            } else if scalar == "\n" || scalar == "\r" || scalar == "\t" || scalar == " " {
+                if !state.output.isEmpty { state.pendingSpace = true }
+            } else {
+                appendExtractedScalar(
+                    scalar,
+                    to: &state.output,
+                    pendingSpace: &state.pendingSpace,
+                    pendingNewline: &state.pendingNewline
+                )
+            }
+            index += 1
+        }
+        return state.output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Bounds HTML size and removes scripts/frames/external subresource URLs
+    /// before passing rich HTML to AppKit's attributed preview importer.
+    static func sanitizedHTMLForAttributedPreview(
+        _ html: String,
+        maxUTF8Bytes: Int = 262_144
+    ) -> String {
+        var result = boundedPrefix(html, maxUTF8Bytes: maxUTF8Bytes)
+        for pattern in previewUnsafeBlockPatterns {
+            result = result.replacingOccurrences(
+                of: pattern,
+                with: "",
+                options: [.regularExpression, .caseInsensitive]
+            )
+        }
+        let remoteURLPattern =
+            #"(?i)\b(?:src|poster|background)\s*=\s*"#
+            + #"(?:"(?:https?:)?//[^"]*"|'(?:https?:)?//[^']*'|[^\s>]*//[^\s>]*)"#
+        let replacements = [
+            (remoteURLPattern, ""),
+            (#"(?i)url\(\s*["']?(?:https?:)?//[^)]*\)"#, "url()"),
+            (#"(?i)\bon[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*)"#, "")
+        ]
+        for (pattern, replacement) in replacements {
+            result = result.replacingOccurrences(of: pattern, with: replacement, options: .regularExpression)
+        }
+        return result
+    }
+
+    private static let blockBreakTags: Set<String> = [
+        "p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6",
+        "blockquote", "pre", "hr", "section", "article", "header", "footer", "ul", "ol"
+    ]
+
+    private static let inlineSpaceTags: Set<String> = ["img", "svg"]
+
+    private static let previewUnsafeBlockPatterns: [String] = [
+        #"<script\b[^>]*>[\s\S]*?</script>"#,
+        #"<iframe\b[^>]*>[\s\S]*?</iframe>"#,
+        #"<object\b[^>]*>[\s\S]*?</object>"#,
+        #"<embed\b[^>]*>"#,
+        #"<link\b[^>]*>"#,
+        #"<base\b[^>]*>"#,
+        #"<meta\b[^>]*>"#
+    ]
+
+    private static func stripNonVisibleHTMLSections(_ html: String) -> String {
+        var result = html
+        let patterns = [
+            #"<!--[\s\S]*?-->"#,
+            #"<script\b[^>]*>[\s\S]*?</script>"#,
+            #"<style\b[^>]*>[\s\S]*?</style>"#,
+            #"<head\b[^>]*>[\s\S]*?</head>"#
+        ]
+        for pattern in patterns {
+            result = result.replacingOccurrences(
+                of: pattern,
+                with: " ",
+                options: [.regularExpression, .caseInsensitive]
+            )
+        }
+        return result
+    }
+
+    private static func boundedPrefix(_ string: String, maxUTF8Bytes: Int) -> String {
+        guard string.utf8.count > maxUTF8Bytes else { return string }
+        var endIndex = string.utf8.index(string.utf8.startIndex, offsetBy: maxUTF8Bytes)
+        while endIndex > string.utf8.startIndex {
+            if let value = String(bytes: string.utf8[..<endIndex], encoding: .utf8) {
+                return value
+            }
+            endIndex = string.utf8.index(before: endIndex)
+        }
+        return ""
+    }
+
+    fileprivate static func isASCIILetterOrDigit(_ scalar: Unicode.Scalar) -> Bool {
+        let scalarValue = scalar.value
+        return (65...90).contains(scalarValue)
+            || (97...122).contains(scalarValue)
+            || (48...57).contains(scalarValue)
+    }
+
+    private static func appendExtractedFragment(
+        _ fragment: String,
+        to output: inout String,
+        pendingSpace: inout Bool,
+        pendingNewline: inout Bool
+    ) {
+        for scalar in fragment.unicodeScalars {
+            if scalar == "\n" || scalar == "\r" {
+                if !output.isEmpty { pendingNewline = true }
+            } else if scalar == " " || scalar == "\t" || scalar == "\u{A0}" {
+                if !output.isEmpty { pendingSpace = true }
+            } else {
+                appendExtractedScalar(
+                    scalar,
+                    to: &output,
+                    pendingSpace: &pendingSpace,
+                    pendingNewline: &pendingNewline
+                )
+            }
+        }
+    }
+
+    private static func appendExtractedScalar(
+        _ scalar: Unicode.Scalar,
+        to output: inout String,
+        pendingSpace: inout Bool,
+        pendingNewline: inout Bool
+    ) {
+        if pendingNewline {
+            if !output.isEmpty && output.last != "\n" { output.append("\n") }
+            pendingNewline = false
+            pendingSpace = false
+        } else if pendingSpace {
+            if !output.isEmpty && output.last != " " && output.last != "\n" { output.append(" ") }
+            pendingSpace = false
+        }
+        output.unicodeScalars.append(scalar)
     }
 
     private static func digit(_ value: UInt32, hex: Bool) -> UInt32? {

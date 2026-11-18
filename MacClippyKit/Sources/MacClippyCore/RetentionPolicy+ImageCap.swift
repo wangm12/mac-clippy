@@ -64,7 +64,7 @@ extension MacClippyRetentionPolicy {
         // Authenticate once before trusting the normalized image index. Subsequent
         // pages assert that concurrent writers have not invalidated it.
         do {
-            try context.store.authenticateOwnedBlobReferenceIndex(shouldContinue: context.shouldContinue)
+            try context.store.authenticateOwnedBlobReferenceIndexForRetention(shouldContinue: context.shouldContinue)
         } catch is CancellationError {
             return 0
         }

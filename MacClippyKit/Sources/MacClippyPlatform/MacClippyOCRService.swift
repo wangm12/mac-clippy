@@ -84,11 +84,20 @@ public final class MacClippyOCRService: Sendable {
     public init() {}
 
     public func recognize(data: Data) async throws -> String {
-        try await recognizeLayout(data: data).fullText
+        let image: CGImage? = autoreleasepool {
+            Self.imageForRecognition(data: data)
+        }
+        guard let image else {
+            throw MacClippyOCRError.invalidImage
+        }
+        return try await recognize(image: image)
     }
 
     public func recognizeLayout(data: Data) async throws -> MacClippyOCRResult {
-        guard let image = Self.imageForRecognition(data: data) else {
+        let image: CGImage? = autoreleasepool {
+            Self.imageForRecognition(data: data)
+        }
+        guard let image else {
             throw MacClippyOCRError.invalidImage
         }
         return try await recognizeLayout(image: image)
@@ -114,14 +123,24 @@ public final class MacClippyOCRService: Sendable {
     }
 
     public func recognize(image: CGImage) async throws -> String {
-        try await recognizeLayout(image: image).fullText
+        try await recognizeLayout(image: image, includeCharacterBoxes: false).fullText
     }
 
     public func recognizeLayout(image: CGImage) async throws -> MacClippyOCRResult {
+        try await recognizeLayout(image: image, includeCharacterBoxes: true)
+    }
+
+    private func recognizeLayout(
+        image: CGImage,
+        includeCharacterBoxes: Bool
+    ) async throws -> MacClippyOCRResult {
         try Task.checkCancellation()
         let sendableImage = SendableCGImage(image: image)
         let worker = Task.detached(priority: .utility) {
-            try await Self.recognizeLayoutOnUtilityExecutor(sendableImage: sendableImage)
+            try await Self.recognizeLayoutOnUtilityExecutor(
+                sendableImage: sendableImage,
+                includeCharacterBoxes: includeCharacterBoxes
+            )
         }
         return try await withTaskCancellationHandler(operation: {
             try await worker.value
@@ -131,7 +150,8 @@ public final class MacClippyOCRService: Sendable {
     }
 
     private static func recognizeLayoutOnUtilityExecutor(
-        sendableImage: SendableCGImage
+        sendableImage: SendableCGImage,
+        includeCharacterBoxes: Bool
     ) async throws -> MacClippyOCRResult {
         try Task.checkCancellation()
         let continuationBox = MacClippyOCRContinuationBox()
@@ -144,7 +164,7 @@ public final class MacClippyOCRService: Sendable {
             }
 
             let observations = request.results as? [VNRecognizedTextObservation] ?? []
-            let lines = Self.textLines(from: observations)
+            let lines = Self.textLines(from: observations, includeCharacterBoxes: includeCharacterBoxes)
             continuationBox.resume(.success(MacClippyOCRResult(lines: lines)))
         }
         request.recognitionLevel = .accurate
@@ -175,11 +195,12 @@ public final class MacClippyOCRService: Sendable {
     }
 
     private static func textLines(
-        from observations: [VNRecognizedTextObservation]
+        from observations: [VNRecognizedTextObservation],
+        includeCharacterBoxes: Bool
     ) -> [MacClippyOCRTextLine] {
         observations
             .sorted(by: sortObservations)
-            .compactMap(textLine(from:))
+            .compactMap { textLine(from: $0, includeCharacterBoxes: includeCharacterBoxes) }
     }
 
     private static func sortObservations(
@@ -200,7 +221,8 @@ public final class MacClippyOCRService: Sendable {
     }
 
     private static func textLine(
-        from observation: VNRecognizedTextObservation
+        from observation: VNRecognizedTextObservation,
+        includeCharacterBoxes: Bool
     ) -> MacClippyOCRTextLine? {
         guard let recognizedText = observation.topCandidates(1).first else { return nil }
         let text = recognizedText.string
@@ -208,7 +230,9 @@ public final class MacClippyOCRService: Sendable {
         return MacClippyOCRTextLine(
             text: text,
             boundingBox: normalizedRect(observation.boundingBox),
-            characters: characters(in: text, recognizedText: recognizedText)
+            characters: includeCharacterBoxes
+                ? characters(in: text, recognizedText: recognizedText)
+                : []
         )
     }
 

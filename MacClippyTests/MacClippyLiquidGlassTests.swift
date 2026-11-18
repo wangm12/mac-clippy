@@ -109,7 +109,8 @@ final class MacClippyLiquidGlassTests: XCTestCase {
 
         let cardLabel = try appSource(named: "MacClippyClipboardCardLabel.swift")
         XCTAssertTrue(cardLabel.contains("colorScheme, .light"))
-        XCTAssertTrue(cardLabel.contains("MacClippyMotion.hoverScale"))
+        let dockHoverView = try appSource(named: "MacClippyDockView.swift")
+        XCTAssertTrue(dockHoverView.contains("MacClippyMotion.hoverScale"))
 
         let icon = NSImage(size: NSSize(width: 256, height: 256))
         let prepared = MacClippySourceAppIcon.prepared(
@@ -132,8 +133,9 @@ final class MacClippyLiquidGlassTests: XCTestCase {
 
         let snippets = try appSource(named: "MacClippyDockCardContent.swift")
         XCTAssertTrue(snippets.contains("MacClippySnippetHoverChrome"))
-        XCTAssertTrue(snippets.contains("MacClippyDockCardHoverChrome"))
-        XCTAssertTrue(snippets.contains("MacClippyMotion.hoverScale"))
+        let hoverSource = try appSource(named: "MacClippyDockView.swift")
+        XCTAssertTrue(hoverSource.contains("MacClippyDockCardHoverChrome"))
+        XCTAssertTrue(hoverSource.contains("MacClippyMotion.hoverScale"))
     }
 
     func testDockNavSourcesUsePieceGlassAndKeepCarouselEdgeFade() throws {

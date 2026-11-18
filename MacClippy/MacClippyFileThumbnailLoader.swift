@@ -164,6 +164,10 @@ struct MacClippyFileThumbnail: View, Equatable {
                     }
             }
         }
+        .onDisappear { image = nil }
+        .onReceive(NotificationCenter.default.publisher(for: .macClippyDockSessionDidEnd)) { _ in
+            image = nil
+        }
         .task(id: identity) {
             if MacClippyThumbnailRetainPolicy.shouldClearDisplayedImage(
                 displayedIdentity: loadedIdentity,
@@ -214,6 +218,10 @@ struct MacClippyFileImagePreview: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .accessibilityLabel("Loading image")
             }
+        }
+        .onDisappear { image = nil }
+        .onReceive(NotificationCenter.default.publisher(for: .macClippyDockSessionDidEnd)) { _ in
+            image = nil
         }
         .task(id: url.path) {
             image = nil

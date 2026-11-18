@@ -41,6 +41,8 @@ package protocol MacClippySnippetFocusContextSource: AnyObject {
     func invalidateAndRefresh()
     func noteInputEvent()
     func noteInputText(_ text: String)
+    func noteBackspace()
+    func setHasActiveTriggerCandidate(_ active: Bool)
 }
 
 package extension MacClippySnippetFocusContextSource {
@@ -52,4 +54,6 @@ package extension MacClippySnippetFocusContextSource {
 
     func noteInputEvent() {}
     func noteInputText(_ text: String) { _ = text }
+    func noteBackspace() {}
+    func setHasActiveTriggerCandidate(_ active: Bool) { _ = active }
 }

@@ -62,8 +62,8 @@ extension MacClippyRetentionPolicy {
         try scanMetadataPagesOldest(store: store, shouldContinue: shouldContinue) { page in
             for meta in page {
                 guard shouldContinue() else { return true }
-                let footprint = try store.storageFootprint(for: meta.id)
                 guard !accounting.protectedIDs.contains(meta.id) else { continue }
+                let footprint = try store.verifiedRetentionFootprint(for: meta.id)
                 addTotalBytes(footprint.inlineBytes, to: &accounting.totalBytes)
                 for blobID in footprint.blobIDs {
                     let owners = accounting.unprotectedBlobReferences[blobID, default: 0]

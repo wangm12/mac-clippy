@@ -23,7 +23,7 @@ extension MacClippySnippetExpander {
     }
 
     private func startOnMainThread() -> Bool {
-        if modeProvider() == .disabled {
+        if modeProvider() == .disabled || !hasActiveTriggersProvider() {
             stopOnMainThread()
             withLifecycleLock { startError = nil }
             return true

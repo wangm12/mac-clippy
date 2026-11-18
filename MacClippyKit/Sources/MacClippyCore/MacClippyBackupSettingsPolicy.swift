@@ -23,6 +23,7 @@ public struct MacClippyBackupInstallOperation: Equatable, Sendable {
 /// instead of replacing the entire Application Support root.
 public enum MacClippyBackupSettingsPolicy {
     public static let requiredDatabaseNames = ["clipboard", "pinboards", "search", "snippets"]
+    public static let archivePathExtension = "macclippybackup"
 
     public static func suggestedFolderName(
         now: Date = Date(),
@@ -33,6 +34,22 @@ public enum MacClippyBackupSettingsPolicy {
         formatter.timeZone = timeZone
         formatter.dateFormat = "yyyy-MM-dd"
         return "MacClippy-Backup-\(formatter.string(from: now))"
+    }
+
+    public static func suggestedArchiveFileName(
+        now: Date = Date(),
+        timeZone: TimeZone = .current
+    ) -> String {
+        "\(suggestedFolderName(now: now, timeZone: timeZone)).\(archivePathExtension)"
+    }
+
+    public static func isArchiveFile(at url: URL, fileManager: FileManager = .default) -> Bool {
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory),
+              !isDirectory.boolValue else {
+            return false
+        }
+        return url.pathExtension.lowercased() == archivePathExtension
     }
 
     public static func installOperations() -> [MacClippyBackupInstallOperation] {
@@ -104,6 +121,21 @@ public enum MacClippyBackupSettingsPolicy {
 
     public static func message(for error: MacClippyBackupError) -> String {
         switch error {
+        case .passphraseRequired:
+            return "Enter a passphrase to encrypt or decrypt this backup archive."
+        case .invalidPassphrase:
+            return "Incorrect backup passphrase."
+        case .corruptedArchive:
+            return "This backup archive is incomplete or damaged and cannot be opened."
+        case .restoreInterrupted:
+            return "Restore was interrupted. Mac Clippy will recover the previous data before starting."
+        default:
+            return snapshotMessage(for: error)
+        }
+    }
+
+    private static func snapshotMessage(for error: MacClippyBackupError) -> String {
+        switch error {
         case .destinationExists:
             return "A backup already exists at that location. Choose a new folder."
         case .invalidManifest:
@@ -121,8 +153,8 @@ public enum MacClippyBackupSettingsPolicy {
                 + "Restore is blocked to protect your current history."
         case let .databaseCopyFailed(name):
             return "Mac Clippy could not read the backup database \(name)."
-        case .restoreInterrupted:
-            return "Restore was interrupted. Mac Clippy will recover the previous data before starting."
+        case .passphraseRequired, .invalidPassphrase, .corruptedArchive, .restoreInterrupted:
+            return message(for: error)
         }
     }
 

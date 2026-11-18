@@ -14,8 +14,8 @@ public enum MacClippyPasteboardPollActivity: Equatable, Sendable {
 /// not `NSApp.isActive`.
 public enum MacClippyPasteboardPollPolicy {
     public static let foregroundInterval: TimeInterval = 0.05
-    public static let backgroundInterval: TimeInterval = 0.40
-    public static let userIdleThreshold: TimeInterval = 30
+    public static let backgroundInterval: TimeInterval = 0.50
+    public static let userIdleThreshold: TimeInterval = 4
     public static let changeBurstDuration: TimeInterval = 2
 
     public static func activity(
@@ -44,9 +44,10 @@ public enum MacClippyPasteboardPollPolicy {
 
 public enum MacClippyUserInputIdle {
     public static func secondsSinceLastInput() -> TimeInterval {
-        let mouse = CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: .mouseMoved)
         let key = CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: .keyDown)
         let flags = CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: .flagsChanged)
-        return min(mouse, min(key, flags))
+        let leftClick = CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: .leftMouseDown)
+        let rightClick = CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: .rightMouseDown)
+        return min(min(key, flags), min(leftClick, rightClick))
     }
 }

@@ -50,8 +50,8 @@ extension MacClippyClipboardStore {
         }
     }
 
-    // SQL LOWER/LIKE only folds ASCII. Scope predicates must retain the Swift
-    // grammar's Unicode matching and its fallback for legacy source app names.
+    // SQL LOWER/LIKE only folds ASCII. Scope and list predicates share the
+    // Swift grammar's Unicode matching and fallback for legacy source app names.
     private static func searchScopePredicates(
         _ filter: MacClippyClipboardMetadataFilter,
         requiresURL: Bool,
@@ -60,39 +60,14 @@ extension MacClippyClipboardStore {
     ) -> (predicates: [String], rawArguments: [Any]) {
         var predicates: [String] = []
         var rawArguments: [Any] = []
-        var basicFilter = filter
-        basicFilter.sourceAppContains = []
-        basicFilter.labelContains = []
         appendFilterPredicates(
-            basicFilter, requiresURL: requiresURL, predicates: &predicates,
-            rawArguments: &rawArguments, on: connection
+            filter,
+            requiresURL: requiresURL,
+            predicates: &predicates,
+            rawArguments: &rawArguments,
+            on: connection,
+            sourceAppDisplayNameResolver: resolver
         )
-        if !filter.sourceAppContains.isEmpty {
-            connection.add(function: DatabaseFunction("macclippy_source_app_contains", argumentCount: 3) { values in
-                let bundleID = String.fromDatabaseValue(values[0])
-                let storedName = String.fromDatabaseValue(values[1])
-                let preferred = MacClippySourceAppSearch.preferredDisplayName(stored: storedName, resolved: nil)
-                let displayName = preferred ?? resolver?(bundleID)
-                guard let needle = String.fromDatabaseValue(values[2]) else { return false }
-                return MacClippySourceAppSearch.segments(bundleID: bundleID, displayName: displayName)
-                    .contains { $0.localizedCaseInsensitiveContains(needle) }
-            })
-            for value in filter.sourceAppContains {
-                predicates.append("macclippy_source_app_contains(source_app, source_app_name, ?)")
-                rawArguments.append(value)
-            }
-        }
-        if !filter.labelContains.isEmpty {
-            connection.add(function: DatabaseFunction("macclippy_label_contains", argumentCount: 2) { values in
-                guard let label = String.fromDatabaseValue(values[0]),
-                      let needle = String.fromDatabaseValue(values[1]) else { return false }
-                return label.localizedCaseInsensitiveContains(needle)
-            })
-            for value in filter.labelContains {
-                predicates.append("macclippy_label_contains(custom_label, ?)")
-                rawArguments.append(value)
-            }
-        }
         return (predicates, rawArguments)
     }
 
@@ -102,7 +77,8 @@ extension MacClippyClipboardStore {
         contentKind: MacClippyContentKind? = nil,
         filter: MacClippyClipboardMetadataFilter? = nil,
         requiresURL: Bool = false,
-        before cursor: MacClippyClipboardHistoryCursor? = nil
+        before cursor: MacClippyClipboardHistoryCursor? = nil,
+        sourceAppDisplayNameResolver: (@Sendable (String?) -> String?)? = nil
     ) throws -> [ClipboardItemMeta] {
         guard limit > 0 else { return [] }
         return try database.queue.read { connection in
@@ -114,7 +90,8 @@ extension MacClippyClipboardStore {
                 requiresURL: requiresURL,
                 predicates: &predicates,
                 rawArguments: &rawArguments,
-                on: connection
+                on: connection,
+                sourceAppDisplayNameResolver: sourceAppDisplayNameResolver
             )
             if let cursor {
                 predicates.append("(modified < ? OR (modified = ? AND lamport < ?) OR (modified = ? AND lamport = ? AND id < ?))")
@@ -192,32 +169,20 @@ extension MacClippyClipboardStore {
         requiresURL: Bool,
         predicates: inout [String],
         rawArguments: inout [Any],
-        on connection: Database
+        on connection: Database,
+        sourceAppDisplayNameResolver: (@Sendable (String?) -> String?)? = nil
     ) {
         if let contentKind = filter.contentKind {
             predicates.append("content_kind = ?")
             rawArguments.append(contentKind.rawValue)
         }
-        for value in filter.sourceAppContains {
-            predicates.append(
-                """
-                (
-                    LOWER(IFNULL(source_app, '')) LIKE LOWER(?) ESCAPE '\\'
-                    OR LOWER(IFNULL(source_app_name, '')) LIKE LOWER(?) ESCAPE '\\'
-                )
-                """
-            )
-            let pattern = likePattern(for: value)
-            rawArguments.append(pattern)
-            rawArguments.append(pattern)
-        }
-        for value in filter.labelContains {
-            predicates.append("LOWER(custom_label) LIKE LOWER(?) ESCAPE '\\'")
-            rawArguments.append(likePattern(for: value))
-        }
-        if filter.requiresLabel {
-            predicates.append("custom_label IS NOT NULL AND trim(custom_label) != ''")
-        }
+        appendSourceAndLabelPredicates(
+            filter,
+            predicates: &predicates,
+            rawArguments: &rawArguments,
+            on: connection,
+            sourceAppDisplayNameResolver: sourceAppDisplayNameResolver
+        )
         if filter.requiresOCR {
             predicates.append("ocr_text IS NOT NULL AND trim(ocr_text) != ''")
         }
@@ -232,6 +197,44 @@ extension MacClippyClipboardStore {
         for date in filter.modifiedAfter {
             predicates.append("modified >= ?")
             rawArguments.append(milliseconds(date))
+        }
+    }
+
+    private static func appendSourceAndLabelPredicates(
+        _ filter: MacClippyClipboardMetadataFilter,
+        predicates: inout [String],
+        rawArguments: inout [Any],
+        on connection: Database,
+        sourceAppDisplayNameResolver: (@Sendable (String?) -> String?)?
+    ) {
+        if !filter.sourceAppContains.isEmpty {
+            connection.add(function: DatabaseFunction("macclippy_source_app_contains", argumentCount: 3) { values in
+                let bundleID = String.fromDatabaseValue(values[0])
+                let storedName = String.fromDatabaseValue(values[1])
+                let preferred = MacClippySourceAppSearch.preferredDisplayName(stored: storedName, resolved: nil)
+                let displayName = preferred ?? sourceAppDisplayNameResolver?(bundleID)
+                guard let needle = String.fromDatabaseValue(values[2]) else { return false }
+                return MacClippySourceAppSearch.segments(bundleID: bundleID, displayName: displayName)
+                    .contains { $0.localizedCaseInsensitiveContains(needle) }
+            })
+            for value in filter.sourceAppContains {
+                predicates.append("macclippy_source_app_contains(source_app, source_app_name, ?)")
+                rawArguments.append(value)
+            }
+        }
+        if !filter.labelContains.isEmpty {
+            connection.add(function: DatabaseFunction("macclippy_label_contains", argumentCount: 2) { values in
+                guard let label = String.fromDatabaseValue(values[0]),
+                      let needle = String.fromDatabaseValue(values[1]) else { return false }
+                return label.localizedCaseInsensitiveContains(needle)
+            })
+            for value in filter.labelContains {
+                predicates.append("macclippy_label_contains(custom_label, ?)")
+                rawArguments.append(value)
+            }
+        }
+        if filter.requiresLabel {
+            predicates.append("custom_label IS NOT NULL AND trim(custom_label) != ''")
         }
     }
 

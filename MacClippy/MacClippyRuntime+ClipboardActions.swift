@@ -6,21 +6,27 @@ import MacClippyCore
 import MacClippyPlatform
 
 extension MacClippyRuntime {
+    private static let userActionSnapshotByteLimit = 16 * 1024 * 1024
+
     func paste(
         id: RecordID,
         plain: Bool = false,
         targetProcessIdentifier: Int32? = nil,
+        beforePaste: (() -> Bool)? = nil,
         sideEffectGate: MacClippyPasteInjectionGate? = nil
     ) throws -> PasteInjectionResult {
         try measureDiagnosticMetric("paste") {
-            let content = try withStoreLock {
-                let snapshot = try clipboardStore.playbackSnapshot(for: id)
-                return try pasteboardContent(for: snapshot, plain: plain)
+            let blobLease = try blobStore.acquireRootReadLease()
+            defer { blobLease.release() }
+            let snapshot = try withStoreLock {
+                try clipboardStore.playbackSnapshot(for: id)
             }
+            let content = try pasteboardContent(for: snapshot, plain: plain)
             return injectPasteboardContent(
                 content,
                 frequencyIDs: [id],
                 targetProcessIdentifier: targetProcessIdentifier,
+                beforePaste: beforePaste,
                 sideEffectGate: sideEffectGate
             )
         }
@@ -31,13 +37,16 @@ extension MacClippyRuntime {
         snippetID: RecordID,
         manualFallback: MacClippyPasteManualFallbackPolicy = .preserveClipboard,
         targetProcessIdentifier: Int32? = nil,
+        beforePaste: (() -> Bool)? = nil,
         sideEffectGate: MacClippyPasteInjectionGate? = nil
     ) throws -> PasteInjectionResult {
         try measureDiagnosticMetric("paste_snippet") {
             let body = try withStoreLock { try snippetStore.fetch(id: snippetID).body }
             return pasteInjector.inject(
                 text: expandedSnippetBody(body),
+                beforePaste: beforePaste,
                 manualFallback: manualFallback,
+                snapshotPolicy: .bestEffort(maxBytes: Self.userActionSnapshotByteLimit),
                 gate: sideEffectGate,
                 targetProcessIdentifier: targetProcessIdentifier
             )
@@ -53,11 +62,17 @@ extension MacClippyRuntime {
         plain: Bool,
         sideEffectGate: MacClippyPasteInjectionGate? = nil
     ) throws {
-        let content = try withStoreLock {
-            let snapshot = try clipboardStore.playbackSnapshot(for: id)
-            return try pasteboardContent(for: snapshot, plain: plain)
+        let blobLease = try blobStore.acquireRootReadLease()
+        defer { blobLease.release() }
+        let snapshot = try withStoreLock {
+            try clipboardStore.playbackSnapshot(for: id)
         }
-        try pasteInjector.prepare(content, gate: sideEffectGate)
+        let content = try pasteboardContent(for: snapshot, plain: plain)
+        try pasteInjector.prepare(
+            content,
+            gate: sideEffectGate,
+            snapshotPolicy: .bestEffort(maxBytes: Self.userActionSnapshotByteLimit)
+        )
     }
 
     func copy(
@@ -65,7 +80,11 @@ extension MacClippyRuntime {
         sideEffectGate: MacClippyPasteInjectionGate? = nil
     ) throws {
         let body = try withStoreLock { try snippetStore.fetch(id: snippetID).body }
-        try pasteInjector.prepareText(expandedSnippetBody(body), gate: sideEffectGate)
+        try pasteInjector.prepareText(
+            expandedSnippetBody(body),
+            gate: sideEffectGate,
+            snapshotPolicy: .bestEffort(maxBytes: Self.userActionSnapshotByteLimit)
+        )
     }
 
     private func expandedSnippetBody(_ body: String) -> String {
@@ -93,7 +112,11 @@ extension MacClippyRuntime {
         sideEffectGate: MacClippyPasteInjectionGate? = nil
     ) throws {
         let text = try withStoreLock { try transformedPlainText(for: id, transform: transform) }
-        try pasteInjector.prepare(.text(text), gate: sideEffectGate)
+        try pasteInjector.prepare(
+            .text(text),
+            gate: sideEffectGate,
+            snapshotPolicy: .bestEffort(maxBytes: Self.userActionSnapshotByteLimit)
+        )
     }
 
     @discardableResult
@@ -101,6 +124,7 @@ extension MacClippyRuntime {
         id: RecordID,
         transform: TextTransform,
         targetProcessIdentifier: Int32? = nil,
+        beforePaste: (() -> Bool)? = nil,
         sideEffectGate: MacClippyPasteInjectionGate? = nil
     ) throws -> PasteInjectionResult {
         try measureDiagnosticMetric("paste_transform") {
@@ -109,6 +133,7 @@ extension MacClippyRuntime {
                 .text(text),
                 frequencyIDs: [id],
                 targetProcessIdentifier: targetProcessIdentifier,
+                beforePaste: beforePaste,
                 sideEffectGate: sideEffectGate
             )
         }
@@ -229,11 +254,13 @@ extension MacClippyRuntime {
             try snippetStore.delete(id: snippetID)
             do {
                 try snippetLookupSnapshot.replace(with: snippetStore.list())
+                scheduleSnippetExpanderRefresh()
             } catch {
                 // The delete already committed. Remove the deleted trigger
                 // from the in-memory snapshot before surfacing the refresh
                 // error, so a stale event tap can never expand deleted text.
                 snippetLookupSnapshot.remove(trigger: deletedSnippet.trigger)
+                scheduleSnippetExpanderRefresh()
                 throw error
             }
         }

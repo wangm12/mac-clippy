@@ -12,6 +12,43 @@ extension MacClippyRuntime {
     }
 
     func createBackup(at destinationURL: URL) throws -> MacClippyBackupManifest {
+        try performBackupSnapshot { snapshots, operation in
+            try MacClippyBackup.create(
+                snapshots: snapshots,
+                blobsURL: paths.blobsURL,
+                keySource: clipboardStore.backupKeySource,
+                at: destinationURL,
+                shouldContinue: { !operation.isCancelled }
+            )
+        }
+    }
+
+    func createArchiveBackup(
+        at destinationURL: URL,
+        passphrase: String,
+        overwrite: Bool = false
+    ) throws -> MacClippyBackupManifest {
+        try performBackupSnapshot { snapshots, operation in
+            try MacClippyBackup.createArchive(
+                snapshots: snapshots,
+                blobsURL: paths.blobsURL,
+                keySource: clipboardStore.backupKeySource,
+                to: destinationURL,
+                options: MacClippyBackupArchiveOptions(
+                    passphrase: passphrase,
+                    overwriteExisting: overwrite,
+                    shouldContinue: { !operation.isCancelled }
+                )
+            )
+        }
+    }
+
+    private func performBackupSnapshot(
+        _ work: (
+            [MacClippyBackupReadSnapshot],
+            MacClippyMaintenanceIOCoordinator.Operation
+        ) throws -> MacClippyBackupManifest
+    ) throws -> MacClippyBackupManifest {
         let coordinator = MacClippyMaintenanceIOCoordinator.shared
         guard let operation = coordinator.beginOperation(at: paths.rootURL, kind: .backup) else {
             throw CancellationError()
@@ -41,12 +78,6 @@ extension MacClippyRuntime {
         #if DEBUG
             MacClippyMaintenanceIOTestHooks.afterBackupSnapshots()
         #endif
-        return try MacClippyBackup.create(
-            snapshots: snapshot.databases,
-            blobsURL: paths.blobsURL,
-            keySource: clipboardStore.backupKeySource,
-            at: destinationURL,
-            shouldContinue: { !operation.isCancelled }
-        )
+        return try work(snapshot.databases, operation)
     }
 }

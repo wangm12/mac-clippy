@@ -37,22 +37,59 @@ public struct MacClippyCapturePersistResult: Equatable, Sendable {
 /// Stable SHA-256 of the captured payload so an identical copy can bump
 /// `frequency` / `lastAccessed` instead of writing a new encrypted row.
 public enum MacClippyCaptureDedupPolicy {
+    public struct StreamHasher {
+        private var hasher = SHA256()
+        private let isMultiItem: Bool
+
+        public init(
+            primary: MacClippyCaptureDedupPrimary,
+            representationCount: Int,
+            isMultiItem: Bool
+        ) {
+            self.isMultiItem = isMultiItem
+            MacClippyCaptureDedupPolicy.append(&hasher, isMultiItem ? "v2-items" : "v1")
+            MacClippyCaptureDedupPolicy.append(&hasher, primary)
+            MacClippyCaptureDedupPolicy.appendCount(&hasher, representationCount)
+        }
+
+        public mutating func appendRepresentation(
+            itemIndex: Int = 0,
+            uti: String,
+            payloadState: String,
+            payloadBytes: Data?
+        ) {
+            if isMultiItem {
+                MacClippyCaptureDedupPolicy.append(&hasher, UInt64(itemIndex))
+            }
+            MacClippyCaptureDedupPolicy.append(&hasher, uti)
+            MacClippyCaptureDedupPolicy.append(&hasher, payloadState)
+            MacClippyCaptureDedupPolicy.append(&hasher, payloadBytes ?? Data())
+        }
+
+        public func finalize() -> String {
+            hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        }
+    }
+
     public static func contentHash(
         primary: MacClippyCaptureDedupPrimary,
         representations: [MacClippyCaptureDedupRepresentation]
     ) -> String {
-        var hasher = SHA256()
         let isMultiItem = representations.contains { $0.itemIndex != 0 }
-        append(&hasher, isMultiItem ? "v2-items" : "v1")
-        append(&hasher, primary)
-        appendCount(&hasher, representations.count)
+        var stream = StreamHasher(
+            primary: primary,
+            representationCount: representations.count,
+            isMultiItem: isMultiItem
+        )
         for representation in representations {
-            if isMultiItem { append(&hasher, UInt64(representation.itemIndex)) }
-            append(&hasher, representation.uti)
-            append(&hasher, representation.payloadState)
-            append(&hasher, representation.payloadBytes ?? Data())
+            stream.appendRepresentation(
+                itemIndex: representation.itemIndex,
+                uti: representation.uti,
+                payloadState: representation.payloadState,
+                payloadBytes: representation.payloadBytes
+            )
         }
-        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        return stream.finalize()
     }
 
     /// AES-GCM combined box is nonce (12) + ciphertext + tag (16).
@@ -69,7 +106,10 @@ public enum MacClippyCaptureDedupPolicy {
     ) -> Bool {
         guard let recordID, RecordID(rawValue: recordID) != nil else { return false }
         guard let contentKind, MacClippyContentKind(rawValue: contentKind) != nil else { return false }
-        guard let preview, !preview.isEmpty else { return false }
+        guard let preview else { return false }
+        if preview.isEmpty && contentKind != MacClippyContentKind.html.rawValue {
+            return false
+        }
         return envelopeByteCount >= minimumSealedEnvelopeByteCount
     }
 

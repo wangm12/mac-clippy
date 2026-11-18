@@ -6,6 +6,7 @@ import MacClippyPlatform
 
 private struct MacClippyPasteExecutionContext {
     let targetProcessIdentifier: Int32?
+    let beforePaste: (() -> Bool)?
     let gate: MacClippyPasteInjectionGate?
 }
 
@@ -114,6 +115,7 @@ extension MacClippyRuntime {
     func pasteQueued(
         ids: [RecordID],
         shouldCancel: @escaping () -> Bool = { false },
+        beforePaste: (() -> Bool)? = nil,
         sideEffectGate: MacClippyPasteInjectionGate? = nil,
         targetProcessIdentifier: Int32? = nil,
         onProgress: (@Sendable (Int, Int) -> Void)? = nil
@@ -135,7 +137,11 @@ extension MacClippyRuntime {
                 ids: ids,
                 knownKinds: knownKinds,
                 shouldCancel: shouldCancel,
-                context: .init(targetProcessIdentifier: targetProcessIdentifier, gate: sideEffectGate),
+                context: .init(
+                    targetProcessIdentifier: targetProcessIdentifier,
+                    beforePaste: beforePaste,
+                    gate: sideEffectGate
+                ),
                 onProgress: onProgress
             )
         }
@@ -160,9 +166,12 @@ extension MacClippyRuntime {
             let attempt = try attemptQueuedPaste(
                 id: id,
                 knownKinds: knownKinds,
-                shouldCancel: shouldCancel,
-                sideEffectGate: sideEffectGate,
-                targetProcessIdentifier: context.targetProcessIdentifier
+                beforePaste: index == 0 ? context.beforePaste : nil,
+                execution: QueuedPasteExecution(
+                    shouldCancel: shouldCancel,
+                    sideEffectGate: sideEffectGate,
+                    targetProcessIdentifier: context.targetProcessIdentifier
+                )
             )
             if let terminalResult = progress.record(
                 attempt,
@@ -185,12 +194,17 @@ extension MacClippyRuntime {
         return progress.completed()
     }
 
+    private struct QueuedPasteExecution {
+        let shouldCancel: () -> Bool
+        let sideEffectGate: MacClippyPasteInjectionGate?
+        let targetProcessIdentifier: Int32?
+    }
+
     private func attemptQueuedPaste(
         id: RecordID,
         knownKinds: [RecordID: MacClippyContentKind],
-        shouldCancel: @escaping () -> Bool,
-        sideEffectGate: MacClippyPasteInjectionGate?,
-        targetProcessIdentifier: Int32?
+        beforePaste: (() -> Bool)?,
+        execution: QueuedPasteExecution
     ) throws -> MacClippyQueuedPasteAttempt {
         switch try prepareQueuedPasteContent(id: id, knownKinds: knownKinds) {
         case let .unavailable(kind):
@@ -199,9 +213,10 @@ extension MacClippyRuntime {
             switch injectPasteboardContent(
                 content,
                 frequencyIDs: [id],
-                targetProcessIdentifier: targetProcessIdentifier,
-                validateBeforePaste: { !shouldCancel() },
-                sideEffectGate: sideEffectGate
+                targetProcessIdentifier: execution.targetProcessIdentifier,
+                beforePaste: beforePaste,
+                validateBeforePaste: { !execution.shouldCancel() },
+                sideEffectGate: execution.sideEffectGate
             ) {
             case .injected:
                 return .injected
@@ -220,10 +235,12 @@ extension MacClippyRuntime {
         knownKinds: [RecordID: MacClippyContentKind]
     ) throws -> MacClippyQueuedPastePreparation {
         do {
-            return try withStoreLock {
-                let snapshot = try clipboardStore.playbackSnapshot(for: id)
-                return .content(try pasteboardContent(for: snapshot, plain: false))
+            let blobLease = try blobStore.acquireRootReadLease()
+            defer { blobLease.release() }
+            let snapshot = try withStoreLock {
+                try clipboardStore.playbackSnapshot(for: id)
             }
+            return .content(try pasteboardContent(for: snapshot, plain: false))
         } catch {
             let isMissing: Bool = {
                 guard let storeError = error as? MacClippyStoreError else { return false }
@@ -259,13 +276,16 @@ extension MacClippyRuntime {
         _ content: MacClippyPasteboardContent,
         frequencyIDs: [RecordID] = [],
         targetProcessIdentifier: Int32? = nil,
+        beforePaste: (() -> Bool)? = nil,
         validateBeforePaste: (() -> Bool)? = nil,
         sideEffectGate: MacClippyPasteInjectionGate?
     ) -> PasteInjectionResult {
         let result = pasteInjector.inject(
             content: content,
+            beforePaste: beforePaste,
             validateBeforePaste: validateBeforePaste,
             validateCommitContext: validateBeforePaste,
+            snapshotPolicy: .bestEffort(maxBytes: 16 * 1024 * 1024),
             gate: sideEffectGate,
             targetProcessIdentifier: targetProcessIdentifier
         )

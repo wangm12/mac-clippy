@@ -175,10 +175,6 @@ extension MacClippyDockController {
 
     private func pasteFocusedSelection(plain: Bool) {
         guard model.selectionIsReady else { return }
-        restorePasteTargetApplicationIfNeeded(
-            leavingSearch: interactionMode == .search,
-            isHiding: false
-        )
         if model.hasMultipleSelection {
             model.pasteSelectedAll(completion: { [weak self] in self?.hide() })
         } else {

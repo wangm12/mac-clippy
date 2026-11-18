@@ -84,6 +84,11 @@ extension MacClippySnippetExpander {
             shouldRecordTypedText = false
             return true
         }
+        if input.keyCode == UInt16(kVK_Delete) && !input.hasDisqualifyingModifiers {
+            shouldRecordTypedText = false
+            processBackspaceKey(cachedIdentity: cachedIdentity, generation: advance.generation)
+            return false
+        }
         guard let candidate = makeCandidate(
             from: input,
             cachedIdentity: cachedIdentity,
@@ -117,6 +122,7 @@ extension MacClippySnippetExpander {
         plannerFocusSelection = nil
         pendingRequest = nil
         lifecycleLock.unlock()
+        focusContext.setHasActiveTriggerCandidate(false)
         focusContext.invalidateAndRefresh()
     }
 
@@ -128,6 +134,7 @@ extension MacClippySnippetExpander {
         plannerFocusSelection = nil
         pendingRequest = nil
         lifecycleLock.unlock()
+        focusContext.setHasActiveTriggerCandidate(false)
     }
 
     private func advanceInput(
@@ -182,6 +189,35 @@ extension MacClippySnippetExpander {
         return false
     }
 
+    private func processBackspaceKey(
+        cachedIdentity: MacClippySnippetFocusIdentity?,
+        generation: UInt64
+    ) {
+        lifecycleLock.lock()
+        guard installed, inputGeneration == generation else {
+            lifecycleLock.unlock()
+            return
+        }
+        guard let cachedIdentity else {
+            planner.reset()
+            plannerFocusIdentity = nil
+            plannerFocusSelection = nil
+            lifecycleLock.unlock()
+            focusContext.setHasActiveTriggerCandidate(false)
+            focusContext.invalidateAndRefresh()
+            return
+        }
+        resetPlannerIfFocusChanged(to: cachedIdentity)
+        planner.handleBackspace()
+        let hasActiveTrigger = planner.currentTrigger != nil
+        if !hasActiveTrigger {
+            plannerFocusSelection = nil
+        }
+        lifecycleLock.unlock()
+        focusContext.setHasActiveTriggerCandidate(hasActiveTrigger)
+        focusContext.noteBackspace()
+    }
+
     private func makeCandidate(
         from input: MacClippySnippetSyntheticKeyInput,
         cachedIdentity: MacClippySnippetFocusIdentity?,
@@ -195,6 +231,7 @@ extension MacClippySnippetExpander {
             planner.reset()
             plannerFocusIdentity = nil
             plannerFocusSelection = nil
+            focusContext.setHasActiveTriggerCandidate(false)
             return nil
         }
         resetPlannerIfFocusChanged(to: cachedIdentity)
@@ -204,6 +241,7 @@ extension MacClippySnippetExpander {
             planner.reset()
             plannerFocusIdentity = nil
             plannerFocusSelection = nil
+            focusContext.setHasActiveTriggerCandidate(false)
             return nil
         }
 
@@ -250,6 +288,7 @@ extension MacClippySnippetExpander {
             let focusIdentity = plannerFocusIdentity ?? cachedIdentity
             plannerFocusIdentity = nil
             plannerFocusSelection = nil
+            focusContext.setHasActiveTriggerCandidate(false)
             nextRequestIdentifier &+= 1
             return ExpansionRequest(
                 identifier: nextRequestIdentifier,
@@ -261,6 +300,7 @@ extension MacClippySnippetExpander {
                 gate: currentGate
             )
         }
+        focusContext.setHasActiveTriggerCandidate(planner.currentTrigger != nil)
         return nil
     }
 
@@ -313,7 +353,8 @@ extension MacClippySnippetExpander {
     }
 
     private static func mayChangeFocus(_ keyCode: UInt16) -> Bool {
-        isEditingKey(keyCode)
+        guard keyCode != UInt16(kVK_Delete) else { return false }
+        return isEditingKey(keyCode)
             || keyCode == UInt16(kVK_Tab)
             || keyCode == UInt16(kVK_Return)
     }
@@ -327,7 +368,7 @@ extension MacClippySnippetExpander {
             unicodeString: &characters
         )
         let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
-        let rawString = Self.string(fromUTF16: characters.prefix(actualLength))
+        let rawString = MacClippySnippetExpander.decodeUTF16Units(characters.prefix(actualLength))
         let typedString = rawString.isEmpty && keyCode == UInt16(kVK_Tab) ? "\t" : rawString
         let flags = event.flags
         return MacClippySnippetSyntheticKeyInput(
@@ -337,39 +378,5 @@ extension MacClippySnippetExpander {
                 || flags.contains(.maskControl)
                 || flags.contains(.maskAlternate)
         )
-    }
-
-    private static func string(fromUTF16 units: ArraySlice<UniChar>) -> String {
-        var scalars = String.UnicodeScalarView()
-        var index = units.startIndex
-        while index < units.endIndex {
-            let first = units[index]
-            if (0xD800...0xDBFF).contains(first) {
-                let nextIndex = units.index(after: index)
-                if nextIndex < units.endIndex, (0xDC00...0xDFFF).contains(units[nextIndex]) {
-                    let high = UInt32(first) - 0xD800
-                    let low = UInt32(units[nextIndex]) - 0xDC00
-                    if let scalar = Unicode.Scalar(0x1_0000 + (high << 10) + low) {
-                        scalars.append(scalar)
-                    }
-                    index = units.index(after: nextIndex)
-                } else {
-                    // Keep malformed UTF-16 handling compatible with the old
-                    // decoder: ignore unpaired surrogates, without inserting
-                    // a replacement character into the trigger buffer.
-                    index = nextIndex
-                }
-                continue
-            }
-            if (0xDC00...0xDFFF).contains(first) {
-                index = units.index(after: index)
-                continue
-            }
-            if let scalar = Unicode.Scalar(first) {
-                scalars.append(scalar)
-            }
-            index = units.index(after: index)
-        }
-        return String(scalars)
     }
 }

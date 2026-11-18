@@ -368,6 +368,7 @@ extension MacClippyDockModel {
         )
         query = ""
         historySearchClauses = []
+        selectedSnippetFolder = nil
         isSessionActive = true
         focusedIndex = 0
         selection = MacClippyDockSelectionState()
@@ -388,13 +389,9 @@ extension MacClippyDockModel {
         isSelecting = false
         clearActionFeedback()
         if resetCaches {
+            trimHistoryTailOnSessionEnd()
             resetSessionThumbnailCaches()
+            NotificationCenter.default.post(name: .macClippyDockSessionDidEnd, object: nil)
         }
-    }
-
-    func resetSessionThumbnailCaches() {
-        thumbnailLoader.resetForSessionEnd()
-        MacClippyFileThumbnailLoader.resetForSessionEnd()
-        MacClippyFileIconLoader.resetForSessionEnd()
     }
 }

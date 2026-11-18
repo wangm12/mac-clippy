@@ -113,7 +113,6 @@ extension MacClippyRuntime {
             for: record,
             ocrText: meta.ocrText,
             label: meta.customLabel,
-            representationUTIs: try clipboardStore.representationUTIs(for: id),
             sourceAppBundleID: meta.sourceAppBundleID
         )
         if indexText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

@@ -216,6 +216,7 @@ extension MacClippyDockView {
 
     private var snippetCarousel: some View {
         let visibleSnippets = model.visibleSnippets
+        let folders = model.availableSnippetFolders
         return ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: MacClippyDockCardMetrics.gap) {
@@ -253,7 +254,14 @@ extension MacClippyDockView {
                     }
                 }
                 .padding(.horizontal, 12)
-                .padding(.vertical, MacClippyDockCardMetrics.carouselVerticalPadding)
+                .padding(
+                    .top,
+                    folders.isEmpty ? MacClippyDockCardMetrics.carouselVerticalPadding : 28
+                )
+                .padding(
+                    .bottom,
+                    folders.isEmpty ? MacClippyDockCardMetrics.carouselVerticalPadding : 6
+                )
             }
             // Same keyboard/preview-only focus-follow behavior as the
             // clipboard carousel; pointer selection never recenters it.
@@ -273,8 +281,57 @@ extension MacClippyDockView {
         // carousel, including when the add card is the only card.
         .frame(height: MacClippyDockCardMetrics.carouselHeight(for: dynamicTypeSize))
         .mask { carouselEdgeFade }
+        .overlay(alignment: .topLeading) {
+            if !folders.isEmpty {
+                snippetFolderBar(folders)
+            }
+        }
         .overlay { MacClippyDockScrollSignpostProbe().allowsHitTesting(false) }
         .onAppear { model.noteCardListAppeared() }
+    }
+
+    private func snippetFolderBar(_ folders: [String]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                snippetFolderPill(title: "All", isSelected: model.selectedSnippetFolder == nil) {
+                    model.selectSnippetFolder(nil)
+                }
+                ForEach(folders, id: \.self) { folder in
+                    snippetFolderPill(
+                        title: folder,
+                        isSelected: model.selectedSnippetFolder == folder
+                    ) {
+                        model.selectSnippetFolder(folder)
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 2)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Snippet folders")
+    }
+
+    private func snippetFolderPill(
+        title: String,
+        isSelected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.caption.weight(isSelected ? .semibold : .medium))
+                .foregroundStyle(
+                    isSelected ? MacClippyDockTheme.accentColor : MacClippyDockTheme.mutedColor
+                )
+                .padding(.horizontal, 10)
+                .padding(.vertical, 3)
+                .background(
+                    isSelected ? MacClippyDockTheme.accentSoftColor : MacClippyDockTheme.cardColor.opacity(0.6),
+                    in: Capsule()
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private var snippetAddCard: some View {

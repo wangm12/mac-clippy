@@ -61,7 +61,13 @@ struct MacClippyCardImageThumbnail: View, Equatable {
             }
         }
         .onAppear { isCardVisible = true }
-        .onDisappear { isCardVisible = false }
+        .onDisappear {
+            isCardVisible = false
+            image = nil
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .macClippyDockSessionDidEnd)) { _ in
+            image = nil
+        }
         .task(id: "\(itemID.rawValue)-\(isCardVisible)") {
             if MacClippyThumbnailRetainPolicy.shouldClearDisplayedImage(
                 displayedIdentity: loadedIdentity,

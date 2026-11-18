@@ -104,17 +104,20 @@ extension MacClippySettingsView {
     }
 
     func createBackup() {
-        guard let delegate = NSApp.delegate as? AppDelegate else { return }
+        guard let delegate = NSApp.delegate as? AppDelegate,
+              let passphrase = MacClippyBackupPassphrasePrompt.promptForCreation() else { return }
         let panel = NSSavePanel()
         panel.canCreateDirectories = true
-        panel.nameFieldStringValue = MacClippyBackupSettingsPolicy.suggestedFolderName()
+        let archiveType = UTType(filenameExtension: MacClippyBackupSettingsPolicy.archivePathExtension) ?? .data
+        panel.allowedContentTypes = [archiveType]
+        panel.nameFieldStringValue = MacClippyBackupSettingsPolicy.suggestedArchiveFileName()
         panel.prompt = "Create Backup"
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             isCreatingBackup = true
             diagnosticsMessage = nil
             diagnosticsMessageIsError = false
-            delegate.createBackup(at: url) { result in
+            delegate.createArchiveBackup(at: url, passphrase: passphrase) { result in
                 isCreatingBackup = false
                 switch result {
                 case let .success(manifest):
@@ -123,7 +126,10 @@ extension MacClippySettingsView {
                     )
                     diagnosticsMessageIsError = false
                 case let .failure(error):
-                    diagnosticsMessage = backupFailureMessage(error, fallback: "Backup failed. Choose another destination and try again.")
+                    diagnosticsMessage = MacClippyBackupPassphrasePrompt.userMessage(
+                        for: error,
+                        fallback: "Backup failed. Choose another destination and try again."
+                    )
                     diagnosticsMessageIsError = true
                 }
             }
@@ -133,40 +139,51 @@ extension MacClippySettingsView {
     func chooseBackupToRestore() {
         guard let delegate = NSApp.delegate as? AppDelegate else { return }
         let panel = NSOpenPanel()
-        panel.canChooseFiles = false
+        panel.canChooseFiles = true
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.prompt = "Restore"
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
+            if MacClippyBackupSettingsPolicy.isArchiveFile(at: url) {
+                guard let passphrase = MacClippyBackupPassphrasePrompt.promptForUnlock() else { return }
+                runRestoreCall { delegate.restoreArchiveBackup(from: url, passphrase: passphrase, completion: $0) }
+                return
+            }
             guard MacClippyBackupSettingsPolicy.containsManifest(at: url) else {
                 diagnosticsMessage = MacClippyBackupSettingsPolicy.message(for: .invalidManifest)
                 diagnosticsMessageIsError = true
                 return
             }
-            isRestoringBackup = true
-            diagnosticsMessage = nil
-            diagnosticsMessageIsError = false
-            delegate.restoreBackup(from: url) { result in
-                isRestoringBackup = false
-                switch result {
-                case .success:
-                    diagnosticsMessage = MacClippyBackupSettingsPolicy.restoreSuccessMessage()
-                    diagnosticsMessageIsError = false
-                    refreshStorageHealth()
-                case let .failure(error):
-                    diagnosticsMessage = backupFailureMessage(error, fallback: "Restore failed. Export diagnostics and try again.")
-                    diagnosticsMessageIsError = true
-                }
+            runRestoreCall { delegate.restoreBackup(from: url, completion: $0) }
+        }
+    }
+
+    private func runRestoreCall(
+        _ starter: (@escaping @MainActor @Sendable (Result<MacClippyBackupValidation, Error>) -> Void) -> Void
+    ) {
+        isRestoringBackup = true
+        diagnosticsMessage = nil
+        diagnosticsMessageIsError = false
+        starter { result in
+            isRestoringBackup = false
+            switch result {
+            case .success:
+                diagnosticsMessage = MacClippyBackupSettingsPolicy.restoreSuccessMessage()
+                diagnosticsMessageIsError = false
+                refreshStorageHealth()
+            case let .failure(error):
+                diagnosticsMessage = MacClippyBackupPassphrasePrompt.userMessage(
+                    for: error,
+                    fallback: "Restore failed. Export diagnostics and try again."
+                )
+                diagnosticsMessageIsError = true
             }
         }
     }
 
     func backupFailureMessage(_ error: Error, fallback: String) -> String {
-        if let backupError = error as? MacClippyBackupError {
-            return MacClippyBackupSettingsPolicy.message(for: backupError)
-        }
-        return fallback
+        MacClippyBackupPassphrasePrompt.userMessage(for: error, fallback: fallback)
     }
 
     func exportDiagnostics() {
@@ -283,12 +300,6 @@ extension MacClippySettingsView {
                     ProgressView("Repairing search index…")
                         .controlSize(.small)
                 }
-                if let diagnosticsMessage {
-                    MacClippySettingsNote(
-                        text: diagnosticsMessage,
-                        tone: diagnosticsMessageIsError ? .danger : .info
-                    )
-                }
             }
             MacClippySettingsGroup(
                 title: "Backup & diagnostics",
@@ -372,29 +383,5 @@ extension MacClippySettingsView {
                 }
             }
         }
-    }
-
-    var storageHealthHasIssue: Bool {
-        storageHealth.values.contains { $0.status != .healthy }
-    }
-
-    var storageHealthStatusText: String {
-        storageHealth.keys.sorted().compactMap { name in
-            guard let report = storageHealth[name] else { return nil }
-            return "\(name.capitalized): \(report.status.rawValue.capitalized)"
-        }
-        .joined(separator: "  ·  ")
-    }
-
-    var storageHealthStatusDetail: String {
-        if storageHealth.isEmpty {
-            return "Unavailable until MacClippy finishes starting."
-        }
-        return storageHealthStatusText
-    }
-
-    var storageHealthSummary: String {
-        if storageHealth.isEmpty { return "Checking storage…" }
-        return storageHealthHasIssue ? "Needs attention" : "Storage healthy"
     }
 }

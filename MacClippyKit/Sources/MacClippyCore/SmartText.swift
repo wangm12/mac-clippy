@@ -93,14 +93,24 @@ public enum MacClippySmartText {
     }
 
     public static func codeLanguage(_ text: String) -> CodeLanguage? {
-        if text.hasPrefix("#!/") { return .shell }
-        if text.range(of: "(?i)\\bselect\\b[\\s\\S]+\\bfrom\\b", options: .regularExpression) != nil { return .sql }
-        if text.range(of: "<[A-Za-z][^>]*>[\\s\\S]*</[A-Za-z]", options: .regularExpression) != nil { return .html }
-        if text.contains("func ") || text.contains("guard ") || text.contains("let ") { return .swift }
-        if text.contains("=>") || text.contains("const ") || text.contains("function ") { return .javascript }
-        if text.contains("def ") || text.range(of: "\\bimport\\s+\\w+:", options: .regularExpression) != nil { return .python }
-        if text.contains("#include") { return .c }
-        if (text.contains("{") && text.contains("}")) || text.contains(";\n") { return .unknown }
+        let sample = String(text.prefix(8_192))
+        if sample.hasPrefix("#!/") { return .shell }
+        let sqlPattern = "(?i)\\bselect\\b(?:[^\\r\\n]{1,240}|\\r?\\n[^\\r\\n]{0,240})\\bfrom\\b"
+        if sample.range(of: sqlPattern, options: .regularExpression) != nil {
+            return .sql
+        }
+        let htmlPattern = "<[A-Za-z][A-Za-z0-9:-]{0,31}(?:\\s[^<>]{0,200})?>.{0,512}</[A-Za-z]"
+        if sample.range(of: htmlPattern, options: .regularExpression) != nil {
+            return .html
+        }
+        if sample.contains("func ") || sample.contains("guard ") || sample.contains("let ") { return .swift }
+        if sample.contains("=>") || sample.contains("const ") || sample.contains("function ") { return .javascript }
+        if sample.contains("def ")
+            || sample.range(of: "\\bimport\\s+\\w+:", options: .regularExpression) != nil {
+            return .python
+        }
+        if sample.contains("#include") { return .c }
+        if (sample.contains("{") && sample.contains("}")) || sample.contains(";\n") { return .unknown }
         return nil
     }
 

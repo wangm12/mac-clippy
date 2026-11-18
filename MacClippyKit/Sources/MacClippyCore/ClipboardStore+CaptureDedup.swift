@@ -183,46 +183,119 @@ extension MacClippyClipboardStore {
         _ snapshot: MacClippyClipboardPlaybackSnapshot,
         readBlob: ((String) throws -> Data)?
     ) throws -> String {
-        func blob(_ id: String) throws -> Data {
-            guard let readBlob else { throw MacClippyStoreError.invalidStoredRecord }
-            return try readBlob(id)
-        }
-        let primary: MacClippyCaptureDedupPrimary
-        switch snapshot.record {
-        case let .text(value): primary = .text(value)
-        case let .rtf(data): primary = .rtf(data)
-        case let .html(value): primary = .html(value)
-        case let .files(urls): primary = .files(urls.map(\.path))
-        case let .image(blobID, width, height), let .encryptedImage(blobID, width, height):
-            primary = .image(try blob(blobID), width: width, height: height)
-        }
+        let resolvedPrimary = try resolvePrimaryCapturePayload(snapshot: snapshot, readBlob: readBlob)
+        let isMultiItem = snapshot.representations.contains { $0.itemIndex != 0 }
+        var stream = MacClippyCaptureDedupPolicy.StreamHasher(
+            primary: resolvedPrimary.primary,
+            representationCount: snapshot.representations.count,
+            isMultiItem: isMultiItem
+        )
+        try appendRepresentationHashes(
+            snapshot.representations,
+            sharedPrimaryBlobID: resolvedPrimary.sharedBlobID,
+            sharedPrimaryBlobData: resolvedPrimary.sharedBlobData,
+            readBlob: readBlob,
+            into: &stream
+        )
+        return stream.finalize()
+    }
 
-        let hashedRepresentations = try snapshot.representations.map { representation in
-            let bytes: Data?
-            let state: String
-            switch representation.payloadState {
-            case .present:
-                bytes = representation.payloadBytes
-                state = MacClippyClipboardRepresentationPayloadState.present.rawValue
-            case .spilled:
-                guard let blobID = representation.blobID else { throw MacClippyStoreError.invalidStoredRecord }
-                bytes = try blob(blobID)
-                state = MacClippyClipboardRepresentationPayloadState.present.rawValue
-            case .unavailable:
-                bytes = nil
-                state = MacClippyClipboardRepresentationPayloadState.unavailable.rawValue
-            case .oversized:
-                bytes = nil
-                state = MacClippyClipboardRepresentationPayloadState.oversized.rawValue
-            }
-            return MacClippyCaptureDedupRepresentation(
-                itemIndex: representation.itemIndex,
-                uti: representation.uti,
-                payloadState: state,
-                payloadBytes: bytes
+    private struct ResolvedPrimaryCapturePayload {
+        let primary: MacClippyCaptureDedupPrimary
+        let sharedBlobID: String?
+        let sharedBlobData: Data?
+    }
+
+    private func resolvePrimaryCapturePayload(
+        snapshot: MacClippyClipboardPlaybackSnapshot,
+        readBlob: ((String) throws -> Data)?
+    ) throws -> ResolvedPrimaryCapturePayload {
+        switch snapshot.record {
+        case let .text(value):
+            return ResolvedPrimaryCapturePayload(
+                primary: .text(value),
+                sharedBlobID: nil,
+                sharedBlobData: nil
+            )
+        case let .rtf(data):
+            return ResolvedPrimaryCapturePayload(
+                primary: .rtf(data),
+                sharedBlobID: nil,
+                sharedBlobData: nil
+            )
+        case let .html(value):
+            return ResolvedPrimaryCapturePayload(
+                primary: .html(value),
+                sharedBlobID: nil,
+                sharedBlobData: nil
+            )
+        case let .files(urls):
+            return ResolvedPrimaryCapturePayload(
+                primary: .files(urls.map(\.path)),
+                sharedBlobID: nil,
+                sharedBlobData: nil
+            )
+        case let .image(blobID, width, height), let .encryptedImage(blobID, width, height):
+            guard let readBlob else { throw MacClippyStoreError.invalidStoredRecord }
+            let imageData = try readBlob(blobID)
+            let hasSharedRef = snapshot.representations.contains { $0.blobID == blobID }
+            return ResolvedPrimaryCapturePayload(
+                primary: .image(imageData, width: width, height: height),
+                sharedBlobID: hasSharedRef ? blobID : nil,
+                sharedBlobData: hasSharedRef ? imageData : nil
             )
         }
-        return MacClippyCaptureDedupPolicy.contentHash(primary: primary, representations: hashedRepresentations)
+    }
+
+    private func appendRepresentationHashes(
+        _ representations: [MacClippyClipboardRepresentation],
+        sharedPrimaryBlobID: String?,
+        sharedPrimaryBlobData: Data?,
+        readBlob: ((String) throws -> Data)?,
+        into stream: inout MacClippyCaptureDedupPolicy.StreamHasher
+    ) throws {
+        for representation in representations {
+            try autoreleasepool {
+                let resolved = try representationHashBytes(
+                    for: representation,
+                    sharedPrimaryBlobID: sharedPrimaryBlobID,
+                    sharedPrimaryBlobData: sharedPrimaryBlobData,
+                    readBlob: readBlob
+                )
+                stream.appendRepresentation(
+                    itemIndex: representation.itemIndex,
+                    uti: representation.uti,
+                    payloadState: resolved.state,
+                    payloadBytes: resolved.bytes
+                )
+            }
+        }
+    }
+
+    private func representationHashBytes(
+        for representation: MacClippyClipboardRepresentation,
+        sharedPrimaryBlobID: String?,
+        sharedPrimaryBlobData: Data?,
+        readBlob: ((String) throws -> Data)?
+    ) throws -> (state: String, bytes: Data?) {
+        switch representation.payloadState {
+        case .present:
+            return (MacClippyClipboardRepresentationPayloadState.present.rawValue, representation.payloadBytes)
+        case .spilled:
+            guard let blobID = representation.blobID else { throw MacClippyStoreError.invalidStoredRecord }
+            let data: Data
+            if let sharedPrimaryBlobID, let sharedPrimaryBlobData, sharedPrimaryBlobID == blobID {
+                data = sharedPrimaryBlobData
+            } else {
+                guard let readBlob else { throw MacClippyStoreError.invalidStoredRecord }
+                data = try readBlob(blobID)
+            }
+            return (MacClippyClipboardRepresentationPayloadState.present.rawValue, data)
+        case .unavailable:
+            return (MacClippyClipboardRepresentationPayloadState.unavailable.rawValue, nil)
+        case .oversized:
+            return (MacClippyClipboardRepresentationPayloadState.oversized.rawValue, nil)
+        }
     }
 
     private func clearDuplicateHash(_ candidate: MacClippyDuplicateCandidate) throws {

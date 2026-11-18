@@ -111,6 +111,8 @@ final class MacClippyRuntime: @unchecked Sendable {
     var deferredOCRJobs: [MacClippyDeferredOCRJob] = []
     var ocrScheduleTimer: DispatchSourceTimer?
     var ocrPowerObserver: NSObjectProtocol?
+    var ocrSuspendedForDisplaySleep = false
+    var displayIsAsleepForSnippets = false
     var capturePauseTimer: DispatchSourceTimer?
     var ocrScheduleConditionsProvider: @Sendable () -> (
         secondsSinceLastInput: TimeInterval,
@@ -215,6 +217,7 @@ final class MacClippyRuntime: @unchecked Sendable {
         historyEntryCache.countLimit = 500
         let lookupSnapshot = snippetLookupSnapshot
         snippetExpander = MacClippySnippetExpander(
+            hasActiveTriggersProvider: { lookupSnapshot.hasTriggers },
             lookup: { lookupSnapshot.body(for: $0) },
             injector: injector
         )

@@ -208,6 +208,8 @@ extension MacClippyDockView {
             captureMenu
             Divider()
             Button("Shortcuts & Search Help…", action: onOpenHelp)
+            Divider()
+            Button("Quit Mac Clippy") { NSApp.terminate(nil) }
         }
         .accessibilityValue(captureStatusText ?? "Capture active")
     }

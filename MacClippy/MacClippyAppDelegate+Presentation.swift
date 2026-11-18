@@ -98,6 +98,52 @@ extension AppDelegate {
         dockController?.toggle(source: .statusItem)
     }
 
+    @objc func handleStatusItemAction(_ sender: Any?) {
+        if let event = NSApp.currentEvent,
+           event.type == .rightMouseUp || event.modifierFlags.contains(.control) {
+            showStatusItemMenu()
+            return
+        }
+        toggleDock(sender)
+    }
+
+    @objc func openSettingsFromMenu(_ sender: Any?) {
+        openSettingsWindow()
+    }
+
+    private func showStatusItemMenu() {
+        guard let button = statusItem?.button else { return }
+        let menu = NSMenu()
+        let openItem = NSMenuItem(
+            title: "Open Clipboard History",
+            action: #selector(toggleDock(_:)),
+            keyEquivalent: ""
+        )
+        openItem.target = self
+        menu.addItem(openItem)
+
+        let settingsItem = NSMenuItem(
+            title: "Settings…",
+            action: #selector(openSettingsFromMenu(_:)),
+            keyEquivalent: ","
+        )
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+        menu.addItem(.separator())
+        menu.addItem(
+            NSMenuItem(
+                title: "Quit Mac Clippy",
+                action: #selector(NSApplication.terminate(_:)),
+                keyEquivalent: "q"
+            )
+        )
+        menu.popUp(
+            positioning: nil,
+            at: NSPoint(x: 0, y: button.bounds.height + 4),
+            in: button
+        )
+    }
+
     static func statusItemScreenFrame(for button: NSStatusBarButton?) -> CGRect? {
         guard let button, let window = button.window else { return nil }
         return window.convertToScreen(button.convert(button.bounds, to: nil))

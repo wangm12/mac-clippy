@@ -76,147 +76,263 @@ static NSError *MacClippyErrorFromException(NSString *operation, NSException *ex
     }
 
 BOOL MacClippyPasteboardReadChangeCount(NSPasteboard *pasteboard, NSInteger *changeCount, NSError **error) {
-    @try {
-        *changeCount = pasteboard.changeCount;
-        MacClippyRaiseInjectedExceptionAfterOperation(@"pasteboard.change-count");
-        return YES;
-    } @catch (NSException *exception) {
-        if (error != NULL) *error = MacClippyErrorFromException(@"pasteboard.change-count", exception);
-        return NO;
+    NSInteger value = 0;
+    __strong NSError *capturedError = nil;
+    BOOL ok = NO;
+    @autoreleasepool {
+        @try {
+            value = pasteboard.changeCount;
+            MacClippyRaiseInjectedExceptionAfterOperation(@"pasteboard.change-count");
+            ok = YES;
+        } @catch (NSException *exception) {
+            capturedError = MacClippyErrorFromException(@"pasteboard.change-count", exception);
+        }
     }
+    if (ok) {
+        *changeCount = value;
+        return YES;
+    }
+    if (error != NULL) *error = capturedError;
+    return NO;
 }
 
 BOOL MacClippyPasteboardReadItems(NSPasteboard *pasteboard, id *items, NSError **error) {
-    @try {
-        *items = pasteboard.pasteboardItems ?: @[];
-        MacClippyRaiseInjectedExceptionAfterOperation(@"pasteboard.items");
-        return YES;
-    } @catch (NSException *exception) {
-        if (error != NULL) *error = MacClippyErrorFromException(@"pasteboard.items", exception);
-        return NO;
+    __strong id result = nil;
+    __strong NSError *capturedError = nil;
+    BOOL ok = NO;
+    @autoreleasepool {
+        @try {
+            result = pasteboard.pasteboardItems ?: @[];
+            MacClippyRaiseInjectedExceptionAfterOperation(@"pasteboard.items");
+            ok = YES;
+        } @catch (NSException *exception) {
+            capturedError = MacClippyErrorFromException(@"pasteboard.items", exception);
+        }
     }
+    if (ok) {
+        *items = result;
+        return YES;
+    }
+    if (error != NULL) *error = capturedError;
+    return NO;
 }
 
 BOOL MacClippyPasteboardReadBoardTypes(NSPasteboard *pasteboard, id *types, NSError **error) {
-    @try {
-        id value = pasteboard.types;
-        *types = value ?: @[];
-        MacClippyRaiseInjectedExceptionAfterOperation(@"pasteboard.board-types");
-        return YES;
-    } @catch (NSException *exception) {
-        if (error != NULL) *error = MacClippyErrorFromException(@"pasteboard.board-types", exception);
-        return NO;
+    __strong id result = nil;
+    __strong NSError *capturedError = nil;
+    BOOL ok = NO;
+    @autoreleasepool {
+        @try {
+            id value = pasteboard.types;
+            result = value ?: @[];
+            MacClippyRaiseInjectedExceptionAfterOperation(@"pasteboard.board-types");
+            ok = YES;
+        } @catch (NSException *exception) {
+            capturedError = MacClippyErrorFromException(@"pasteboard.board-types", exception);
+        }
     }
+    if (ok) {
+        *types = result;
+        return YES;
+    }
+    if (error != NULL) *error = capturedError;
+    return NO;
 }
 
 BOOL MacClippyPasteboardReadItemTypes(NSPasteboardItem *item, id *types, NSError **error) {
-    @try {
-        id value = item.types;
-        *types = value ?: @[];
-        MacClippyRaiseInjectedExceptionAfterOperation(@"pasteboard.item-types");
-        return YES;
-    } @catch (NSException *exception) {
-        if (error != NULL) *error = MacClippyErrorFromException(@"pasteboard.item-types", exception);
-        return NO;
+    __strong id result = nil;
+    __strong NSError *capturedError = nil;
+    BOOL ok = NO;
+    @autoreleasepool {
+        @try {
+            id value = item.types;
+            result = value ?: @[];
+            MacClippyRaiseInjectedExceptionAfterOperation(@"pasteboard.item-types");
+            ok = YES;
+        } @catch (NSException *exception) {
+            capturedError = MacClippyErrorFromException(@"pasteboard.item-types", exception);
+        }
     }
+    if (ok) {
+        *types = result;
+        return YES;
+    }
+    if (error != NULL) *error = capturedError;
+    return NO;
 }
 
 BOOL MacClippyPasteboardReadItemData(NSPasteboardItem *item, NSPasteboardType type, id *data, NSError **error) {
-    @try {
-        *data = [item dataForType:type];
-        MacClippyRaiseInjectedExceptionAfterOperation(@"pasteboard.item-data");
-        return YES;
-    } @catch (NSException *exception) {
-        if (error != NULL) *error = MacClippyErrorFromException(@"pasteboard.item-data", exception);
-        return NO;
+    __strong id result = nil;
+    __strong NSError *capturedError = nil;
+    BOOL ok = NO;
+    @autoreleasepool {
+        @try {
+            result = [item dataForType:type];
+            MacClippyRaiseInjectedExceptionAfterOperation(@"pasteboard.item-data");
+            ok = YES;
+        } @catch (NSException *exception) {
+            capturedError = MacClippyErrorFromException(@"pasteboard.item-data", exception);
+        }
     }
+    if (ok) {
+        *data = result;
+        return YES;
+    }
+    if (error != NULL) *error = capturedError;
+    return NO;
 }
 
 BOOL MacClippyPasteboardReadItemString(NSPasteboardItem *item, NSPasteboardType type, id *string, NSError **error) {
-    @try {
-        *string = [item stringForType:type];
-        MacClippyRaiseInjectedExceptionAfterOperation(@"pasteboard.item-string");
-        return YES;
-    } @catch (NSException *exception) {
-        if (error != NULL) *error = MacClippyErrorFromException(@"pasteboard.item-string", exception);
-        return NO;
+    __strong id result = nil;
+    __strong NSError *capturedError = nil;
+    BOOL ok = NO;
+    @autoreleasepool {
+        @try {
+            result = [item stringForType:type];
+            MacClippyRaiseInjectedExceptionAfterOperation(@"pasteboard.item-string");
+            ok = YES;
+        } @catch (NSException *exception) {
+            capturedError = MacClippyErrorFromException(@"pasteboard.item-string", exception);
+        }
     }
+    if (ok) {
+        *string = result;
+        return YES;
+    }
+    if (error != NULL) *error = capturedError;
+    return NO;
 }
 
 BOOL MacClippyPasteboardReadBoardData(NSPasteboard *pasteboard, NSPasteboardType type, id *data, NSError **error) {
-    @try {
-        *data = [pasteboard dataForType:type];
-        MacClippyRaiseInjectedExceptionAfterOperation(@"pasteboard.board-data");
-        return YES;
-    } @catch (NSException *exception) {
-        if (error != NULL) *error = MacClippyErrorFromException(@"pasteboard.board-data", exception);
-        return NO;
+    __strong id result = nil;
+    __strong NSError *capturedError = nil;
+    BOOL ok = NO;
+    @autoreleasepool {
+        @try {
+            result = [pasteboard dataForType:type];
+            MacClippyRaiseInjectedExceptionAfterOperation(@"pasteboard.board-data");
+            ok = YES;
+        } @catch (NSException *exception) {
+            capturedError = MacClippyErrorFromException(@"pasteboard.board-data", exception);
+        }
     }
+    if (ok) {
+        *data = result;
+        return YES;
+    }
+    if (error != NULL) *error = capturedError;
+    return NO;
 }
 
 BOOL MacClippyPasteboardReadBoardString(NSPasteboard *pasteboard, NSPasteboardType type, id *string, NSError **error) {
-    @try {
-        *string = [pasteboard stringForType:type];
-        MacClippyRaiseInjectedExceptionAfterOperation(@"pasteboard.board-string");
-        return YES;
-    } @catch (NSException *exception) {
-        if (error != NULL) *error = MacClippyErrorFromException(@"pasteboard.board-string", exception);
-        return NO;
+    __strong id result = nil;
+    __strong NSError *capturedError = nil;
+    BOOL ok = NO;
+    @autoreleasepool {
+        @try {
+            result = [pasteboard stringForType:type];
+            MacClippyRaiseInjectedExceptionAfterOperation(@"pasteboard.board-string");
+            ok = YES;
+        } @catch (NSException *exception) {
+            capturedError = MacClippyErrorFromException(@"pasteboard.board-string", exception);
+        }
     }
+    if (ok) {
+        *string = result;
+        return YES;
+    }
+    if (error != NULL) *error = capturedError;
+    return NO;
 }
 
 BOOL MacClippyPasteboardClearContents(NSPasteboard *pasteboard, NSError **error) {
     BOOL didClear = NO;
-    @try {
-        [pasteboard clearContents];
-        didClear = YES;
-        MacClippyRaiseInjectedExceptionAfterOperation(@"pasteboard.clear");
-        return YES;
-    } @catch (NSException *exception) {
-        if (error != NULL) {
-            NSError *nativeError = MacClippyErrorFromException(@"pasteboard.clear", exception);
-            if (didClear) {
-                NSMutableDictionary *userInfo = [nativeError.userInfo mutableCopy];
-                userInfo[MacClippyNativeOperationCompletedKey] = @YES;
-                nativeError = [NSError errorWithDomain:nativeError.domain code:nativeError.code userInfo:userInfo];
+    __strong NSError *capturedError = nil;
+    BOOL ok = NO;
+    @autoreleasepool {
+        @try {
+            [pasteboard clearContents];
+            didClear = YES;
+            MacClippyRaiseInjectedExceptionAfterOperation(@"pasteboard.clear");
+            ok = YES;
+        } @catch (NSException *exception) {
+            if (error != NULL) {
+                NSError *nativeError = MacClippyErrorFromException(@"pasteboard.clear", exception);
+                if (didClear) {
+                    NSMutableDictionary *userInfo = [nativeError.userInfo mutableCopy];
+                    userInfo[MacClippyNativeOperationCompletedKey] = @YES;
+                    nativeError = [NSError errorWithDomain:nativeError.domain code:nativeError.code userInfo:userInfo];
+                }
+                capturedError = nativeError;
             }
-            *error = nativeError;
         }
-        return NO;
     }
+    if (ok) return YES;
+    if (error != NULL) *error = capturedError;
+    return NO;
 }
 
 BOOL MacClippyPasteboardWriteObjects(NSPasteboard *pasteboard, NSArray<id<NSPasteboardWriting>> *objects, NSInteger *didWrite, NSError **error) {
-    @try {
-        *didWrite = [pasteboard writeObjects:objects] ? 1 : 0;
-        MacClippyRaiseInjectedExceptionAfterOperation(@"pasteboard.write-objects");
-        return YES;
-    } @catch (NSException *exception) {
-        if (error != NULL) *error = MacClippyErrorFromException(@"pasteboard.write-objects", exception);
-        return NO;
+    NSInteger value = 0;
+    __strong NSError *capturedError = nil;
+    BOOL ok = NO;
+    @autoreleasepool {
+        @try {
+            value = [pasteboard writeObjects:objects] ? 1 : 0;
+            MacClippyRaiseInjectedExceptionAfterOperation(@"pasteboard.write-objects");
+            ok = YES;
+        } @catch (NSException *exception) {
+            capturedError = MacClippyErrorFromException(@"pasteboard.write-objects", exception);
+        }
     }
+    if (ok) {
+        *didWrite = value;
+        return YES;
+    }
+    if (error != NULL) *error = capturedError;
+    return NO;
 }
 
 BOOL MacClippyPasteboardSetItemData(NSPasteboardItem *item, NSData *data, NSPasteboardType type, NSInteger *didSet, NSError **error) {
-    @try {
-        *didSet = [item setData:data forType:type] ? 1 : 0;
-        MacClippyRaiseInjectedExceptionAfterOperation(@"pasteboard.set-item-data");
-        return YES;
-    } @catch (NSException *exception) {
-        if (error != NULL) *error = MacClippyErrorFromException(@"pasteboard.set-item-data", exception);
-        return NO;
+    NSInteger value = 0;
+    __strong NSError *capturedError = nil;
+    BOOL ok = NO;
+    @autoreleasepool {
+        @try {
+            value = [item setData:data forType:type] ? 1 : 0;
+            MacClippyRaiseInjectedExceptionAfterOperation(@"pasteboard.set-item-data");
+            ok = YES;
+        } @catch (NSException *exception) {
+            capturedError = MacClippyErrorFromException(@"pasteboard.set-item-data", exception);
+        }
     }
+    if (ok) {
+        *didSet = value;
+        return YES;
+    }
+    if (error != NULL) *error = capturedError;
+    return NO;
 }
 
 BOOL MacClippyPasteboardSetItemString(NSPasteboardItem *item, NSString *string, NSPasteboardType type, NSInteger *didSet, NSError **error) {
-    @try {
-        *didSet = [item setString:string forType:type] ? 1 : 0;
-        MacClippyRaiseInjectedExceptionAfterOperation(@"pasteboard.set-item-string");
-        return YES;
-    } @catch (NSException *exception) {
-        if (error != NULL) *error = MacClippyErrorFromException(@"pasteboard.set-item-string", exception);
-        return NO;
+    NSInteger value = 0;
+    __strong NSError *capturedError = nil;
+    BOOL ok = NO;
+    @autoreleasepool {
+        @try {
+            value = [item setString:string forType:type] ? 1 : 0;
+            MacClippyRaiseInjectedExceptionAfterOperation(@"pasteboard.set-item-string");
+            ok = YES;
+        } @catch (NSException *exception) {
+            capturedError = MacClippyErrorFromException(@"pasteboard.set-item-string", exception);
+        }
     }
+    if (ok) {
+        *didSet = value;
+        return YES;
+    }
+    if (error != NULL) *error = capturedError;
+    return NO;
 }
 
 #undef MACCLIPPY_NATIVE_TRY

@@ -77,6 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var registeredHotKeyDescriptor = MacClippyGlobalHotKeyDescriptor.load(from: .standard)
     var privacyAlert: NSAlert?
     var maintenanceGeneration: UInt = 0
+    var memoryPressureSource: DispatchSourceMemoryPressure?
     let displayLifecycleCoordinator = MacClippyDisplayLifecycleCoordinator()
 #if MACCLIPPY_E2E
     var e2eIsolation: MacClippyE2EIsolation?

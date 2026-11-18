@@ -202,6 +202,7 @@ final class MacClippyDockController {
     var ignoreSpaceChangesUntil = Date.distantPast
     var statusItemScreenFrame: (() -> CGRect?)?
     var isClosing = false
+    var didOrderOutBeforePaste = false
     var monitorGeneration: UInt = 0
     var animationGeneration: UInt = 0
     var animationTransaction: MacClippyDockAnimationTransaction?
@@ -251,6 +252,12 @@ final class MacClippyDockController {
     ) {
         model = MacClippyDockModel(runtime: runtime, defaults: defaults)
         openSettingsHandler = onOpenSettings
+        configureModelCallbacks()
+        configureBeforePasteHook()
+        observeNativeMenus()
+    }
+
+    private func configureModelCallbacks() {
         model.actionToastHandler = { [weak self] feedback in
             self?.showCopyToast(title: feedback.title, duration: feedback.toastDuration)
         }
@@ -263,6 +270,55 @@ final class MacClippyDockController {
             guard let self, self.interactionMode == .details else { return }
             self.detailsEditSession?.errorMessage = message
         }
+    }
+
+    private func configureBeforePasteHook() {
+#if !MACCLIPPY_E2E
+        model.beforePasteHook = { [weak controller = self] in
+            let transition = Self.beforePasteTransition(for: controller)
+            guard transition.shouldContinue else { return false }
+            if let pid = transition.targetPID {
+                for _ in 0..<8 {
+                    if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid {
+                        break
+                    }
+                    Thread.sleep(forTimeInterval: 0.01)
+                }
+            }
+            return true
+        }
+#endif
+    }
+
+#if !MACCLIPPY_E2E
+    private nonisolated static func beforePasteTransition(
+        for controller: MacClippyDockController?
+    ) -> (shouldContinue: Bool, targetPID: Int32?) {
+        guard !MacClippyMainHop.isCapturingForTesting, let controller else {
+            return (true, nil)
+        }
+        if Thread.isMainThread {
+            return MainActor.assumeIsolated {
+                controller.prepareVisualTransitionBeforePaste()
+            }
+        }
+        let box = BeforePasteTransitionBox()
+        let semaphore = DispatchSemaphore(value: 0)
+        DispatchQueue.main.async {
+            let value = MainActor.assumeIsolated {
+                controller.prepareVisualTransitionBeforePaste()
+            }
+            box.set(value)
+            semaphore.signal()
+        }
+        if semaphore.wait(timeout: .now() + 0.08) == .timedOut {
+            return (true, nil)
+        }
+        return box.get()
+    }
+#endif
+
+    private func observeNativeMenus() {
         for (name, delta) in [(NSMenu.didBeginTrackingNotification, 1), (NSMenu.didEndTrackingNotification, -1)] {
             let observer = NotificationCenter.default.addObserver(
                 forName: name, object: nil, queue: .main
@@ -278,35 +334,57 @@ final class MacClippyDockController {
 
     var isVisible: Bool { panel?.isVisible == true && !isClosing }
 
+    func rebuildVisibleGlassSurfaces() {
+        guard isVisible, !isClosing else { return }
+        guard let screen = screenContainingCursor() ?? NSScreen.main else { return }
+        model.prepareForSurfaceRebuild()
+        stopMonitors()
+        discardPanelSurfaces()
+        let frame = MacClippyDockFramePolicy.frame(
+            for: screen.frame,
+            hasMultipleSelection: model.hasMultipleSelection
+        )
+        let dockPanel = makeDockPanel(frame: frame)
+        dockPanel.contentView?.frame = NSRect(origin: .zero, size: frame.size)
+        dockPanel.contentView?.autoresizingMask = [.width, .height]
+        dockPanel.setFrame(frame, display: false, animate: false)
+        configurePanelLayer(dockPanel)
+        resetPanelAnimationState(dockPanel)
+        setPanelLayerState(
+            dockPanel,
+            backdropOpacity: 1,
+            foregroundOpacity: 1,
+            scale: 1,
+            shadowOpacity: MacClippyMotion.panelShadowOpacity
+        )
+        dockPanel.interceptsPickerKeys = true
+        dockPanel.makeKeyAndOrderFront(nil)
+        takeKeyboardOwnership(of: dockPanel)
+        startMonitors()
+        handleScreenParametersChanged()
+    }
+
+#if !MACCLIPPY_E2E
+    func prepareVisualTransitionBeforePaste() -> (shouldContinue: Bool, targetPID: Int32?) {
+        _ = MacClippyPasteInjector.refreshPasteVirtualKeyCodeOnMain()
+        guard panel?.isVisible == true else { return (true, nil) }
+        didOrderOutBeforePaste = true
+        panel?.orderOut(nil)
+        didActivateApplicationForSearch = false
+        guard let host = pasteTargetApplication,
+              !host.isTerminated,
+              host != NSRunningApplication.current else {
+            return (true, nil)
+        }
+        if host.isActive {
+            return (true, nil)
+        }
+        _ = host.activate(from: NSRunningApplication.current)
+        return (true, host.processIdentifier)
+    }
+#endif
+
     deinit {
         nativeMenuObservers.forEach { $0.remove() }
-    }
-
-}
-
-enum MacClippyPreviewFrameMetrics {
-    private static let widthFraction: CGFloat = 0.72
-    private static let heightFraction: CGFloat = 0.72
-    private static let minimumWidth: CGFloat = 560
-    private static let minimumHeight: CGFloat = 440
-    private static let maximumWidth: CGFloat = 960
-    private static let maximumHeight: CGFloat = 720
-
-    static func preferredSize(visibleFrame: CGRect, availableHeight: CGFloat) -> CGSize {
-        let width = min(
-            maximumWidth,
-            max(minimumWidth, visibleFrame.width * widthFraction)
-        )
-        let height = min(
-            maximumHeight,
-            max(minimumHeight, availableHeight * heightFraction)
-        )
-        return CGSize(width: width, height: height)
-    }
-}
-
-extension CGRect {
-    var midPoint: CGPoint {
-        CGPoint(x: midX, y: midY)
     }
 }

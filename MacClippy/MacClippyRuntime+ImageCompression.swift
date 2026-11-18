@@ -202,7 +202,7 @@ extension MacClippyRuntime {
         lifecycle: MacClippyImageCompressionLifecycle
     ) throws -> MacClippyPreparedImageCompression? {
         try checkCompressionCancellation(operation, lifecycle: lifecycle)
-        guard let compressed = MacClippyThumbnailDownsampler.compressedJPEG(
+        guard let compressed = MacClippyThumbnailDownsampler.compressedImage(
             from: source.data,
             maxPixelSize: MacClippyStorageDashboardPolicy.compressTargetMaxPixelSize
         ), MacClippyStorageDashboardPolicy.isWorthReplacing(
@@ -217,11 +217,13 @@ extension MacClippyRuntime {
         let newRepresentations = try compressedRepresentations(
             replacing: snapshot.representations,
             itemIndex: snapshot.imageItemIndex,
-            blobID: blobID
+            blobID: blobID,
+            uti: compressed.uti
         )
         let replacementHashRepresentations = compressedHashRepresentations(
             replacing: source.hashRepresentations,
             itemIndex: snapshot.imageItemIndex,
+            uti: compressed.uti,
             data: compressed.data
         )
         let contentHash = MacClippyCaptureDedupPolicy.contentHash(
@@ -250,7 +252,8 @@ extension MacClippyRuntime {
     private func compressedRepresentations(
         replacing representations: [MacClippyClipboardRepresentation],
         itemIndex: Int,
-        blobID: String
+        blobID: String,
+        uti: String
     ) throws -> [MacClippyClipboardRepresentation] {
         let replacedIndices = representations.indices.filter { index in
             let representation = representations[index]
@@ -263,7 +266,7 @@ extension MacClippyRuntime {
             if index == insertionIndex {
                 result.append(MacClippyClipboardRepresentation(
                     itemIndex: itemIndex,
-                    uti: "public.jpeg",
+                    uti: uti,
                     payloadBytes: nil,
                     blobID: blobID,
                     payloadState: .spilled
@@ -275,7 +278,7 @@ extension MacClippyRuntime {
         if insertionIndex == nil {
             result.append(MacClippyClipboardRepresentation(
                 itemIndex: itemIndex,
-                uti: "public.jpeg",
+                uti: uti,
                 payloadBytes: nil,
                 blobID: blobID,
                 payloadState: .spilled
@@ -292,6 +295,7 @@ extension MacClippyRuntime {
     private func compressedHashRepresentations(
         replacing representations: [MacClippyCaptureDedupRepresentation],
         itemIndex: Int,
+        uti: String,
         data: Data
     ) -> [MacClippyCaptureDedupRepresentation] {
         let replacedIndices = representations.indices.filter { index in
@@ -305,7 +309,7 @@ extension MacClippyRuntime {
             if index == insertionIndex {
                 result.append(MacClippyCaptureDedupRepresentation(
                     itemIndex: itemIndex,
-                    uti: "public.jpeg",
+                    uti: uti,
                     payloadState: MacClippyClipboardRepresentationPayloadState.present.rawValue,
                     payloadBytes: data
                 ))
@@ -316,7 +320,7 @@ extension MacClippyRuntime {
         if insertionIndex == nil {
             result.append(MacClippyCaptureDedupRepresentation(
                 itemIndex: itemIndex,
-                uti: "public.jpeg",
+                uti: uti,
                 payloadState: MacClippyClipboardRepresentationPayloadState.present.rawValue,
                 payloadBytes: data
             ))

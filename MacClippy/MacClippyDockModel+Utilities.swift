@@ -25,6 +25,7 @@ extension MacClippyDockModel {
         guard !isSelecting else { return }
         let runtimeReference = runtime
         let targetPID = pasteTargetProcessIdentifier
+        let beforePaste = beforePasteHook
         let operation = beginUserOperation()
         let session = sessionGeneration
         let sideEffectGate = MacClippyPasteInjectionGate()
@@ -39,7 +40,12 @@ extension MacClippyDockModel {
         workQueue.async { [weak self, runtimeReference, sideEffectGate] in
             let result = Result {
                 try runtimeReference.paste(
-                    id: id, plain: pastePlain, targetProcessIdentifier: targetPID, sideEffectGate: sideEffectGate)
+                    id: id,
+                    plain: pastePlain,
+                    targetProcessIdentifier: targetPID,
+                    beforePaste: beforePaste,
+                    sideEffectGate: sideEffectGate
+                )
             }
             MacClippyMainHop.async { [weak self] in
                 guard let self,
@@ -78,6 +84,7 @@ extension MacClippyDockModel {
         guard !isSelecting else { return }
         let runtimeReference = runtime
         let targetPID = pasteTargetProcessIdentifier
+        let beforePaste = beforePasteHook
         let operation = beginUserOperation()
         let session = sessionGeneration
         let sideEffectGate = MacClippyPasteInjectionGate()
@@ -88,8 +95,12 @@ extension MacClippyDockModel {
         workQueue.async { [weak self, runtimeReference, sideEffectGate] in
             let result = Result {
                 try runtimeReference.paste(
-                    snippetID: id, manualFallback: .prepareClipboard,
-                    targetProcessIdentifier: targetPID, sideEffectGate: sideEffectGate)
+                    snippetID: id,
+                    manualFallback: .prepareClipboard,
+                    targetProcessIdentifier: targetPID,
+                    beforePaste: beforePaste,
+                    sideEffectGate: sideEffectGate
+                )
             }
             MacClippyMainHop.async { [weak self] in
                 guard let self,
@@ -264,4 +275,23 @@ extension MacClippyDockModel {
             self.actionFeedbackTask = nil
         }
     }
+
+    func trimHistoryTailOnSessionEnd() {
+        let retainLimit = 16
+        guard historyItems.count > retainLimit else { return }
+        historyItems = Array(historyItems.prefix(retainLimit))
+        historyHasMore = true
+        historyPageToken = nil
+        visibleItemsFilterCache = nil
+    }
+
+    func resetSessionThumbnailCaches() {
+        thumbnailLoader.resetForSessionEnd()
+        MacClippyFileThumbnailLoader.resetForSessionEnd()
+        MacClippyFileIconLoader.resetForSessionEnd()
+    }
+}
+
+extension Notification.Name {
+    static let macClippyDockSessionDidEnd = Notification.Name("MacClippy.DockSessionDidEnd")
 }

@@ -246,30 +246,18 @@ public enum MacClippyCaptureMapper {
     }
 
     static func plainText(fromHTML html: String) -> String {
-        if let attributed = try? NSAttributedString(
-            data: Data(html.utf8),
-            options: [
-                .documentType: NSAttributedString.DocumentType.html,
-                .characterEncoding: String.Encoding.utf8.rawValue
-            ],
-            documentAttributes: nil
-        ) {
-            return attributed.string
-        }
-
-        return html
-            .replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
-            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        MacClippyPasteboardPrivacyHTML.plainText(from: html)
     }
 
     static func plainText(fromRTF data: Data) -> String? {
-        guard let attributed = try? NSAttributedString(
-            data: data,
-            options: [.documentType: NSAttributedString.DocumentType.rtf],
-            documentAttributes: nil
-        ) else { return nil }
-        return attributed.string
+        autoreleasepool {
+            guard let attributed = try? NSAttributedString(
+                data: data,
+                options: [.documentType: NSAttributedString.DocumentType.rtf],
+                documentAttributes: nil
+            ) else { return nil }
+            return attributed.string
+        }
     }
 
     private static func imagePayload(in items: [PasteboardItem]) -> MacClippyCapturePayload? {

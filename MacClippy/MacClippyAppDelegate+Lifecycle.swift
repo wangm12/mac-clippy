@@ -31,6 +31,13 @@ extension AppDelegate {
         }
 #if !MACCLIPPY_E2E
         settingsDefaultsProvider.install(.standard)
+        if !isLaunchedByXCTest {
+            let state = MacClippyPresentationPolicy.state(
+                hideFromMenuBar: shouldHideFromMenuBar,
+                hideDockIcon: shouldHideDockIcon
+            )
+            applyDockIconVisibility(state.activationPolicy)
+        }
 #endif
 #if MACCLIPPY_E2E
         // Keep background ingestion out of the Dock. Visible UI measurements
@@ -85,6 +92,28 @@ extension AppDelegate {
         }
 
         recoverPendingRestoreAndStart()
+        installMemoryPressureHandler()
+    }
+
+    private func installMemoryPressureHandler() {
+        guard !isLaunchedByXCTest else { return }
+        memoryPressureSource?.cancel()
+        let source = DispatchSource.makeMemoryPressureSource(
+            eventMask: [.warning, .critical],
+            queue: .main
+        )
+        source.setEventHandler { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.handleMemoryPressure()
+            }
+        }
+        source.resume()
+        memoryPressureSource = source
+    }
+
+    private func handleMemoryPressure() {
+        dockController?.model.resetSessionThumbnailCaches()
+        runtime?.historyEntryCache.removeAllObjects()
     }
 
     func refuseStartupForBuildIdentityMismatch() {
@@ -110,6 +139,8 @@ extension AppDelegate {
             self.ignoreNextCopyObserver = nil
         }
         displayLifecycleCoordinator.stop()
+        memoryPressureSource?.cancel()
+        memoryPressureSource = nil
 #if MACCLIPPY_E2E
         e2eControlServer?.stop()
         e2eControlServer = nil

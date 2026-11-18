@@ -107,18 +107,10 @@ extension MacClippyDockView {
 
 private struct MacClippySnippetHoverChrome: ViewModifier {
     let isFocused: Bool
-    @Environment(\.macClippyCardHovered) private var isHovered
-    @Environment(\.macClippyCarouselScrolling) private var isCarouselScrolling
-    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
     func body(content: Content) -> some View {
-        let reduceMotion = MacClippyMotion.shouldReduceMotion(swiftUI: accessibilityReduceMotion)
+        // Hover scale now lives cleanly in MacClippyCardHoverModifier above
+        // card content so hovered snippets do not scale twice.
         content
-            .scaleEffect(
-                MacClippyDockCardHoverChrome.allowsHoverScale(
-                    isScrolling: isCarouselScrolling,
-                    reduceMotion: reduceMotion
-                ) && isHovered ? MacClippyMotion.hoverScale : 1
-            )
     }
 }

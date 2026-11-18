@@ -46,6 +46,35 @@ extension AppDelegate {
         keySource: MacClippyBackupKeySource,
         completion: @escaping @MainActor @Sendable (Result<MacClippyBackupValidation, Error>) -> Void
     ) {
+        performRestoreLifecycle(completion: completion) { liveRootURL in
+            try MacClippyBackup.installIntoLiveRoot(
+                from: snapshotURL,
+                liveRootURL: liveRootURL,
+                keySource: keySource
+            )
+        }
+    }
+
+    func installArchiveBackup(
+        from archiveURL: URL,
+        passphrase: String,
+        targetKeySource: MacClippyBackupKeySource,
+        completion: @escaping @MainActor @Sendable (Result<MacClippyBackupValidation, Error>) -> Void
+    ) {
+        performRestoreLifecycle(completion: completion) { liveRootURL in
+            try MacClippyBackup.installArchiveIntoLiveRoot(
+                from: archiveURL,
+                passphrase: passphrase,
+                liveRootURL: liveRootURL,
+                targetKeySource: targetKeySource
+            )
+        }
+    }
+
+    private func performRestoreLifecycle(
+        completion: @escaping @MainActor @Sendable (Result<MacClippyBackupValidation, Error>) -> Void,
+        installer: @escaping @Sendable (URL) throws -> MacClippyBackupValidation
+    ) {
         guard let oldRuntime = runtime else {
             completion(.failure(StartupError.runtimeUnavailable))
             return
@@ -59,11 +88,7 @@ extension AppDelegate {
             defer { withExtendedLifetime(restoreBarrier) {} }
             let result = Result {
                 try oldRuntime.closeStorageForRestore()
-                return try MacClippyBackup.installIntoLiveRoot(
-                    from: snapshotURL,
-                    liveRootURL: liveRootURL,
-                    keySource: keySource
-                )
+                return try installer(liveRootURL)
             }
             DispatchQueue.main.async {
                 guard self.maintenanceGeneration == generation else { return }

@@ -21,13 +21,18 @@ final class MacClippySnippetFocusContextMonitor: MacClippySnippetFocusContextSou
     private var observedApplication: AXUIElement?
     private var observedFocusedElement: AXUIElement?
     private var observedProcessIdentifier: pid_t?
-    private var timer: DispatchSourceTimer?
     private var started = false
+    private var hasActiveTriggerCandidate = false
     private var lastInputTime = ProcessInfo.processInfo.systemUptime
+    private var lastSelectionNotificationTime: TimeInterval = 0
 
     init(initialContext: MacClippySnippetFocusContext? = nil) {
         identity = initialContext?.identity
         selection = initialContext?.selection
+    }
+
+    deinit {
+        stop()
     }
 
     private static let accessibilityCallback: AXObserverCallback = { _, _, notification, context in
@@ -81,6 +86,25 @@ final class MacClippySnippetFocusContextMonitor: MacClippySnippetFocusContextSou
         )
     }
 
+    func noteBackspace() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let selection, selection.length == 0, selection.location > 0 else {
+            selection = nil
+            return
+        }
+        self.selection = MacClippySnippetTextSelection(
+            location: selection.location - 1,
+            length: 0
+        )
+    }
+
+    func setHasActiveTriggerCandidate(_ active: Bool) {
+        lock.lock()
+        hasActiveTriggerCandidate = active
+        lock.unlock()
+    }
+
     func start(onChange: @escaping () -> Void) {
         lock.lock()
         guard !started else {
@@ -92,7 +116,9 @@ final class MacClippySnippetFocusContextMonitor: MacClippySnippetFocusContextSou
         lock.unlock()
 
         guard installWorkspaceActivationObserver() else { return }
-        installIdentityRefreshTimer()
+        observationQueue.async { [weak self] in
+            self?.refreshIdentity()
+        }
     }
 
     func stop() {
@@ -101,8 +127,7 @@ final class MacClippySnippetFocusContextMonitor: MacClippySnippetFocusContextSou
         identity = nil
         selection = nil
         changeHandler = nil
-        let timer = self.timer
-        self.timer = nil
+        hasActiveTriggerCandidate = false
         let observer = workspaceObserver
         workspaceObserver = nil
         let axObserver = self.axObserver
@@ -116,7 +141,6 @@ final class MacClippySnippetFocusContextMonitor: MacClippySnippetFocusContextSou
         observedProcessIdentifier = nil
         lock.unlock()
 
-        timer?.cancel()
         if let observer {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
         }
@@ -148,6 +172,7 @@ final class MacClippySnippetFocusContextMonitor: MacClippySnippetFocusContextSou
         let didHaveIdentity = identity != nil
         identity = nil
         selection = nil
+        hasActiveTriggerCandidate = false
         let onChange = didHaveIdentity ? changeHandler : nil
         lock.unlock()
 
@@ -179,24 +204,6 @@ private extension MacClippySnippetFocusContextMonitor {
         return true
     }
 
-    func installIdentityRefreshTimer() {
-        let timer = DispatchSource.makeTimerSource(queue: observationQueue)
-        timer.schedule(deadline: .now(), repeating: .milliseconds(200), leeway: .milliseconds(40))
-        timer.setEventHandler { [weak self] in
-            self?.refreshIdentity()
-        }
-        lock.lock()
-        guard started else {
-            lock.unlock()
-            timer.resume()
-            timer.cancel()
-            return
-        }
-        self.timer = timer
-        timer.resume()
-        lock.unlock()
-    }
-
     func refreshIdentity() {
         let sample = Self.readFrontmostAXElements()
         let nextContext = sample?.context
@@ -218,15 +225,27 @@ private extension MacClippySnippetFocusContextMonitor {
         if !staleCollapsedSelection {
             selection = sampledSelection
         }
+        let needsObserverSync: Bool
+        if let sample {
+            let sameFocusedElement = observedFocusedElement.map { CFHash($0) == CFHash(sample.focusedElement) } ?? false
+            needsObserverSync = didFocusChange
+                || axObserver == nil
+                || observedProcessIdentifier != sample.processIdentifier
+                || !sameFocusedElement
+        } else {
+            needsObserverSync = axObserver != nil
+        }
         let didSelectionChange = !staleCollapsedSelection && previousSelection != sampledSelection
         let onChange = didFocusChange || didSelectionChange ? changeHandler : nil
         lock.unlock()
 
-        DispatchQueue.main.async { [weak self] in
-            if let sample {
-                self?.updateAccessibilityObserver(for: sample)
-            } else {
-                self?.clearAccessibilityObserver()
+        if needsObserverSync {
+            DispatchQueue.main.async { [weak self] in
+                if let sample {
+                    self?.updateAccessibilityObserver(for: sample)
+                } else {
+                    self?.clearAccessibilityObserver()
+                }
             }
         }
         onChange?()
@@ -234,13 +253,18 @@ private extension MacClippySnippetFocusContextMonitor {
 
     func accessibilityDidChange(_ notification: CFString) {
         if notification == kAXSelectedTextChangedNotification as CFString {
+            let now = ProcessInfo.processInfo.systemUptime
             lock.lock()
-            let recentInput = ProcessInfo.processInfo.systemUptime - lastInputTime < 0.25
-            lock.unlock()
-            if recentInput {
-                observationQueue.async { [weak self] in self?.refreshIdentity() }
-                return
+            let activeTrigger = hasActiveTriggerCandidate
+            let withinThrottle = now - lastSelectionNotificationTime < 0.08
+            if activeTrigger && !withinThrottle {
+                lastSelectionNotificationTime = now
             }
+            lock.unlock()
+            if activeTrigger && !withinThrottle {
+                observationQueue.async { [weak self] in self?.refreshIdentity() }
+            }
+            return
         }
         invalidateAndRefresh()
     }
@@ -354,27 +378,10 @@ private extension MacClippySnippetFocusContextMonitor {
         observedProcessIdentifier = nil
         lock.unlock()
         if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
-        if let observer, let applicationElement {
-            AXObserverRemoveNotification(
-                observer,
-                applicationElement,
-                kAXFocusedUIElementChangedNotification as CFString
-            )
-            if let focusedElement {
-                AXObserverRemoveNotification(
-                    observer,
-                    focusedElement,
-                    kAXSelectedTextChangedNotification as CFString
-                )
-            }
-        }
+        Self.removeObserverNotifications(
+            observer: observer,
+            applicationElement: applicationElement,
+            focusedElement: focusedElement
+        )
     }
-
-    struct AccessibilityObserverState {
-        let observer: AXObserver?
-        let source: CFRunLoopSource?
-        let applicationElement: AXUIElement?
-        let focusedElement: AXUIElement?
-    }
-
 }

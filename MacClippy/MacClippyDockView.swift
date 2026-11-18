@@ -56,15 +56,23 @@ struct MacClippyCardHoverModifier: ViewModifier {
     let enabled: Bool
     let reduceMotion: Bool
     @State private var isHovered = false
+    @Environment(\.macClippyCarouselScrolling) private var isCarouselScrolling
 
     func body(content: Content) -> some View {
         let active = enabled && isHovered
+        let hoverScale = MacClippyDockCardHoverChrome.allowsHoverScale(
+            isScrolling: isCarouselScrolling,
+            reduceMotion: reduceMotion
+        ) && active ? MacClippyMotion.hoverScale : 1
         return content
-            // Hover retints the card's own stroke via environment. A second
-            // overlay ring was centered on the badge-padded frame and sat
-            // offset from the rounded face.
+            // Hover retints the card's own stroke via environment and scales
+            // above Equatable card faces so hover never invalidates them.
+            .scaleEffect(hoverScale)
             .environment(\.macClippyCardHovered, active)
-            .animation(MacClippyMotion.animation(MacClippyMotion.hoverAnimation, reduceMotion: reduceMotion), value: active)
+            .animation(
+                MacClippyMotion.animation(MacClippyMotion.hoverAnimation, reduceMotion: reduceMotion),
+                value: active
+            )
             .onContinuousHover { phase in
                 isHovered = enabled && MacClippyDockHoverPolicy.isHovering(phase)
             }

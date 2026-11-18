@@ -219,7 +219,9 @@ struct MacClippySettingsView: View {
         case .permissions:
             permissionsSection.modifier(MacClippySettingsReveal(index: 0, reduceMotion: reduceMotion))
         case .advanced:
-            advancedSection.modifier(MacClippySettingsReveal(index: 0, reduceMotion: reduceMotion))
+            MacClippyCloudBackupSettingsGroup()
+                .modifier(MacClippySettingsReveal(index: 0, reduceMotion: reduceMotion))
+            advancedSection.modifier(MacClippySettingsReveal(index: 1, reduceMotion: reduceMotion))
         }
     }
 

@@ -17,6 +17,7 @@ extension MacClippyRuntime {
     func pasteOrdered(
         ids: [RecordID],
         targetProcessIdentifier: Int32? = nil,
+        beforePaste: (() -> Bool)? = nil,
         sideEffectGate: MacClippyPasteInjectionGate? = nil
     ) throws -> MacClippyMultiPasteResult {
         try measureDiagnosticMetric("paste_ordered") {
@@ -28,6 +29,7 @@ extension MacClippyRuntime {
                     .text(text),
                     frequencyIDs: ids,
                     targetProcessIdentifier: targetProcessIdentifier,
+                    beforePaste: beforePaste,
                     sideEffectGate: sideEffectGate
                 )
                 return .merged(result: injection)

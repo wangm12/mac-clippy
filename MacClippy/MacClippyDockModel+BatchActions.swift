@@ -25,6 +25,7 @@ extension MacClippyDockModel {
         let session = sessionGeneration
         let runtime = runtime
         let targetPID = pasteTargetProcessIdentifier
+        let beforePaste = beforePasteHook
         let sideEffectGate = MacClippyPasteInjectionGate()
         self.sideEffectGate = sideEffectGate
         clearActionError()
@@ -32,7 +33,11 @@ extension MacClippyDockModel {
         workQueue.async { [weak self, runtime, sideEffectGate] in
             let result = Result {
                 try runtime.pasteOrdered(
-                    ids: orderedIDs, targetProcessIdentifier: targetPID, sideEffectGate: sideEffectGate)
+                    ids: orderedIDs,
+                    targetProcessIdentifier: targetPID,
+                    beforePaste: beforePaste,
+                    sideEffectGate: sideEffectGate
+                )
             }
             MacClippyMainHop.async { [weak self] in
                 guard let self,

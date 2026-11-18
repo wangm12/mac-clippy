@@ -313,15 +313,6 @@ extension MacClippyDockView {
         settingsButton
     }
 
-    var filterPillRow: some View {
-        HStack(spacing: 6) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                filterPillsOnly
-            }
-            headerTrailingButtons
-        }
-    }
-
     // Keep the historical helper name to avoid changing the dock's call site.
     func showAboutPanel() {
         onOpenSettings()

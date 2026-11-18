@@ -16,6 +16,15 @@ public struct MacClippyBackupSource {
 /// this installation's key. The key itself is not exposed to app callers.
 public struct MacClippyBackupKeySource: Sendable {
     let key: SymmetricKey
+
+    public static func loadOrCreate(
+        using keychain: MacClippyKeychainBackend,
+        requireExistingStorage: Bool = false
+    ) throws -> MacClippyBackupKeySource {
+        let key = try MacClippyDeviceKey(keychain: keychain)
+            .deviceKey(requireExistingStorage: requireExistingStorage)
+        return MacClippyBackupKeySource(key: key)
+    }
 }
 
 public extension MacClippyClipboardStore {
@@ -89,6 +98,9 @@ public enum MacClippyBackupError: Error, Equatable {
     case keyRequired
     case keyMismatch
     case keyCompatibilityUnproven
+    case passphraseRequired
+    case invalidPassphrase
+    case corruptedArchive
     case databaseCopyFailed(String)
     case restoreInterrupted
 }

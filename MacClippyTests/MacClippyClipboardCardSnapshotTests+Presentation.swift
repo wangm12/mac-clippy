@@ -94,11 +94,11 @@ extension MacClippyClipboardCardSnapshotTests {
         )
         XCTAssertTrue(hoverSource.contains("macClippyCardHovered"))
         XCTAssertTrue(hoverSource.contains("hoverAnimation"))
+        XCTAssertTrue(hoverSource.contains("MacClippyDockCardHoverChrome"))
         XCTAssertFalse(hoverSource.contains("focusAnimation"))
 
         let cardSource = try appSource(named: "MacClippyClipboardCardLabel.swift")
         XCTAssertTrue(cardSource.contains("MacClippyCardBorderOverlay"))
-        XCTAssertTrue(cardSource.contains("MacClippyDockCardHoverChrome"))
     }
 
     func testSourceCardBackgroundFillsTheRoundedFace() throws {

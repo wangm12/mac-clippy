@@ -17,7 +17,12 @@ public final class MacClippyBlobStore {
 
     public init(rootURL: URL, key: SymmetricKey, fileManager: FileManager = .default) throws {
         let standardizedRoot = rootURL.standardizedFileURL
-        try fileManager.createDirectory(at: standardizedRoot, withIntermediateDirectories: true)
+        try fileManager.createDirectory(
+            at: standardizedRoot,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try? fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: standardizedRoot.path)
         let canonicalRoot = standardizedRoot.resolvingSymlinksInPath().standardizedFileURL
         self.rootURL = canonicalRoot
         self.key = key

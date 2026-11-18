@@ -78,13 +78,17 @@ final class MacClippyCaptureQueueAdmission: @unchecked Sendable {
     }
 
     func admission(for change: PasteboardChange) -> MacClippyPasteboardCaptureAdmission? {
-        let byteCount = Self.estimatedRetainedBytes(for: change)
+        let sizes = Self.estimatedByteSizes(for: change)
         let recoveryAttemptWasPending: Bool
         lock.lock()
         recoveryAttemptWasPending = recoveryReadRequested
         if recoveryAttemptWasPending {
             recoveryReadAdmissionObserved = true
         }
+        let byteCount = Self.admissionReservationBytes(
+            sizes: sizes,
+            outstandingJobs: outstandingJobs
+        )
         if let candidate = recoveryCandidate, change.changeCount > candidate.changeCount {
             // Once the system pasteboard has advanced, its earlier generation
             // cannot be re-read. Keep only the current generation eligible for
@@ -248,7 +252,7 @@ final class MacClippyCaptureQueueAdmission: @unchecked Sendable {
         value == Int.max ? Int.max : value + 1
     }
 
-    private static func estimatedRetainedBytes(for change: PasteboardChange) -> Int {
+    private static func estimatedByteSizes(for change: PasteboardChange) -> (rawBytes: Int, metadataBytes: Int) {
         var rawBytes = 0
         var metadataBytes = 512
         for item in change.items {
@@ -263,13 +267,30 @@ final class MacClippyCaptureQueueAdmission: @unchecked Sendable {
                 rawBytes = saturatingAdd(rawBytes, data.count)
             }
         }
+        return (rawBytes, metadataBytes)
+    }
 
+    private static func admissionReservationBytes(
+        sizes: (rawBytes: Int, metadataBytes: Int),
+        outstandingJobs: Int
+    ) -> Int {
         // The mapper retains representation Data and can additionally create a
         // String/HTML search projection from one raw representation. Four raw
-        // payload copies is intentionally conservative across UTF-8 storage,
-        // attributed HTML conversion, and per-representation metadata arrays.
-        let projectedBytes = saturatingMultiply(rawBytes, by: 4)
-        return max(1, saturatingAdd(projectedBytes, metadataBytes))
+        // payload copies is intentionally conservative across multiple queued jobs.
+        let projectedBytes = saturatingAdd(
+            saturatingMultiply(sizes.rawBytes, by: 4),
+            sizes.metadataBytes
+        )
+        let rawAndMetadata = saturatingAdd(sizes.rawBytes, sizes.metadataBytes)
+        if outstandingJobs == 0,
+           projectedBytes > maximumEstimatedRetainedBytes,
+           rawAndMetadata <= maximumEstimatedRetainedBytes {
+            // A single oversized capture (e.g. >64 MiB Retina PNG) still fits
+            // safely in memory when no other job is queued; reserve the full
+            // budget until it persists so additional items wait in line.
+            return maximumEstimatedRetainedBytes
+        }
+        return max(1, projectedBytes)
     }
 
     private static func saturatingAdd(_ left: Int, _ right: Int) -> Int {

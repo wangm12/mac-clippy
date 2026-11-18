@@ -45,6 +45,11 @@ extension AppDelegate {
             self?.activateDiagnosticsJournal()
             self?.startDisplayLifecycleMonitoring()
             self?.presentPrivacyNoticeIfNeeded()
+#if !MACCLIPPY_E2E
+            if let self, !self.isLaunchedByXCTest {
+                MacClippyCloudBackupManager.shared.runScheduledBackupIfDue(delegate: self)
+            }
+#endif
         }
     }
 

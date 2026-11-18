@@ -194,14 +194,7 @@ private final class MacClippyFileIconRequest: @unchecked Sendable {
                     guard let self else { return }
                     MacClippyFileIconLoader.resolutionSemaphore.wait()
                     defer { MacClippyFileIconLoader.resolutionSemaphore.signal() }
-                    let fileIcon = NSWorkspace.shared.icon(forFile: path)
-                    let resolvedImage: CGImage?
-                    if let data = fileIcon.tiffRepresentation,
-                       let source = CGImageSourceCreateWithData(data as CFData, nil) {
-                        resolvedImage = CGImageSourceCreateImageAtIndex(source, 0, nil)
-                    } else {
-                        resolvedImage = nil
-                    }
+                    let resolvedImage = Self.renderIconImage(forFile: path)
                     self.finish(resolvedImage)
                 }
 
@@ -248,5 +241,34 @@ private final class MacClippyFileIconRequest: @unchecked Sendable {
         self.continuation = nil
         lock.unlock()
         continuation?.resume(returning: nil)
+    }
+
+    private static func renderIconImage(forFile path: String) -> CGImage? {
+        autoreleasepool {
+            let fileIcon = NSWorkspace.shared.icon(forFile: path)
+            let size = 128
+            let colorSpace = CGColorSpaceCreateDeviceRGB()
+            let bitmapInfo = CGImageAlphaInfo.premultipliedFirst.rawValue
+                | CGBitmapInfo.byteOrder32Little.rawValue
+            guard let context = CGContext(
+                data: nil,
+                width: size,
+                height: size,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: colorSpace,
+                bitmapInfo: bitmapInfo
+            ) else {
+                return nil
+            }
+            NSGraphicsContext.saveGraphicsState()
+            defer { NSGraphicsContext.restoreGraphicsState() }
+            NSGraphicsContext.current = NSGraphicsContext(
+                cgContext: context,
+                flipped: false
+            )
+            fileIcon.draw(in: NSRect(x: 0, y: 0, width: size, height: size))
+            return context.makeImage()
+        }
     }
 }

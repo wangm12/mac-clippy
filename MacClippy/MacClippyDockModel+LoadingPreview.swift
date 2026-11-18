@@ -72,8 +72,26 @@ extension MacClippyDockModel {
         }
     }
 
+    var availableSnippetFolders: [String] {
+        var seen: Set<String> = []
+        var folders: [String] = []
+        for snippet in snippets {
+            guard let folder = snippet.folder?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !folder.isEmpty,
+                  seen.insert(folder).inserted else { continue }
+            folders.append(folder)
+        }
+        return folders.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
     var visibleSnippets: [MacClippySnippetEntry] {
         selectedTab == .snippets ? filteredSnippets : []
+    }
+
+    func selectSnippetFolder(_ folder: String?) {
+        guard selectedSnippetFolder != folder else { return }
+        selectedSnippetFolder = folder
+        scheduleSnippetFilter()
     }
 
     func scheduleSnippetFilter() {
@@ -88,7 +106,11 @@ extension MacClippyDockModel {
         }
 
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let source = snippets
+        let activeFolder = selectedSnippetFolder
+        let source = snippets.filter { snippet in
+            guard let activeFolder else { return true }
+            return snippet.folder?.trimmingCharacters(in: .whitespacesAndNewlines) == activeFolder
+        }
         guard !normalizedQuery.isEmpty else {
             filteredSnippets = source
             return

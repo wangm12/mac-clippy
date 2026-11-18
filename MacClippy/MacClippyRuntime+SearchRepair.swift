@@ -391,7 +391,6 @@ extension MacClippyRuntime {
             for: body,
             ocrText: meta.ocrText,
             label: meta.customLabel,
-            representationUTIs: try clipboardStore.representationUTIs(for: meta.id),
             sourceAppBundleID: meta.sourceAppBundleID
         )
         return MacClippySearchDocument(id: meta.id, text: text)

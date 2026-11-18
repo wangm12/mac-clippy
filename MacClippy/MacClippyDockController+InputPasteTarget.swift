@@ -54,7 +54,8 @@ extension MacClippyDockController {
             leavingSearch: leavingSearch,
             isHiding: isHiding,
             didStealActivation: didActivateApplicationForSearch,
-            hideReason: hideReason
+            hideReason: hideReason,
+            hostIsAlreadyActive: pasteTargetApplication?.isActive == true
         )
         if leavingSearch || isHiding {
             didActivateApplicationForSearch = false

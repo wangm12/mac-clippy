@@ -10,6 +10,13 @@ extension MacClippySnippetFocusContextMonitor {
         let focusedElement: AXUIElement
     }
 
+    struct AccessibilityObserverState {
+        let observer: AXObserver?
+        let source: CFRunLoopSource?
+        let applicationElement: AXUIElement?
+        let focusedElement: AXUIElement?
+    }
+
     static func readFrontmostFocusContext() -> MacClippySnippetFocusContext? {
         readFrontmostAXElements()?.context
     }
@@ -22,6 +29,7 @@ extension MacClippySnippetFocusContextMonitor {
 
         let processIdentifier = application.processIdentifier
         let applicationElement = AXUIElementCreateApplication(processIdentifier)
+        AXUIElementSetMessagingTimeout(applicationElement, 0.15)
         var focusedElement: CFTypeRef?
         guard AXUIElementCopyAttributeValue(
             applicationElement,
@@ -34,6 +42,7 @@ extension MacClippySnippetFocusContextMonitor {
         }
 
         let focusedUIElement = unsafeDowncast(focusedElement, to: AXUIElement.self)
+        AXUIElementSetMessagingTimeout(focusedUIElement, 0.15)
         let identity = MacClippySnippetFocusIdentity(
             processIdentifier: processIdentifier,
             elementIdentity: UInt64(CFHash(focusedUIElement))
@@ -63,5 +72,25 @@ extension MacClippySnippetFocusContextMonitor {
             return nil
         }
         return MacClippySnippetTextSelection(location: range.location, length: range.length)
+    }
+
+    static func removeObserverNotifications(
+        observer: AXObserver?,
+        applicationElement: AXUIElement?,
+        focusedElement: AXUIElement?
+    ) {
+        guard let observer, let applicationElement else { return }
+        AXObserverRemoveNotification(
+            observer,
+            applicationElement,
+            kAXFocusedUIElementChangedNotification as CFString
+        )
+        if let focusedElement {
+            AXObserverRemoveNotification(
+                observer,
+                focusedElement,
+                kAXSelectedTextChangedNotification as CFString
+            )
+        }
     }
 }

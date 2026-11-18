@@ -222,12 +222,20 @@ extension MacClippyRuntime {
         memberIDs: Set<RecordID>,
         shouldCancel: () -> Bool
     ) throws -> Set<RecordID> {
-        guard !terms.isEmpty, !memberIDs.isEmpty else { return [] }
+        let scopedIDs = Array(memberIDs)
+        guard !terms.isEmpty, !scopedIDs.isEmpty else { return [] }
         var matches = Set<RecordID>()
         var cursor: MacClippySearchCursor?
         while matches.count < memberIDs.count {
             guard !shouldCancel() else { return matches }
-            let hits = try searchStore.search(terms: terms, limit: 256, after: cursor)
+            let hits = try withStoreLock {
+                try searchStore.search(
+                    terms: terms,
+                    limit: 256,
+                    after: cursor,
+                    matchingRecordIDs: scopedIDs
+                )
+            }
             if hits.isEmpty { break }
             for hit in hits where memberIDs.contains(hit.id) {
                 matches.insert(hit.id)

@@ -176,21 +176,25 @@ extension MacClippySystemPasteboardReader {
         var representations: [String: Data] = [:]
         var oversizedTypes = Set<String>()
         for type in types {
-            guard try isCurrent(context, shouldContinue: shouldContinue) else { return nil }
-            let data = try readPayload(
-                from: pasteboardItem,
-                type: type,
-                context: &context,
-                shouldContinue: shouldContinue
-            )
-            guard try isCurrent(context, shouldContinue: shouldContinue) else { return nil }
-            guard let data else { continue }
+            let shouldContinueLoop: Bool = try autoreleasepool {
+                guard try isCurrent(context, shouldContinue: shouldContinue) else { return false }
+                let data = try readPayload(
+                    from: pasteboardItem,
+                    type: type,
+                    context: &context,
+                    shouldContinue: shouldContinue
+                )
+                guard try isCurrent(context, shouldContinue: shouldContinue) else { return false }
+                guard let data else { return true }
 
-            if accept(data, totalBytes: &context.totalBytes) {
-                representations[type.rawValue] = data
-            } else {
-                oversizedTypes.insert(type.rawValue)
+                if accept(data, totalBytes: &context.totalBytes) {
+                    representations[type.rawValue] = data
+                } else {
+                    oversizedTypes.insert(type.rawValue)
+                }
+                return true
             }
+            if !shouldContinueLoop { return nil }
         }
         return MacClippyMaterializedPasteboardPayloads(
             representations: representations,

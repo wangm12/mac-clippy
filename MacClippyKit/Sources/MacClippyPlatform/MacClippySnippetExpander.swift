@@ -48,6 +48,12 @@ public final class MacClippySnippetLookupSnapshot: @unchecked Sendable {
         defer { lock.unlock() }
         bodiesByTrigger.removeValue(forKey: trigger)
     }
+
+    public var hasTriggers: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return !bodiesByTrigger.isEmpty
+    }
 }
 
 package struct MacClippySnippetSyntheticKeyInput: Sendable {
@@ -79,6 +85,7 @@ public final class MacClippySnippetExpander: @unchecked Sendable {
     }
 
     package let modeProvider: () -> MacClippySnippetExpansionMode
+    package let hasActiveTriggersProvider: () -> Bool
     package let injector: MacClippyPasteInjector
     package let keyPoster: MacClippySnippetKeyPoster
     package let focusContext: MacClippySnippetFocusContextSource
@@ -117,12 +124,14 @@ public final class MacClippySnippetExpander: @unchecked Sendable {
 
     public convenience init(
         modeProvider: @escaping () -> MacClippySnippetExpansionMode = { MacClippySnippetExpansionSettings.load() },
+        hasActiveTriggersProvider: @escaping () -> Bool = { true },
         lookup: @escaping Lookup,
         injector: MacClippyPasteInjector = MacClippyPasteInjector(),
         keyPoster: MacClippySnippetKeyPoster = MacClippySnippetKeyPoster()
     ) {
         self.init(
             modeProvider: modeProvider,
+            hasActiveTriggersProvider: hasActiveTriggersProvider,
             lookup: lookup,
             injector: injector,
             keyPoster: keyPoster,
@@ -134,6 +143,7 @@ public final class MacClippySnippetExpander: @unchecked Sendable {
 
     package init(
         modeProvider: @escaping () -> MacClippySnippetExpansionMode,
+        hasActiveTriggersProvider: @escaping () -> Bool = { true },
         lookup: @escaping Lookup,
         injector: MacClippyPasteInjector,
         keyPoster: MacClippySnippetKeyPoster,
@@ -142,6 +152,7 @@ public final class MacClippySnippetExpander: @unchecked Sendable {
         expansionDidFinish: @escaping () -> Void = {}
     ) {
         self.modeProvider = modeProvider
+        self.hasActiveTriggersProvider = hasActiveTriggersProvider
         self.injector = injector
         self.keyPoster = keyPoster
         self.focusContext = focusContext
@@ -151,6 +162,37 @@ public final class MacClippySnippetExpander: @unchecked Sendable {
             modeProvider: modeProvider,
             lookup: lookup
         )
+    }
+
+    package static func decodeUTF16Units(_ units: ArraySlice<UniChar>) -> String {
+        var scalars = String.UnicodeScalarView()
+        var index = units.startIndex
+        while index < units.endIndex {
+            let first = units[index]
+            if (0xD800...0xDBFF).contains(first) {
+                let nextIndex = units.index(after: index)
+                if nextIndex < units.endIndex, (0xDC00...0xDFFF).contains(units[nextIndex]) {
+                    let high = UInt32(first) - 0xD800
+                    let low = UInt32(units[nextIndex]) - 0xDC00
+                    if let scalar = Unicode.Scalar(0x1_0000 + (high << 10) + low) {
+                        scalars.append(scalar)
+                    }
+                    index = units.index(after: nextIndex)
+                } else {
+                    index = nextIndex
+                }
+                continue
+            }
+            if (0xDC00...0xDFFF).contains(first) {
+                index = units.index(after: index)
+                continue
+            }
+            if let scalar = Unicode.Scalar(first) {
+                scalars.append(scalar)
+            }
+            index = units.index(after: index)
+        }
+        return String(scalars)
     }
 
     deinit {

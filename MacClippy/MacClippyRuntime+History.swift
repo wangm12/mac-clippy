@@ -85,6 +85,7 @@ extension MacClippyRuntime {
             let name = snippetName(for: body)
             let snippet = try snippetStore.create(name: name, body: body)
             snippetLookupSnapshot.replace(with: try snippetStore.list())
+            scheduleSnippetExpanderRefresh()
             return MacClippySnippetEntry(snippet: snippet)
         }
     }
@@ -108,6 +109,7 @@ extension MacClippyRuntime {
             )
             let snippets = try snippetStore.list()
             snippetLookupSnapshot.replace(with: snippets)
+            scheduleSnippetExpanderRefresh()
             return MacClippySnippetEntry(snippet: snippet)
         }
     }

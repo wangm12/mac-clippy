@@ -47,14 +47,27 @@ extension MacClippyRuntime {
         guard !contentRepresentations.isEmpty else { return payloads }
         let requestedUTIs = Set(contentRepresentations.flatMap(Self.dragRepresentationUTIs))
         let includesImage = contentRepresentations.contains(.image)
-        let prepared: MacClippyDragPayloadPreparation = try withStoreLock {
-            try prepareDragPayloadsLocked(
-                id: id,
-                requestedUTIs: requestedUTIs,
-                includesImage: includesImage,
-                contentRepresentations: contentRepresentations
+        let blobLease = try blobStore.acquireRootReadLease()
+        defer { blobLease.release() }
+        let snapshot: MacClippyClipboardPlaybackSnapshot = try withStoreLock {
+            if includesImage {
+                return try clipboardStore.playbackSnapshot(
+                    for: id,
+                    matchingRepresentationUTIs: requestedUTIs,
+                    matchingAdditionalRepresentationUTIs: { uti in
+                        UTType(uti)?.conforms(to: .image) == true
+                    }
+                )
+            }
+            return try clipboardStore.playbackSnapshot(
+                for: id,
+                matchingRepresentationUTIs: requestedUTIs
             )
         }
+        let prepared = try prepareDragPayloads(
+            from: snapshot,
+            contentRepresentations: contentRepresentations
+        )
 
         payloads.merge(try materializeDragPayloads(
             id: id, representations: contentRepresentations, prepared: prepared
@@ -100,28 +113,10 @@ extension MacClippyRuntime {
         return payloads
     }
 
-    private func prepareDragPayloadsLocked(
-        id: RecordID,
-        requestedUTIs: Set<String>,
-        includesImage: Bool,
+    private func prepareDragPayloads(
+        from snapshot: MacClippyClipboardPlaybackSnapshot,
         contentRepresentations: [MacClippyCardDragRepresentation]
     ) throws -> MacClippyDragPayloadPreparation {
-        let snapshot: MacClippyClipboardPlaybackSnapshot
-        if includesImage {
-            snapshot = try clipboardStore.playbackSnapshot(
-                for: id,
-                matchingRepresentationUTIs: requestedUTIs,
-                matchingAdditionalRepresentationUTIs: { uti in
-                    UTType(uti)?.conforms(to: .image) == true
-                }
-            )
-        } else {
-            snapshot = try clipboardStore.playbackSnapshot(
-                for: id,
-                matchingRepresentationUTIs: requestedUTIs
-            )
-        }
-
         let selectedContent = try dragPasteboardContent(from: snapshot.representations)
         let fallbackRepresentations = Set(contentRepresentations.filter {
             !selectedContentHasCandidate(for: $0, in: selectedContent)
@@ -132,8 +127,6 @@ extension MacClippyRuntime {
             switch snapshot.record {
             case let .image(blobID, _, _), let .encryptedImage(blobID, _, _):
                 if fallbackRepresentations.contains(.image) {
-                    // Read the primary blob under storeLock so deletion
-                    // cannot race the read lease acquisition.
                     fallbackImageData = try blobStore.read(id: blobID)
                 }
             default:

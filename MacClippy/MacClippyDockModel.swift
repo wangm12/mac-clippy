@@ -79,6 +79,7 @@ final class MacClippyDockModel: ObservableObject {
     @Published var snippets: [MacClippySnippetEntry] = []
     var snippetUpdateHandler: (@MainActor (RecordID) -> Void)?
     @Published var filteredSnippets: [MacClippySnippetEntry] = []
+    @Published var selectedSnippetFolder: String?
     @Published var pinboards: [MacClippyPinboardEntry] = [] {
         didSet {
             rebuildCategoryMembershipIndex()
@@ -257,6 +258,7 @@ final class MacClippyDockModel: ObservableObject {
     // still receive the complete selection.
     var allSelectedRecordIDs: [RecordID]?
     var pasteTargetProcessIdentifier: Int32?
+    var beforePasteHook: (@Sendable () -> Bool)?
     @Published var isSelectingAllMatches = false
     @Published var allSelectionFailed = false
     var allSelectionCanMerge = false
@@ -264,12 +266,7 @@ final class MacClippyDockModel: ObservableObject {
     var selectAllWorkItem: MacClippyDispatchWorkItem?
     var selectAllCancellationToken: MacClippyCancellationToken?
     var selectAllGeneration: UInt = 0
-    // P1 stale-operation guard. `sessionGeneration` is bumped on dock show/hide
-    // so an async completion from a previous dock session cannot mutate state
-    // or close a newly reopened dock. `operationGeneration` is bumped on every
-    // batch operation start so a slow earlier batch cannot overwrite the
-    // result of a newer batch. Each async batch completion captures the
-    // generation it was started with and no-ops if it no longer matches.
+    // P1 stale-operation guard across dock hide/show and async batches.
     var sessionGeneration: UInt = 0
     var operationGeneration: UInt = 0
     // Rename operations have their own generation because the inline editor can
@@ -334,13 +331,6 @@ final class MacClippyDockModel: ObservableObject {
         }
     }
 
-    private func applySearchQuery(_ query: String) {
-        let parsed = MacClippySearchGrammar.parse(query)
-        highlightTerms = MacClippySearchFilterChipPolicy.ocrHighlightTerms(from: parsed)
-        searchFilterChips = MacClippySearchFilterChipPolicy.chips(from: parsed)
-        searchFilterSuggestions = MacClippySearchFilterChipPolicy.suggestions(for: parsed)
-    }
-
     deinit {
         historyChangeObserver?.remove()
         captureStatusObserver?.remove()
@@ -360,5 +350,14 @@ final class MacClippyDockModel: ObservableObject {
         selectAllWorkItem?.cancel()
         selectAllCancellationToken?.cancel()
         thumbnailLoader.queue.cancelAllOperations()
+    }
+}
+
+private extension MacClippyDockModel {
+    func applySearchQuery(_ query: String) {
+        let parsed = MacClippySearchGrammar.parse(query)
+        highlightTerms = MacClippySearchFilterChipPolicy.ocrHighlightTerms(from: parsed)
+        searchFilterChips = MacClippySearchFilterChipPolicy.chips(from: parsed)
+        searchFilterSuggestions = MacClippySearchFilterChipPolicy.suggestions(for: parsed)
     }
 }

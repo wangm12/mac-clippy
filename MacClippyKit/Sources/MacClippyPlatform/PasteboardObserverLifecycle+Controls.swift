@@ -14,9 +14,40 @@ public extension MacClippyPasteboardObserver {
     }
 
     func setCapturePaused(_ paused: Bool) {
+        let observedBeforeResume = paused ? nil : reader.currentChangeCount()
         enqueueOnLifecycleQueue { [weak self] in
-            self?.capturePaused = paused
-            self?.publishCaptureStatus()
+            guard let self else { return }
+            let wasPaused = self.capturePaused
+            if !paused, wasPaused, let observedBeforeResume {
+                if self.lastChangeCount == nil || observedBeforeResume > (self.lastChangeCount ?? .min) {
+                    self.lastChangeCount = observedBeforeResume
+                    self.recoverySuppressedChangeCount = observedBeforeResume
+                }
+            }
+            self.capturePaused = paused
+            if paused {
+                self.cancelPollingTimerOnLifecycleQueue()
+            } else if self.isLifecycleStarted(), !self.pollingSuspended, self.hasDeliveryHandler {
+                if self.timer == nil {
+                    self.armPollingTimerOnLifecycleQueue()
+                }
+                if !self.recoveryReadCompletions.isEmpty || self.recoveryReadRequested {
+                    self.pollOnLifecycleQueue()
+                }
+            }
+            self.publishCaptureStatus()
+        }
+    }
+
+    func pollImmediatelyIfRunning() {
+        enqueueOnLifecycleQueue { [weak self] in
+            guard let self,
+                  self.isLifecycleStarted(),
+                  !self.pollingSuspended,
+                  self.hasDeliveryHandler else {
+                return
+            }
+            self.pollOnLifecycleQueue()
         }
     }
 
@@ -277,7 +308,12 @@ public extension MacClippyPasteboardObserver {
     private func armPollingTimerOnLifecycleQueue() {
         guard automaticPollingEnabled else { return }
         let timer = DispatchSource.makeTimerSource(queue: self.queue)
-        timer.schedule(deadline: .now() + self.pollInterval, repeating: self.pollInterval)
+        let leewayMilliseconds = max(15, Int((self.pollInterval * 250).rounded()))
+        timer.schedule(
+            deadline: .now() + self.pollInterval,
+            repeating: self.pollInterval,
+            leeway: .milliseconds(leewayMilliseconds)
+        )
         timer.setEventHandler { [weak self] in self?.pollOnLifecycleQueue() }
         self.timer = timer
         timer.resume()

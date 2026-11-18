@@ -25,10 +25,29 @@ public struct MacClippyPaths: Sendable {
         pinboardDatabaseURL = databasesURL.appendingPathComponent("pinboards.sqlite")
         snippetDatabaseURL = databasesURL.appendingPathComponent("snippets.sqlite")
         diagnosticsJournalURL = root.appendingPathComponent("diagnostics.jsonl")
-        try fileManager.createDirectory(at: self.rootURL, withIntermediateDirectories: true)
-        try fileManager.createDirectory(at: databasesURL, withIntermediateDirectories: true)
-        try fileManager.createDirectory(at: blobsURL, withIntermediateDirectories: true)
-        try fileManager.createDirectory(at: thumbnailsURL, withIntermediateDirectories: true)
+        try fileManager.createDirectory(
+            at: self.rootURL,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try fileManager.createDirectory(
+            at: databasesURL,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try fileManager.createDirectory(
+            at: blobsURL,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try fileManager.createDirectory(
+            at: thumbnailsURL,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        for directory in [self.rootURL, databasesURL, blobsURL, thumbnailsURL] {
+            try? fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        }
     }
 }
 
@@ -81,11 +100,21 @@ public final class MacClippyDatabase {
                 try database.execute(sql: "PRAGMA synchronous = NORMAL")
                 try database.execute(sql: "PRAGMA foreign_keys = ON")
                 try database.execute(sql: "PRAGMA busy_timeout = 5000")
+                try database.execute(sql: "PRAGMA journal_size_limit = 67108864")
+                try database.execute(sql: "PRAGMA temp_store = MEMORY")
+            }
+        } else {
+            configuration.prepareDatabase { database in
+                try database.execute(sql: "PRAGMA busy_timeout = 5000")
             }
         }
         let isMemory = url.path == ":memory:" || url.lastPathComponent == ":memory:"
         if !isMemory && !readOnly {
-            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
         }
         queue = try isMemory
             ? DatabaseQueue(configuration: configuration)
@@ -155,6 +184,9 @@ public final class MacClippyDatabase {
 
         var configuration = Configuration()
         configuration.readonly = true
+        configuration.prepareDatabase { database in
+            try database.execute(sql: "PRAGMA busy_timeout = 5000")
+        }
         let reader = try DatabaseQueue(path: url.path, configuration: configuration)
         defer {
             do {

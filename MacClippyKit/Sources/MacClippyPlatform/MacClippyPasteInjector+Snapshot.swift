@@ -13,12 +13,13 @@ extension MacClippyPasteInjector {
     func prepare(
         _ content: MacClippyPasteboardContent,
         gate: MacClippyPasteInjectionGate?,
-        sentinel: MacClippyPasteboardWriteSentinel?
+        sentinel: MacClippyPasteboardWriteSentinel?,
+        snapshotPolicy: MacClippyPasteSnapshotPolicy = .strict
     ) throws {
         try withOperationLock {
           try pasteboardAccessCoordinator.withAccess {
             guard gate?.isOpen != false else { throw MacClippyPasteboardPrepareError.gateClosed }
-            let original = snapshotPasteboard(pasteboard)
+            let original = snapshotPasteboard(pasteboard, policy: snapshotPolicy)
             guard original.isComplete else {
                 throw MacClippyPasteboardPrepareError.incompleteSnapshot
             }
@@ -43,6 +44,7 @@ extension MacClippyPasteInjector {
 
     func preparedSnapshot(for content: MacClippyPasteboardContent) -> PasteboardSnapshot? {
         let stagingBoard = NSPasteboard.withUniqueName()
+        defer { stagingBoard.releaseGlobally() }
         guard prepareContent(content, stagingBoard) else { return nil }
         let snapshot = snapshotPasteboard(stagingBoard)
         guard snapshot.isComplete else { return nil }
@@ -55,13 +57,19 @@ extension MacClippyPasteInjector {
         }
     }
 
-    func snapshotPasteboard(_ source: NSPasteboard) -> PasteboardSnapshot {
+    func snapshotPasteboard(
+        _ source: NSPasteboard,
+        policy: MacClippyPasteSnapshotPolicy = .strict
+    ) -> PasteboardSnapshot {
         MacClippyPasteboardAccessCoordinator.shared(for: source).withAccess {
-            snapshotPasteboardWithoutLock(source)
+            snapshotPasteboardWithoutLock(source, policy: policy)
         }
     }
 
-    func snapshotPasteboardWithoutLock(_ source: NSPasteboard) -> PasteboardSnapshot {
+    func snapshotPasteboardWithoutLock(
+        _ source: NSPasteboard,
+        policy: MacClippyPasteSnapshotPolicy = .strict
+    ) -> PasteboardSnapshot {
         guard let initialChangeCount = try? MacClippyNativePasteboard.changeCount(of: source) else {
             return PasteboardSnapshot(items: [], isComplete: false, changeCount: 0)
         }
@@ -69,19 +77,20 @@ extension MacClippyPasteInjector {
         guard let pasteboardItems = try? MacClippyNativePasteboard.items(of: source) else {
             return PasteboardSnapshot(items: [], isComplete: false, changeCount: initialChangeCount)
         }
-        let items: [[(type: NSPasteboard.PasteboardType, data: Data)]] = pasteboardItems.map { item in
-            guard let typeNames = try? MacClippyNativePasteboard.types(of: item) else {
-                isComplete = false
-                return []
-            }
-            return typeNames.compactMap { typeName -> (type: NSPasteboard.PasteboardType, data: Data)? in
-                let type = NSPasteboard.PasteboardType(typeName)
-                guard let data = try? MacClippyNativePasteboard.data(from: item, forType: type) else {
-                    isComplete = false
-                    return nil
-                }
-                return (type: type, data: data)
-            }
+        let maxBytes: Int?
+        switch policy {
+        case .strict:
+            maxBytes = nil
+        case let .bestEffort(limit):
+            maxBytes = max(0, limit)
+        }
+        let items: [[(type: NSPasteboard.PasteboardType, data: Data)]] = pasteboardItems.compactMap { item in
+            captureSnapshotItem(
+                item,
+                maxBytes: maxBytes,
+                policy: policy,
+                isComplete: &isComplete
+            )
         }
         return PasteboardSnapshot(
             items: items,

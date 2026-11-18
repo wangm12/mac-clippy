@@ -67,14 +67,14 @@ enum MacClippyDockTheme {
         }
     }
 
-    static var panel: NSColor { adaptive(light: panelLight, dark: panelDark) }
-    static var panelStrong: NSColor { adaptive(light: panelStrongLight, dark: panelStrongDark) }
-    static var card: NSColor { adaptive(light: cardLight, dark: cardDark) }
-    static var cardHover: NSColor { adaptive(light: cardHoverLight, dark: cardHoverDark) }
-    static var text: NSColor { adaptive(light: textLight, dark: textDark) }
-    static var muted: NSColor { adaptive(light: mutedLight, dark: mutedDark) }
-    static var muted2: NSColor { adaptive(light: muted2Light, dark: muted2Dark) }
-    static var line: NSColor { adaptive(light: lineLight, dark: lineDark) }
+    static let panel: NSColor = adaptive(light: panelLight, dark: panelDark)
+    static let panelStrong: NSColor = adaptive(light: panelStrongLight, dark: panelStrongDark)
+    static let card: NSColor = adaptive(light: cardLight, dark: cardDark)
+    static let cardHover: NSColor = adaptive(light: cardHoverLight, dark: cardHoverDark)
+    static let text: NSColor = adaptive(light: textLight, dark: textDark)
+    static let muted: NSColor = adaptive(light: mutedLight, dark: mutedDark)
+    static let muted2: NSColor = adaptive(light: muted2Light, dark: muted2Dark)
+    static let line: NSColor = adaptive(light: lineLight, dark: lineDark)
 
     static var accentColor: Color { Color(nsColor: accent) }
     static func accentFillColor(hovered: Bool) -> Color {

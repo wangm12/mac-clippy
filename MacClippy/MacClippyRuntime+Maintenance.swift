@@ -8,6 +8,7 @@ import MacClippyPlatform
 
 private struct MacClippyCaptureAppendContext {
     let generatedBlobID: String?
+    let primaryImageData: Data?
     let representations: [MacClippyClipboardRepresentation]
     let sourceAppBundleID: String?
     let contentHash: String
@@ -127,14 +128,15 @@ extension MacClippyRuntime {
             return (reused, nil)
         }
 
-        let (record, generatedBlobID) = try makeCaptureRecord(
+        let prepared = try makeCaptureRecord(
             payload: payload,
             representations: representations
         )
         let (meta, reusedExisting) = try appendCaptureRecord(
-            record,
+            prepared.record,
             context: MacClippyCaptureAppendContext(
-                generatedBlobID: generatedBlobID,
+                generatedBlobID: prepared.blobID,
+                primaryImageData: prepared.imageData,
                 representations: representations,
                 sourceAppBundleID: sourceAppBundleID,
                 contentHash: contentHash,
@@ -142,7 +144,7 @@ extension MacClippyRuntime {
             )
         )
         if reusedExisting { return (meta, nil) }
-        indexCaptureSearch(record, meta: meta, representations: representations)
+        indexCaptureSearch(prepared.record, meta: meta, representations: representations)
         return (meta, payload?.imageData)
     }
 
@@ -158,8 +160,16 @@ extension MacClippyRuntime {
                 sourceAppDisplayName: MacClippySourceAppResolver.displayName(for: context.sourceAppBundleID),
                 contentHash: context.contentHash,
                 readBlob: context.readBlob,
-                spillPayload: { [blobStore] data in try blobStore.write(data) },
+                spillPayload: { [blobStore] data in
+                    if let primaryBlobID = context.generatedBlobID,
+                       let primaryImageData = context.primaryImageData,
+                       data == primaryImageData {
+                        return primaryBlobID
+                    }
+                    return try blobStore.write(data)
+                },
                 deleteSpilledPayload: { [weak self] blobID in
+                    guard blobID != context.generatedBlobID else { return }
                     self?.removeGeneratedCaptureBlob(
                         blobID,
                         operation: "capture_spill_rollback_cleanup",
@@ -183,26 +193,6 @@ extension MacClippyRuntime {
         }
     }
 
-    private func removeGeneratedCaptureBlob(
-        _ blobID: String,
-        operation: String? = nil,
-        impact: String = "possible_orphan_blob"
-    ) {
-        do {
-            try blobStore.delete(id: blobID)
-        } catch {
-            storageDegradedReasons.insert("orphan-blob-cleanup-failed")
-            guard let operation else { return }
-            MacClippyLog.record(
-                category: .blob,
-                code: .blobCleanupFailed,
-                operation: operation,
-                recoveryAction: "run_storage_reconciliation",
-                impact: impact
-            )
-        }
-    }
-
     private func indexCaptureSearch(
         _ record: ClipboardRecord,
         meta: ClipboardItemMeta,
@@ -212,7 +202,6 @@ extension MacClippyRuntime {
             for: record,
             ocrText: meta.ocrText,
             label: meta.customLabel,
-            representationUTIs: representations.map(\.uti),
             sourceAppBundleID: meta.sourceAppBundleID
         )
         guard !searchableText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -230,26 +219,36 @@ extension MacClippyRuntime {
         }
     }
 
+    private struct CaptureRecordPayload {
+        let record: ClipboardRecord
+        let blobID: String?
+        let imageData: Data?
+    }
+
     private func makeCaptureRecord(
         payload: MacClippyCapturePayload?,
         representations: [MacClippyClipboardRepresentation]
-    ) throws -> (ClipboardRecord, String?) {
+    ) throws -> CaptureRecordPayload {
         switch payload {
         case let .text(value):
-            return (.text(value), nil)
+            return CaptureRecordPayload(record: .text(value), blobID: nil, imageData: nil)
         case let .rtf(data):
-            return (.rtf(data), nil)
+            return CaptureRecordPayload(record: .rtf(data), blobID: nil, imageData: nil)
         case let .html(value):
-            return (.html(value), nil)
+            return CaptureRecordPayload(record: .html(value), blobID: nil, imageData: nil)
         case let .image(data, width, height):
             let blobID = try blobStore.write(data)
-            return (.image(blobID: blobID, width: width, height: height), blobID)
+            return CaptureRecordPayload(
+                record: .image(blobID: blobID, width: width, height: height),
+                blobID: blobID,
+                imageData: data
+            )
         case let .files(urls):
-            return (.files(urls), nil)
+            return CaptureRecordPayload(record: .files(urls), blobID: nil, imageData: nil)
         case .none:
             // Retain a useful preview for custom-only clipboard formats.
             let fallbackText = MacClippyCaptureMapper.plainText(for: representations) ?? "(no preview)"
-            return (.text(fallbackText), nil)
+            return CaptureRecordPayload(record: .text(fallbackText), blobID: nil, imageData: nil)
         }
     }
 
@@ -286,6 +285,7 @@ extension MacClippyRuntime {
                     return try PinboardStore.protectedIDs(from: self.pinboardStore)
                 }
             )
+            try? pruneOrphanThumbnails(for: lifecycleToken)
         } catch is CancellationError {
             return
         } catch {
@@ -358,6 +358,7 @@ extension MacClippyRuntime {
                     outcome.result,
                     ftsRepairSucceeded: outcome.ftsRepairSucceeded
                 )
+                try? pruneOrphanThumbnails(for: lifecycleToken)
             } catch is CancellationError {
                 return
             } catch {

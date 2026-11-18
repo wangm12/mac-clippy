@@ -23,8 +23,6 @@ struct MacClippyClipboardCardLabel: View, Equatable {
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
-    @Environment(\.macClippyCardHovered) private var isHovered
-    @Environment(\.macClippyCarouselScrolling) private var isCarouselScrolling
 
     init(
         context: MacClippyClipboardCardContext,
@@ -97,12 +95,6 @@ struct MacClippyClipboardCardLabel: View, Equatable {
                     highContrast: highContrast
                 )
             }
-            .scaleEffect(
-                MacClippyDockCardHoverChrome.allowsHoverScale(
-                    isScrolling: isCarouselScrolling,
-                    reduceMotion: reduceMotion
-                ) && isHovered ? MacClippyMotion.hoverScale : 1
-            )
             .animation(
                 MacClippyMotion.animation(MacClippyMotion.hoverAnimation, reduceMotion: reduceMotion),
                 value: context.activeBorder

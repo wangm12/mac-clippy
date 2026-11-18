@@ -94,6 +94,11 @@ public struct MacClippySnippetExpansionPlanner {
         return nil
     }
 
+    public mutating func handleBackspace() {
+        guard !buffer.isEmpty else { return }
+        buffer.removeLast()
+    }
+
     public mutating func reset() {
         buffer.removeAll(keepingCapacity: true)
     }

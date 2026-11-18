@@ -8,7 +8,13 @@ extension MacClippyBackup {
         let stagedURL: URL
         let previousURL: URL
         let liveRootURL: URL
-        let key: SymmetricKey
+        let sourceKey: SymmetricKey
+        let targetKey: SymmetricKey
+    }
+
+    private struct RestoreKeyPair {
+        let source: SymmetricKey
+        let target: SymmetricKey
     }
 
     /// Copies a validated snapshot into an existing live Application Support
@@ -59,41 +65,65 @@ extension MacClippyBackup {
         guard MacClippyBackupSettingsPolicy.canRestore(validation) else {
             throw MacClippyBackupError.invalidManifest
         }
+        return try performInstall(
+            from: snapshotURL,
+            liveRootURL: liveRootURL,
+            keys: RestoreKeyPair(source: deviceKey, target: deviceKey),
+            validation: validation,
+            context: (fileManager, faultInjector)
+        )
+    }
+
+    @discardableResult
+    static func installValidatedSnapshot(
+        from snapshotURL: URL,
+        liveRootURL: URL,
+        sourceKey: SymmetricKey,
+        targetKey: SymmetricKey,
+        prevalidated: MacClippyBackupValidation,
+        fileManager: FileManager = .default
+    ) throws -> MacClippyBackupValidation {
+        try performInstall(
+            from: snapshotURL,
+            liveRootURL: liveRootURL,
+            keys: RestoreKeyPair(source: sourceKey, target: targetKey),
+            validation: prevalidated,
+            context: (fileManager, nil)
+        )
+    }
+
+    private static func performInstall(
+        from snapshotURL: URL,
+        liveRootURL: URL,
+        keys: RestoreKeyPair,
+        validation: MacClippyBackupValidation,
+        context: (fileManager: FileManager, faultInjector: ((RestoreFaultPoint) throws -> Void)?)
+    ) throws -> MacClippyBackupValidation {
+        let fileManager = context.fileManager
         try fileManager.createDirectory(at: liveRootURL, withIntermediateDirectories: true)
         try recoverPendingRestore(at: liveRootURL, fileManager: fileManager)
 
         let transactionURL = liveRootURL.appendingPathComponent(
-            ".macclippy-restore-\(UUID().uuidString)",
-            isDirectory: true
+            ".macclippy-restore-\(UUID().uuidString)", isDirectory: true
         )
         let stagedURL = transactionURL.appendingPathComponent("staged", isDirectory: true)
         let previousURL = transactionURL.appendingPathComponent("previous", isDirectory: true)
         do {
             let preparation = RestorePreparation(
-                snapshotURL: snapshotURL,
-                transactionURL: transactionURL,
-                stagedURL: stagedURL,
-                previousURL: previousURL,
-                liveRootURL: liveRootURL,
-                key: deviceKey
+                snapshotURL: snapshotURL, transactionURL: transactionURL, stagedURL: stagedURL,
+                previousURL: previousURL, liveRootURL: liveRootURL,
+                sourceKey: keys.source, targetKey: keys.target
             )
-            try prepareRestoreTransaction(
-                preparation,
-                fileManager: fileManager
-            )
+            try prepareRestoreTransaction(preparation, fileManager: fileManager)
             try installStagedComponents(
-                stagedURL: stagedURL,
-                liveRootURL: liveRootURL,
-                fileManager: fileManager,
-                faultInjector: faultInjector
+                stagedURL: stagedURL, liveRootURL: liveRootURL,
+                fileManager: fileManager, faultInjector: context.faultInjector
             )
         } catch MacClippyBackupError.restoreInterrupted {
             throw MacClippyBackupError.restoreInterrupted
         } catch {
             try rollbackOrRemovePartialRestore(
-                transactionURL: transactionURL,
-                liveRootURL: liveRootURL,
-                fileManager: fileManager
+                transactionURL: transactionURL, liveRootURL: liveRootURL, fileManager: fileManager
             )
             throw error
         }
@@ -107,8 +137,14 @@ extension MacClippyBackup {
         try fileManager.createDirectory(at: preparation.stagedURL, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: preparation.previousURL, withIntermediateDirectories: true)
         try stageSnapshot(preparation.snapshotURL, into: preparation.stagedURL, fileManager: fileManager)
+        try rekeyStagedStorage(
+            at: preparation.stagedURL,
+            from: preparation.sourceKey,
+            to: preparation.targetKey,
+            fileManager: fileManager
+        )
         let databasesURL = preparation.stagedURL.appendingPathComponent("databases", isDirectory: true)
-        try openStagedStorage(at: databasesURL, key: preparation.key)
+        try openStagedStorage(at: databasesURL, key: preparation.targetKey)
 
         var hadOriginal: [String: Bool] = [:]
         for component in liveComponents {

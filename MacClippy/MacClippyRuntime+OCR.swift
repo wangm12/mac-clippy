@@ -62,11 +62,33 @@ extension MacClippyRuntime {
                     lifecycleToken: lifecycleToken
                 )
             )
-            armOCRScheduleTimerIfNeeded()
+            if !ocrScheduleConditionsProvider().isLowPowerMode && !isOCRSuspendedForDisplaySleep() {
+                armOCRScheduleTimerIfNeeded()
+            }
+        }
+    }
+
+    func isOCRSuspendedForDisplaySleep() -> Bool {
+        lifecycleStateLock.lock()
+        defer { lifecycleStateLock.unlock() }
+        return ocrSuspendedForDisplaySleep
+    }
+
+    func setOCRSuspendedForDisplaySleep(_ suspended: Bool) {
+        lifecycleStateLock.lock()
+        ocrSuspendedForDisplaySleep = suspended
+        lifecycleStateLock.unlock()
+        if suspended {
+            cancelOCRScheduleTimer()
+        } else {
+            captureQueue.async { [weak self] in
+                self?.startDeferredOCRIfReady()
+            }
         }
     }
 
     func shouldStartOCRNow() -> Bool {
+        guard !isOCRSuspendedForDisplaySleep() else { return false }
         let conditions = ocrScheduleConditionsProvider()
         return MacClippyOCRSchedulePolicy.shouldStartRecognition(
             secondsSinceLastInput: conditions.secondsSinceLastInput,
@@ -75,7 +97,20 @@ extension MacClippyRuntime {
     }
 
     func startDeferredOCRIfReady() {
-        guard shouldStartOCRNow() else { return }
+        let conditions = ocrScheduleConditionsProvider()
+        guard !isOCRSuspendedForDisplaySleep(), !conditions.isLowPowerMode else {
+            cancelOCRScheduleTimer()
+            return
+        }
+        guard MacClippyOCRSchedulePolicy.shouldStartRecognition(
+            secondsSinceLastInput: conditions.secondsSinceLastInput,
+            isLowPowerMode: conditions.isLowPowerMode
+        ) else {
+            if !deferredOCRJobs.isEmpty {
+                armOCRScheduleTimerIfNeeded()
+            }
+            return
+        }
         let jobs = deferredOCRJobs
         deferredOCRJobs.removeAll()
         if jobs.isEmpty {
@@ -217,7 +252,6 @@ extension MacClippyRuntime {
             for: body,
             ocrText: persistedOCRText,
             label: updatedMeta.customLabel,
-            representationUTIs: try clipboardStore.representationUTIs(for: recordID),
             sourceAppBundleID: updatedMeta.sourceAppBundleID
         )
         guard !indexText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -273,5 +307,37 @@ extension MacClippyRuntime {
             }
         #endif
         try searchStore.upsert(id: id, text: text)
+    }
+
+    func pruneOrphanThumbnails(for lifecycleToken: MacClippyRuntimeLifecycleToken) throws {
+        guard isCurrentLifecycleToken(lifecycleToken) else { return }
+        try thumbnailDiskCache.pruneOrphans { [weak self] batch in
+            guard let self, self.isCurrentLifecycleToken(lifecycleToken) else {
+                throw CancellationError()
+            }
+            return try self.withStoreLock {
+                Set(try self.clipboardStore.metas(for: batch).map(\.id))
+            }
+        }
+    }
+
+    func removeGeneratedCaptureBlob(
+        _ blobID: String,
+        operation: String? = nil,
+        impact: String = "possible_orphan_blob"
+    ) {
+        do {
+            try blobStore.delete(id: blobID)
+        } catch {
+            storageDegradedReasons.insert("orphan-blob-cleanup-failed")
+            guard let operation else { return }
+            MacClippyLog.record(
+                category: .blob,
+                code: .blobCleanupFailed,
+                operation: operation,
+                recoveryAction: "run_storage_reconciliation",
+                impact: impact
+            )
+        }
     }
 }

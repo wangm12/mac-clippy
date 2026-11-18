@@ -211,8 +211,13 @@ extension MacClippySearchStore {
             FROM macclippy_search_index
             WHERE 1 = 1
         """
-        sql += scope.predicate
         var arguments: [Any] = []
+        appendSubstringScopePredicate(
+            to: &sql,
+            arguments: &arguments,
+            scope: scope,
+            matchQuery: matchQuery
+        )
         if let kind {
             sql += " AND kind = ?"
             arguments.append(kind.rawValue)
@@ -240,6 +245,38 @@ extension MacClippySearchStore {
         }
         return try Row.fetchAll(connection, sql: sql, arguments: statementArguments)
             .map { try Self.substringHit($0, terms: terms) }
+    }
+
+    private func appendSubstringScopePredicate(
+        to sql: inout String,
+        arguments: inout [Any],
+        scope: MacClippySearchTermsScope,
+        matchQuery: String?
+    ) {
+        guard scope.restricted && (matchQuery == nil || matchQuery?.isEmpty == true) else {
+            sql += scope.predicate
+            return
+        }
+        if let kind = scope.kind {
+            sql += """
+                 AND macclippy_search_index.rowid IN (
+                    SELECT k.rowid
+                    FROM temp.macclippy_search_scope AS s
+                    JOIN macclippy_search_keys AS k
+                      ON k.kind = ? AND k.record_id = s.record_id
+                )
+                """
+            arguments.append(kind.rawValue)
+        } else {
+            sql += """
+                 AND macclippy_search_index.rowid IN (
+                    SELECT k.rowid
+                    FROM temp.macclippy_search_scope AS s
+                    JOIN macclippy_search_keys AS k
+                      ON k.record_id = s.record_id
+                )
+                """
+        }
     }
 
     private static func substringHit(_ row: Row, terms: [String]) throws -> SearchHit {

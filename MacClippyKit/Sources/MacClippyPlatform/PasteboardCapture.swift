@@ -319,7 +319,7 @@ public final class MacClippyPasteboardObserver: @unchecked Sendable {
         reader: PasteboardReading = SystemPasteboardReader(),
         exclusionRules: MacClippyCore.CaptureExclusionRules = MacClippyCore.CaptureExclusionRules(),
         writeSentinel: MacClippyPasteboardWriteSentinel? = nil,
-        pollInterval: TimeInterval = 0.05,
+        pollInterval: TimeInterval = MacClippyPasteboardPollPolicy.foregroundInterval,
         // Production default: a dedicated serial utility queue (NOT the main
         // queue) so polling and the synchronous retry helper's sleeps never
         // block the UI. Persistence is handed off to the caller's capture
@@ -328,7 +328,7 @@ public final class MacClippyPasteboardObserver: @unchecked Sendable {
         // for deterministic, in-process delivery.
         queue: DispatchQueue = DispatchQueue(
             label: MacClippyPasteboardObserver.productionPollQueueLabel,
-            qos: .userInitiated
+            qos: .utility
         ),
         textRulePreparationQueue: DispatchQueue = DispatchQueue(
             label: "com.macallyouneed.macclippy.capture.text-rules.prepare",

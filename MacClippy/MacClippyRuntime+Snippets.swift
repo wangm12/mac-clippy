@@ -24,6 +24,7 @@ extension MacClippyRuntime {
             let nextSnippets = currentSnippets.filter { $0.id != id } + [snippet]
             try snippetStore.update(snippet)
             snippetLookupSnapshot.replace(with: nextSnippets)
+            scheduleSnippetExpanderRefresh()
             return MacClippySnippetEntry(snippet: snippet)
         }
     }

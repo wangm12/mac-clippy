@@ -84,6 +84,7 @@ extension MacClippyDockController {
             model.resetSearchFocus()
         }
         detailsPanel?.orderOut(nil)
+        detailsPanel?.contentView = nil
         detailsHostingView = nil
         panel?.interceptsPickerKeys = isVisible
         if let dockPanel = panel, dockPanel.isVisible {

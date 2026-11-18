@@ -156,12 +156,21 @@ struct MacClippyDetailsView: View {
                     .accessibilityHint("Edit the saved clipboard content")
                     .disabled(editSession.isSaving)
             } else {
-                Text(contentDisplay)
-                    .font(details.contentKind == .rtf ? .body : .system(.body, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
-                    .padding(12)
+                if contentDisplay.count > 4_000 {
+                    MacClippyDetailsLongTextView(
+                        text: contentDisplay,
+                        isRichText: details.contentKind == .rtf
+                    )
+                    .frame(maxWidth: .infinity, minHeight: 160, idealHeight: 320, maxHeight: 360)
                     .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                } else {
+                    Text(contentDisplay)
+                        .font(details.contentKind == .rtf ? .body : .system(.body, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
+                        .padding(12)
+                        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                }
                 if canEditContent {
                     Button("Edit Content", action: onEdit)
                         .keyboardShortcut("e", modifiers: .command)
@@ -185,6 +194,49 @@ struct MacClippyDetailsLoadingView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Loading clipboard details")
+    }
+}
+
+private struct MacClippyDetailsLongTextView: NSViewRepresentable {
+    let text: String
+    let isRichText: Bool
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+
+        let textView = NSTextView()
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.drawsBackground = false
+        textView.textContainerInset = NSSize(width: 8, height: 10)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.widthTracksTextView = true
+        textView.font = textFont
+        textView.string = text
+        scrollView.documentView = textView
+        return scrollView
+    }
+
+    func updateNSView(_ nsView: NSScrollView, context: Context) {
+        guard let textView = nsView.documentView as? NSTextView else { return }
+        if textView.font != textFont {
+            textView.font = textFont
+        }
+        if textView.string != text {
+            textView.string = text
+        }
+    }
+
+    private var textFont: NSFont {
+        isRichText
+            ? .systemFont(ofSize: NSFont.systemFontSize)
+            : .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
     }
 }
 

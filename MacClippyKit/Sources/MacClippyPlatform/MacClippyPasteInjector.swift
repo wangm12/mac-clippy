@@ -51,6 +51,23 @@ public enum MacClippyPasteManualFallbackPolicy: Equatable, Sendable {
     case preserveClipboard
 }
 
+public enum MacClippyPasteSnapshotPolicy: Equatable, Sendable {
+    /// Fail closed if any pasteboard item or representation cannot be materialized.
+    case strict
+    /// Read materialized representations up to `maxBytes` each and tolerate
+    /// unavailable/oversized items so user-initiated Copy/Paste is never blocked
+    /// by Finder promised files or transient sidecar UTIs.
+    case bestEffort(maxBytes: Int)
+}
+
+public enum MacClippyPasteRestorePolicy: Equatable, Sendable {
+    /// Leave the written content on the pasteboard after Cmd+V injection.
+    case preserveWritten
+    /// Restore the pre-injection pasteboard snapshot after `delaySeconds` if
+    /// no newer external copy has changed the pasteboard generation.
+    case restoreOriginalAfterInjection(delaySeconds: TimeInterval)
+}
+
 public typealias PasteInjectionResult = MacClippyPasteInjectionResult
 
 extension Notification.Name {
@@ -63,7 +80,7 @@ extension Notification.Name {
 }
 
 public final class MacClippyPasteInjector: @unchecked Sendable {
-    struct PasteboardSnapshot {
+    struct PasteboardSnapshot: @unchecked Sendable {
         let items: [[(type: NSPasteboard.PasteboardType, data: Data)]]
         let isComplete: Bool
         let changeCount: Int
@@ -80,6 +97,8 @@ public final class MacClippyPasteInjector: @unchecked Sendable {
         let validateBeforePaste: (() -> Bool)?
         let validateCommitContext: (() -> Bool)?
         let manualFallback: MacClippyPasteManualFallbackPolicy
+        let snapshotPolicy: MacClippyPasteSnapshotPolicy
+        let restorePolicy: MacClippyPasteRestorePolicy
         let gate: MacClippyPasteInjectionGate?
         let targetProcessIdentifier: Int32?
     }
@@ -153,9 +172,10 @@ public final class MacClippyPasteInjector: @unchecked Sendable {
 
     public func prepareText(
         _ text: String,
-        gate: MacClippyPasteInjectionGate? = nil
+        gate: MacClippyPasteInjectionGate? = nil,
+        snapshotPolicy: MacClippyPasteSnapshotPolicy = .strict
     ) throws {
-        try prepare(.text(text), gate: gate)
+        try prepare(.text(text), gate: gate, snapshotPolicy: snapshotPolicy)
     }
 
     /// Writes text as a user-initiated copy so the pasteboard observer can
@@ -164,23 +184,26 @@ public final class MacClippyPasteInjector: @unchecked Sendable {
     /// suppresses recapture through the write sentinel.
     public func prepareTextForHistory(
         _ text: String,
-        gate: MacClippyPasteInjectionGate? = nil
+        gate: MacClippyPasteInjectionGate? = nil,
+        snapshotPolicy: MacClippyPasteSnapshotPolicy = .strict
     ) throws {
-        try prepareForHistory(.text(text), gate: gate)
+        try prepareForHistory(.text(text), gate: gate, snapshotPolicy: snapshotPolicy)
     }
 
     public func prepare(
         _ content: MacClippyPasteboardContent,
-        gate: MacClippyPasteInjectionGate? = nil
+        gate: MacClippyPasteInjectionGate? = nil,
+        snapshotPolicy: MacClippyPasteSnapshotPolicy = .strict
     ) throws {
-        try prepare(content, gate: gate, sentinel: writeSentinel)
+        try prepare(content, gate: gate, sentinel: writeSentinel, snapshotPolicy: snapshotPolicy)
     }
 
     public func prepareForHistory(
         _ content: MacClippyPasteboardContent,
-        gate: MacClippyPasteInjectionGate? = nil
+        gate: MacClippyPasteInjectionGate? = nil,
+        snapshotPolicy: MacClippyPasteSnapshotPolicy = .strict
     ) throws {
-        try prepare(content, gate: gate, sentinel: nil)
+        try prepare(content, gate: gate, sentinel: nil, snapshotPolicy: snapshotPolicy)
     }
 
     public func inject(
@@ -190,6 +213,8 @@ public final class MacClippyPasteInjector: @unchecked Sendable {
         validateBeforePaste: (() -> Bool)? = nil,
         validateCommitContext: (() -> Bool)? = nil,
         manualFallback: MacClippyPasteManualFallbackPolicy = .prepareClipboard,
+        snapshotPolicy: MacClippyPasteSnapshotPolicy = .strict,
+        restorePolicy: MacClippyPasteRestorePolicy = .preserveWritten,
         gate: MacClippyPasteInjectionGate? = nil,
         targetProcessIdentifier: Int32? = nil
     ) -> MacClippyPasteInjectionResult {
@@ -200,6 +225,8 @@ public final class MacClippyPasteInjector: @unchecked Sendable {
             validateBeforePaste: validateBeforePaste,
             validateCommitContext: validateCommitContext,
             manualFallback: manualFallback,
+            snapshotPolicy: snapshotPolicy,
+            restorePolicy: restorePolicy,
             gate: gate,
             targetProcessIdentifier: targetProcessIdentifier
         )
@@ -215,6 +242,8 @@ public final class MacClippyPasteInjector: @unchecked Sendable {
         validateBeforePaste: (() -> Bool)? = nil,
         validateCommitContext: (() -> Bool)? = nil,
         manualFallback: MacClippyPasteManualFallbackPolicy = .prepareClipboard,
+        snapshotPolicy: MacClippyPasteSnapshotPolicy = .strict,
+        restorePolicy: MacClippyPasteRestorePolicy = .preserveWritten,
         gate: MacClippyPasteInjectionGate? = nil,
         targetProcessIdentifier: Int32? = nil
     ) -> MacClippyPasteInjectionResult {
@@ -224,6 +253,8 @@ public final class MacClippyPasteInjector: @unchecked Sendable {
             validateBeforePaste: validateBeforePaste,
             validateCommitContext: validateCommitContext,
             manualFallback: manualFallback,
+            snapshotPolicy: snapshotPolicy,
+            restorePolicy: restorePolicy,
             gate: gate,
             targetProcessIdentifier: targetProcessIdentifier
         )

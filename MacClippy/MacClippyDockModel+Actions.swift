@@ -126,6 +126,7 @@ extension MacClippyDockModel {
     ) {
         let runtimeReference = runtime
         let targetPID = pasteTargetProcessIdentifier
+        let beforePaste = beforePasteHook
         let name = transform.displayName
         let operation = beginUserOperation()
         let session = sessionGeneration
@@ -139,6 +140,7 @@ extension MacClippyDockModel {
                     id: id,
                     transform: transform,
                     targetProcessIdentifier: targetPID,
+                    beforePaste: beforePaste,
                     sideEffectGate: sideEffectGate
                 )
             }

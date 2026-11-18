@@ -11,13 +11,22 @@ private struct MacClippySelectionSearchRevision {
 extension MacClippyRuntime {
     func canMergeRecords(ids: [RecordID], shouldCancel: () -> Bool) throws -> Bool {
         guard !ids.isEmpty else { return false }
-        for id in ids {
+        for offset in stride(from: 0, to: ids.count, by: Self.selectionRecordIDPageSize) {
             guard !shouldCancel() else { throw CancellationError() }
-            let record = try withStoreLock { try clipboardStore.body(for: id) }
-            switch record {
-            case .text, .html, .rtf: continue
-            case .image, .encryptedImage, .files: return false
+            let end = min(offset + Self.selectionRecordIDPageSize, ids.count)
+            let chunk = Array(ids[offset ..< end])
+            let chunkAllowsMerge = try withStoreLock { () throws -> Bool in
+                for id in chunk {
+                    guard !shouldCancel() else { throw CancellationError() }
+                    let record = try clipboardStore.body(for: id)
+                    switch record {
+                    case .text, .html, .rtf: continue
+                    case .image, .encryptedImage, .files: return false
+                    }
+                }
+                return true
             }
+            if !chunkAllowsMerge { return false }
         }
         return true
     }

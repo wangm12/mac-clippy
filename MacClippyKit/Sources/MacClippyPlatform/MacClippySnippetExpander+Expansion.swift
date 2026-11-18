@@ -58,6 +58,8 @@ extension MacClippySnippetExpander {
                 self?.validateRequestFocus(request, expectedContext: expectedFocusContext) ?? false
             },
             manualFallback: .preserveClipboard,
+            snapshotPolicy: .bestEffort(maxBytes: 4 * 1024 * 1024),
+            restorePolicy: .restoreOriginalAfterInjection(delaySeconds: 0.15),
             gate: request.gate,
             targetProcessIdentifier: request.focusIdentity.processIdentifier
         )
@@ -71,7 +73,18 @@ extension MacClippySnippetExpander {
     }
 
     private func confirmedFocusContext(for request: ExpansionRequest) -> MacClippySnippetFocusContext? {
-        guard let expectedSelection = request.expectedSelection else { return nil }
+        guard let expectedSelection = request.expectedSelection else {
+            // Some Electron, Terminal, and WebView controls omit AXSelectedTextRange
+            // even while AXFocusedUIElement identity is valid. Confirm the focused
+            // element still matches and selection hasn't switched to a tracked value.
+            guard isRequestCurrent(request),
+                  let context = focusContext.currentContext(),
+                  context.identity == request.focusIdentity,
+                  context.selection == nil else {
+                return nil
+            }
+            return context
+        }
         // Passing a key through the tap does not mean the recipient has
         // handled it yet. Allow a short delivery window on the worker, while
         // requiring the exact caret and current generation before any delete.
@@ -96,7 +109,7 @@ extension MacClippySnippetExpander {
         guard request.gate.isOpen, isRequestCurrent(request) else { return false }
         guard let freshContext = focusContext.currentContext(),
               freshContext == expectedContext,
-              freshContext.selection != nil else {
+              expectedContext.selection == nil || freshContext.selection != nil else {
             cancelRequest(request)
             return false
         }

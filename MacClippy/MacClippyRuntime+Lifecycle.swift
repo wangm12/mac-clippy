@@ -254,10 +254,19 @@ extension MacClippyRuntime {
     }
 
     func noteDisplayLifecycleForCapture(_ event: MacClippyDisplayLifecycleEvent) {
-        guard let suspended = MacClippyDisplayGenerationPolicy.shouldSuspendPasteboardPolling(for: event) else {
-            return
+        if let suspended = MacClippyDisplayGenerationPolicy.shouldSuspendPasteboardPolling(for: event) {
+            observer.setPollingSuspended(suspended)
         }
-        observer.setPollingSuspended(suspended)
+        switch event {
+        case .screensDidSleep:
+            setOCRSuspendedForDisplaySleep(true)
+            setSnippetDisplayAsleep(true)
+        case .screensDidWake, .didWake:
+            setOCRSuspendedForDisplaySleep(false)
+            setSnippetDisplayAsleep(false)
+        case .screenParametersChanged:
+            break
+        }
     }
 
     func ignoreNextCopy() {
@@ -317,6 +326,21 @@ extension MacClippyRuntime {
         timer?.cancel()
     }
 
+    func scheduleSnippetExpanderRefresh() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isRunning else { return }
+            self.refreshPermissionDependentFeatures()
+        }
+    }
+
+    func setSnippetDisplayAsleep(_ asleep: Bool) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.displayIsAsleepForSnippets = asleep
+            self.refreshPermissionDependentFeatures()
+        }
+    }
+
     func refreshPermissionDependentFeatures() {
         guard Thread.isMainThread else {
             DispatchQueue.main.sync { [self] in refreshPermissionDependentFeatures() }
@@ -326,7 +350,9 @@ extension MacClippyRuntime {
         defer { lifecycleLock.unlock() }
 
         guard isLifecycleRunning() else { return }
-        guard snippetExpansionEnabled else {
+        guard snippetExpansionEnabled,
+              !displayIsAsleepForSnippets,
+              snippetLookupSnapshot.hasTriggers else {
             snippetExpander.stop()
             return
         }

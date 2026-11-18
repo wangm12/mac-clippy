@@ -232,6 +232,75 @@ extension MacClippyClipboardStore {
         )
     }
 
+    /// Reads retention accounting for already-verified rows via SQL byte lengths
+    /// and indexed blob references without decrypting the record envelope.
+    /// Falls back to `storageFootprint(for:)` when a row is unverified.
+    public func verifiedRetentionFootprint(for id: RecordID) throws -> MacClippyStoredPayloadFootprint {
+        let verifiedResult = try database.queue.read { connection -> MacClippyStoredPayloadFootprint? in
+            try verifiedRowFootprint(id: id, on: connection)
+        }
+        if let verifiedResult {
+            return verifiedResult
+        }
+        return try storageFootprint(for: id)
+    }
+
+    private func verifiedRowFootprint(
+        id: RecordID,
+        on connection: Database
+    ) throws -> MacClippyStoredPayloadFootprint? {
+        guard let row = try Row.fetchOne(
+            connection,
+            sql: """
+                SELECT OCTET_LENGTH(envelope) AS envelope_bytes,
+                       content_kind,
+                       primary_blob_id,
+                       blob_references_verified
+                FROM clipboard_records
+                WHERE id = ?
+                """,
+            arguments: [id.rawValue]
+        ) else {
+            throw MacClippyStoreError.recordNotFound
+        }
+        guard let verified: Int = row["blob_references_verified"] else {
+            throw MacClippyStoreError.invalidStoredRecord
+        }
+        guard verified == 1 else {
+            return nil
+        }
+        guard let rawContentKind: String = row["content_kind"],
+              MacClippyContentKind(rawValue: rawContentKind) != nil,
+              let envelopeBytes: Int = row["envelope_bytes"] else {
+            throw MacClippyStoreError.invalidStoredRecord
+        }
+        let primaryBlobID: String? = row["primary_blob_id"]
+        let inlineBytes: Int = try Int.fetchOne(
+            connection,
+            sql: """
+                SELECT COALESCE(SUM(OCTET_LENGTH(payload)), 0)
+                FROM clipboard_representations WHERE record_id = ?
+                """,
+            arguments: [id.rawValue]
+        ) ?? 0
+        let spilledBlobIDs = try String.fetchAll(
+            connection,
+            sql: """
+                SELECT DISTINCT blob_id FROM clipboard_representations
+                WHERE record_id = ? AND blob_id IS NOT NULL
+                """,
+            arguments: [id.rawValue]
+        )
+        var blobIDs = Set(spilledBlobIDs)
+        if let primaryBlobID {
+            blobIDs.insert(primaryBlobID)
+        }
+        return MacClippyStoredPayloadFootprint(
+            inlineBytes: envelopeBytes + inlineBytes,
+            blobIDs: blobIDs
+        )
+    }
+
     public func delete(id: RecordID) throws {
         try database.queue.write { connection in
             try connection.execute(sql: "DELETE FROM clipboard_records WHERE id = ?", arguments: [id.rawValue])

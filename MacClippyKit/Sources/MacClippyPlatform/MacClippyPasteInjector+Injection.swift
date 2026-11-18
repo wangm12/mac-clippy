@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Carbon.HIToolbox
 import CoreGraphics
 import Foundation
 
@@ -54,7 +55,7 @@ private extension MacClippyPasteInjector {
         request: InjectionRequest
     ) -> PasteInjectionPlanResult {
         guard request.gate?.isOpen != false else { return .finished(.cancelled) }
-        let original = snapshotPasteboard(pasteboard)
+        let original = snapshotPasteboard(pasteboard, policy: request.snapshotPolicy)
         guard original.isComplete else { return .finished(.failed(.incompleteClipboard)) }
         guard let prepared = preparedSnapshot(for: content) else {
             return .finished(.failed(.preparationFailed))
@@ -167,8 +168,16 @@ private extension MacClippyPasteInjector {
             expectedPasteboardChangeCount: ownedChangeCount,
             afterPasteEvents: request.afterPasteEvents
         )
-        guard result == .cancelled else { return result }
-        return restoreAndReturn(plan, result: .cancelled)
+        if result == .cancelled {
+            return restoreAndReturn(plan, result: .cancelled)
+        }
+        scheduleRestoreIfNeeded(
+            plan,
+            ownedChangeCount: ownedChangeCount,
+            result: result,
+            policy: request.restorePolicy
+        )
+        return result
     }
 
     func commitPreflightFailure(
@@ -216,6 +225,12 @@ private extension MacClippyPasteInjector {
         }
         switch committed {
         case .injected:
+            scheduleRestoreIfNeeded(
+                plan,
+                ownedChangeCount: ownedChangeCount,
+                result: .injected,
+                policy: request.restorePolicy
+            )
             return .injected
         case .cancelled:
             return restoreAndReturn(plan, result: .cancelled)
@@ -329,10 +344,34 @@ private extension MacClippyPasteInjector {
         validation?() ?? true
     }
 
+    func scheduleRestoreIfNeeded(
+        _ plan: PasteInjectionPlan,
+        ownedChangeCount: Int,
+        result: MacClippyPasteInjectionResult,
+        policy: MacClippyPasteRestorePolicy
+    ) {
+        guard result == .injected,
+              case let .restoreOriginalAfterInjection(delaySeconds) = policy else {
+            return
+        }
+        let clampedDelay = max(0, delaySeconds)
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + clampedDelay) { [weak self] in
+            guard let self else { return }
+            self.withOperationLock {
+                _ = self.restore(plan.original, onlyIfChangeCountIs: ownedChangeCount)
+            }
+        }
+    }
+
+    static func resolvedPasteVirtualKeyCode() -> CGKeyCode {
+        refreshPasteVirtualKeyCodeOnMain()
+    }
+
     func pasteEvents() -> PasteEvents? {
+        let virtualKey = Self.resolvedPasteVirtualKeyCode()
         guard let source = CGEventSource(stateID: .hidSystemState),
-              let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else {
+              let keyDown = CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: false) else {
             return nil
         }
         keyDown.flags = .maskCommand

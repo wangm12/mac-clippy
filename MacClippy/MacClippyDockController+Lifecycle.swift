@@ -48,6 +48,7 @@ extension MacClippyDockController {
         // from a previous dock session cannot mutate state or close this newly
         // opened dock.
         model.beginSession()
+        model.runtime.observer.pollImmediatelyIfRunning()
         model.reload()
         MacClippyLog.notice(
             category: .ui,
@@ -78,6 +79,7 @@ extension MacClippyDockController {
         _ = beginAnimation(.showing)
         resetPanelAnimationState(dockPanel)
         isClosing = false
+        didOrderOutBeforePaste = false
         dockPanel.contentView?.frame = NSRect(origin: .zero, size: frame.size)
         dockPanel.contentView?.autoresizingMask = [.width, .height]
         // Keep the window still. Window-frame slides resample glass every tick;
@@ -162,7 +164,7 @@ extension MacClippyDockController {
         )
     }
 
-    private func makeDockPanel(frame: NSRect) -> MacClippyDockPanel {
+    func makeDockPanel(frame: NSRect) -> MacClippyDockPanel {
         if let existing = panel {
             return existing
         }
@@ -266,12 +268,21 @@ extension MacClippyDockController {
     }
 
     func hide(reason: MacClippyDockHideReason = .command, completion: (() -> Void)? = nil) {
-        guard let dockPanel = panel, dockPanel.isVisible, !isClosing else { return }
+        guard let dockPanel = panel,
+              dockPanel.isVisible || didOrderOutBeforePaste,
+              !isClosing else { return }
         guard hideDetails() else { return }
+        let orderedOutAlready = didOrderOutBeforePaste
+        didOrderOutBeforePaste = false
         traceE2EFocus("hide-\(reason)", location: NSEvent.mouseLocation)
         prepareForHide(reason: reason)
         completion?()
-        animateHide(dockPanel, reason: reason)
+        if orderedOutAlready || !dockPanel.isVisible {
+            let transaction = beginAnimation(.hiding)
+            hideCompletion(for: dockPanel, transaction: transaction)()
+        } else {
+            animateHide(dockPanel, reason: reason)
+        }
     }
 
     private func prepareForHide(reason: MacClippyDockHideReason) {
@@ -365,35 +376,5 @@ extension MacClippyDockController {
             duration: MacClippyMotion.exitDuration,
             timingFunction: MacClippyMotion.exitTimingFunction
         )
-    }
-
-    func rebuildVisibleGlassSurfaces() {
-        guard isVisible, !isClosing else { return }
-        guard let screen = screenContainingCursor() ?? NSScreen.main else { return }
-        model.prepareForSurfaceRebuild()
-        stopMonitors()
-        discardPanelSurfaces()
-        let frame = MacClippyDockFramePolicy.frame(
-            for: screen.frame,
-            hasMultipleSelection: model.hasMultipleSelection
-        )
-        let dockPanel = makeDockPanel(frame: frame)
-        dockPanel.contentView?.frame = NSRect(origin: .zero, size: frame.size)
-        dockPanel.contentView?.autoresizingMask = [.width, .height]
-        dockPanel.setFrame(frame, display: false, animate: false)
-        configurePanelLayer(dockPanel)
-        resetPanelAnimationState(dockPanel)
-        setPanelLayerState(
-            dockPanel,
-            backdropOpacity: 1,
-            foregroundOpacity: 1,
-            scale: 1,
-            shadowOpacity: MacClippyMotion.panelShadowOpacity
-        )
-        dockPanel.interceptsPickerKeys = true
-        dockPanel.makeKeyAndOrderFront(nil)
-        takeKeyboardOwnership(of: dockPanel)
-        startMonitors()
-        handleScreenParametersChanged()
     }
 }

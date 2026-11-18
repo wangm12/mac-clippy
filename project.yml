@@ -21,6 +21,10 @@ settings:
       ENABLE_HARDENED_RUNTIME: YES
     Release:
       DEAD_CODE_STRIPPING: YES
+      DEPLOYMENT_POSTPROCESSING: YES
+      STRIP_INSTALLED_PRODUCT: YES
+      STRIP_STYLE: non-global
+      COPY_PHASE_STRIP: NO
       ENABLE_HARDENED_RUNTIME: YES
       CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
 
@@ -71,6 +75,14 @@ targets:
       - path: MacClippy/MacClippySettingsDefaultsProvider.swift
       - path: MacClippy/MacClippySettingsPreferences.swift
       - path: MacClippy/MacClippySettings+Sections.swift
+      - path: MacClippy/MacClippySettings+Components.swift
+      - path: MacClippy/MacClippySettings+CloudBackup.swift
+      - path: MacClippy/MacClippySettings+CloudBackupSheets.swift
+      - path: MacClippy/MacClippyCloudBackupKeychain.swift
+      - path: MacClippy/MacClippyCloudBackupManager.swift
+      - path: MacClippy/MacClippyGoogleDriveClient.swift
+      - path: MacClippy/MacClippyGoogleDriveClient+OAuth.swift
+      - path: MacClippy/MacClippyBackupPassphrasePrompt.swift
       - path: MacClippy/MacClippySettings+Permissions.swift
       - path: MacClippy/MacClippySettings+Maintenance.swift
       - path: MacClippy/MacClippyPresentationPolicy.swift
