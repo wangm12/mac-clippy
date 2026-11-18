@@ -25,6 +25,7 @@ import Foundation
 // protected by `lock`. `beginWrite` and `consume` must remain synchronous so
 // a pasteboard write and its observer token are registered in one call path.
 public final class MacClippyPasteboardWriteSentinel: @unchecked Sendable {
+    private static let maximumPendingChangeCounts = 32
     private let lock = NSLock()
     // changeCount is monotonic per NSPasteboard instance, so a small ring of
     // pending tokens is enough to cover back-to-back writes (e.g. copy then
@@ -41,6 +42,10 @@ public final class MacClippyPasteboardWriteSentinel: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         pendingChangeCounts.insert(changeCount)
+        if pendingChangeCounts.count > Self.maximumPendingChangeCounts,
+           let oldestChangeCount = pendingChangeCounts.min() {
+            pendingChangeCounts.remove(oldestChangeCount)
+        }
     }
 
     // Returns true exactly once per registered changeCount so the observer
@@ -51,6 +56,17 @@ public final class MacClippyPasteboardWriteSentinel: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return pendingChangeCounts.remove(changeCount) != nil
+    }
+
+    /// Consumes an exact token for the current generation and prunes tokens
+    /// from older generations in the same critical section. Future tokens are
+    /// retained if a writer registers them while an observer is restarting.
+    public func consumeAndPrune(through changeCount: Int) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        let matched = pendingChangeCounts.remove(changeCount) != nil
+        pendingChangeCounts = pendingChangeCounts.filter { $0 > changeCount }
+        return matched
     }
 
     /// Removes a token when a stamped write did not reach the pasteboard.
@@ -70,8 +86,9 @@ public final class MacClippyPasteboardWriteSentinel: @unchecked Sendable {
         return pendingChangeCounts.count
     }
 
-    // Drop every pending token. Used by the observer when it is stopped so a
-    // restart does not inherit stale tokens from a previous session.
+    // Drop every pending token after the observer checks whether the current
+    // generation belongs to Mac Clippy. Older tokens cannot match a monotonic
+    // changeCount and should not cross observer lifecycles.
     public func reset() {
         lock.lock()
         defer { lock.unlock() }
@@ -91,7 +108,8 @@ public enum MacClippyPasteboardWriteCoordinator {
         sentinel: MacClippyPasteboardWriteSentinel,
         preparer: (MacClippyPasteboardContent, NSPasteboard) -> Bool = MacClippyPasteboardPreparer.prepare(_:on:)
     ) -> Bool {
-        let expected = pasteboard.changeCount + 1
+        guard let changeCount = try? MacClippyNativePasteboard.changeCount(of: pasteboard) else { return false }
+        let expected = changeCount + 1
         sentinel.beginWrite(expectedChangeCount: expected)
         let prepared = preparer(content, pasteboard)
         if !prepared {

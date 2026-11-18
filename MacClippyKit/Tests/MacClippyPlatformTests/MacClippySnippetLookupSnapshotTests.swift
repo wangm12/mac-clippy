@@ -20,4 +20,5 @@ final class MacClippySnippetLookupSnapshotTests: XCTestCase {
         XCTAssertNil(snapshot.body(for: ";one"))
         XCTAssertEqual(snapshot.body(for: ";two"), "two")
     }
+
 }

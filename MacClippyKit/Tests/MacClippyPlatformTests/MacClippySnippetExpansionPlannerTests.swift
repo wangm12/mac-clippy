@@ -5,7 +5,22 @@ import MacClippyCore
 import MacClippyPlatform
 
 final class MacClippySnippetExpansionPlannerTests: XCTestCase {
-    func testAutoModeExpandsOnWhitespaceAndSuppressesDelimiter() {
+    func testAutoModeWaitsForSpaceAfterTheCompleteTrigger() {
+        var planner = planner(mode: .autoExpand)
+        typeCharacters(";email", into: &planner)
+
+        XCTAssertEqual(
+            planner.handle(" "),
+            MacClippySnippetExpansionPlan(
+                body: "hello@example.com",
+                charactersToDelete: 7,
+                suppressCurrentEvent: false
+            )
+        )
+        XCTAssertNil(planner.handle(" "), "a completed expansion must not fire twice")
+    }
+
+    func testAutoModePassesWhitespaceAndIncludesItInTheExpansionCommit() {
         var planner = planner(mode: .autoExpand)
 
         typeCharacters(";email", into: &planner)
@@ -14,27 +29,20 @@ final class MacClippySnippetExpansionPlannerTests: XCTestCase {
             planner.handle(" "),
             MacClippySnippetExpansionPlan(
                 body: "hello@example.com",
-                charactersToDelete: 6,
-                suppressCurrentEvent: true,
-                suppressedDelimiterKeyCode: UInt16(kVK_Space)
+                charactersToDelete: 7,
+                suppressCurrentEvent: false,
+                suppressedDelimiterKeyCode: nil
             )
         )
     }
 
-    func testAutoModeExpandsOnReturnAndSuppressesDelimiter() {
+    func testAutoModeDoesNotExpandOnReturnTabOrOtherWhitespace() {
         var planner = planner(mode: .autoExpand)
-
-        typeCharacters(";email", into: &planner)
-
-        XCTAssertEqual(
-            planner.handle("\n", keyCode: UInt16(kVK_Return)),
-            MacClippySnippetExpansionPlan(
-                body: "hello@example.com",
-                charactersToDelete: 6,
-                suppressCurrentEvent: true,
-                suppressedDelimiterKeyCode: UInt16(kVK_Return)
-            )
-        )
+        for delimiter in [Character("\n"), "\r", "\t", "\u{00a0}"] {
+            typeCharacters(";email", into: &planner)
+            XCTAssertNil(planner.handle(delimiter))
+            XCTAssertNil(planner.handle(" "), "other delimiters must reset the pending trigger")
+        }
     }
 
     func testConfirmWithTabExpandsOnlyOnTab() {
@@ -55,6 +63,23 @@ final class MacClippySnippetExpansionPlannerTests: XCTestCase {
         )
     }
 
+    func testSharedPrefixDoesNotPreventTypingLongerTrigger() {
+        let snapshot = MacClippySnippetLookupSnapshot()
+        snapshot.replace(with: [
+            Snippet(name: "Short", body: "short", trigger: ";out"),
+            Snippet(name: "Long", body: "long", trigger: ";outlook")
+        ])
+        var planner = MacClippySnippetExpansionPlanner(
+            mode: .autoExpand,
+            lookup: { snapshot.body(for: $0) }
+        )
+        typeCharacters(";outlook", into: &planner)
+        XCTAssertEqual(planner.handle(" ")?.body, "long")
+
+        typeCharacters(";out", into: &planner)
+        XCTAssertEqual(planner.handle(" ")?.body, "short")
+    }
+
     func testDisabledModeNeverExpands() {
         var planner = planner(mode: .disabled)
         typeCharacters(";email", into: &planner)
@@ -70,7 +95,7 @@ final class MacClippySnippetExpansionPlannerTests: XCTestCase {
         XCTAssertNil(planner.handle(" "))
 
         typeCharacters(";email", into: &planner)
-        XCTAssertNotNil(planner.handle("\n"))
+        XCTAssertNotNil(planner.handle(" "))
     }
 
     func testDisqualifyingModifiersPreventExpansionAndResetBuffer() {
@@ -78,11 +103,14 @@ final class MacClippySnippetExpansionPlannerTests: XCTestCase {
         typeCharacters(";email", into: &planner)
 
         XCTAssertNil(planner.handle(" ", hasDisqualifyingModifiers: true))
+        XCTAssertNil(planner.handle(" "))
         typeCharacters(";email", into: &planner)
         XCTAssertNotNil(planner.handle(" "))
     }
 
-    private func planner(mode: MacClippySnippetExpansionMode) -> MacClippySnippetExpansionPlanner {
+    private func planner(
+        mode: MacClippySnippetExpansionMode
+    ) -> MacClippySnippetExpansionPlanner {
         MacClippySnippetExpansionPlanner(mode: mode) { trigger in
             trigger == ";email" ? "hello@example.com" : nil
         }

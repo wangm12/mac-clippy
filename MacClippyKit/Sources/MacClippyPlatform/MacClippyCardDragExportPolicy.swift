@@ -1,6 +1,22 @@
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 
 import MacClippyCore
+
+public enum MacClippyCardDragExportError: Error, LocalizedError {
+    case invalidImageData
+    case imageEncodingFailed
+
+    public var errorDescription: String? {
+        switch self {
+        case .invalidImageData:
+            "The clipboard image could not be decoded."
+        case .imageEncodingFailed:
+            "The clipboard image could not be encoded as PNG."
+        }
+    }
+}
 
 public struct MacClippyCardDragPayload: Equatable, Sendable {
     public let typeIdentifier: String
@@ -21,41 +37,124 @@ public enum MacClippyCardDragExportPolicy {
         recordID: RecordID,
         content: MacClippyPasteboardContent
     ) -> MacClippyCardDragPayload? {
+        try? payloadThrowing(for: representation, recordID: recordID, content: content)
+    }
+
+    /// Resolves a drag payload and preserves image conversion failures so the
+    /// NSItemProvider can report them to the requesting app.
+    public static func payloadThrowing(
+        for representation: MacClippyCardDragRepresentation,
+        recordID: RecordID,
+        content: MacClippyPasteboardContent
+    ) throws -> MacClippyCardDragPayload? {
         switch representation {
         case .recordID:
-            return MacClippyCardDragPayload(
-                typeIdentifier: MacClippyCardDragPolicy.recordTypeIdentifier,
-                data: Data(recordID.rawValue.utf8)
-            )
+            return recordPayload(recordID)
         case .plainText:
-            guard let text = plainText(from: content) else { return nil }
-            return MacClippyCardDragPayload(
-                typeIdentifier: MacClippyCardDragPolicy.typeIdentifier(for: .plainText),
-                data: Data(text.utf8)
-            )
+            return plainTextPayload(from: content)
         case .rtf:
-            guard case let .rtf(data, _) = content else { return nil }
-            return MacClippyCardDragPayload(
-                typeIdentifier: MacClippyCardDragPolicy.typeIdentifier(for: .rtf),
-                data: data
-            )
+            return rtfPayload(from: content)
         case .html:
-            guard case let .html(value, _) = content else { return nil }
-            return MacClippyCardDragPayload(
-                typeIdentifier: MacClippyCardDragPolicy.typeIdentifier(for: .html),
-                data: Data(value.utf8)
-            )
+            return htmlPayload(from: content)
         case .image:
-            guard case let .image(data) = content else { return nil }
-            let image = imageRepresentation(for: data)
-            return MacClippyCardDragPayload(typeIdentifier: image.typeIdentifier, data: image.data)
+            return try imagePayload(from: content)
         case .fileURL:
-            guard case let .files(urls) = content, let url = urls.first else { return nil }
-            return MacClippyCardDragPayload(
-                typeIdentifier: MacClippyCardDragPolicy.typeIdentifier(for: .fileURL),
-                data: Data(url.absoluteString.utf8)
-            )
+            return fileURLPayload(from: content)
         }
+    }
+
+    private static func recordPayload(_ id: RecordID) -> MacClippyCardDragPayload {
+        MacClippyCardDragPayload(
+            typeIdentifier: MacClippyCardDragPolicy.recordTypeIdentifier,
+            data: Data(id.rawValue.utf8)
+        )
+    }
+
+    private static func plainTextPayload(from content: MacClippyPasteboardContent) -> MacClippyCardDragPayload? {
+        guard let text = plainText(from: content) else { return nil }
+        return MacClippyCardDragPayload(
+            typeIdentifier: MacClippyCardDragPolicy.typeIdentifier(for: .plainText),
+            data: Data(text.utf8)
+        )
+    }
+
+    private static func rtfPayload(from content: MacClippyPasteboardContent) -> MacClippyCardDragPayload? {
+        let data: Data
+        switch content {
+        case let .rtf(value, _):
+            data = value
+        case let .items(items):
+            guard let value = firstData(for: "public.rtf", in: items) else { return nil }
+            data = value
+        default:
+            return nil
+        }
+        return MacClippyCardDragPayload(
+            typeIdentifier: MacClippyCardDragPolicy.typeIdentifier(for: .rtf),
+            data: data
+        )
+    }
+
+    private static func htmlPayload(from content: MacClippyPasteboardContent) -> MacClippyCardDragPayload? {
+        let html: String
+        switch content {
+        case let .html(value, _):
+            html = value
+        case let .items(items):
+            guard let data = firstData(for: "public.html", in: items),
+                  let value = String(data: data, encoding: .utf8) else { return nil }
+            html = value
+        default:
+            return nil
+        }
+        return MacClippyCardDragPayload(
+            typeIdentifier: MacClippyCardDragPolicy.typeIdentifier(for: .html),
+            data: Data(html.utf8)
+        )
+    }
+
+    private static func imagePayload(from content: MacClippyPasteboardContent) throws -> MacClippyCardDragPayload? {
+        let candidates: [Data]
+        switch content {
+        case let .image(value):
+            candidates = [value]
+        case let .items(items):
+            candidates = imageDataCandidates(in: items)
+        default:
+            return nil
+        }
+        guard !candidates.isEmpty else { return nil }
+
+        var lastError: Error?
+        for data in candidates {
+            do {
+                return MacClippyCardDragPayload(
+                    typeIdentifier: UTType.png.identifier,
+                    data: try pngRepresentation(for: data)
+                )
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError ?? MacClippyCardDragExportError.invalidImageData
+    }
+
+    private static func fileURLPayload(from content: MacClippyPasteboardContent) -> MacClippyCardDragPayload? {
+        let data: Data
+        switch content {
+        case let .files(urls):
+            guard let url = urls.first else { return nil }
+            data = Data(url.absoluteString.utf8)
+        case let .items(items):
+            guard let value = firstData(for: "public.file-url", in: items) else { return nil }
+            data = value
+        default:
+            return nil
+        }
+        return MacClippyCardDragPayload(
+            typeIdentifier: MacClippyCardDragPolicy.typeIdentifier(for: .fileURL),
+            data: data
+        )
     }
 
     private static func plainText(from content: MacClippyPasteboardContent) -> String? {
@@ -64,18 +163,77 @@ public enum MacClippyCardDragExportPolicy {
             return value
         case let .html(_, plainText), let .rtf(_, plainText):
             return plainText
+        case let .items(items):
+            if let data = firstData(for: "public.utf8-plain-text", in: items),
+               let text = String(data: data, encoding: .utf8) {
+                return text
+            }
+            if let data = firstData(for: "public.html", in: items),
+               let html = String(data: data, encoding: .utf8) {
+                return MacClippyClipboardText.plainText(from: .html(html))
+            }
+            if let data = firstData(for: "public.rtf", in: items) {
+                return MacClippyClipboardText.plainText(from: .rtf(data))
+            }
+            return nil
         case .image, .files:
             return nil
         }
     }
 
-    private static func imageRepresentation(for data: Data) -> (typeIdentifier: String, data: Data) {
+    private static func firstData(for uti: String, in items: [PasteboardItem]) -> Data? {
+        items.first { $0.data(forType: uti) != nil }?.data(forType: uti)
+    }
+
+    private static func firstData(for utis: [String], in items: [PasteboardItem]) -> Data? {
+        for item in items {
+            for uti in utis {
+                if let data = item.data(forType: uti) { return data }
+            }
+        }
+        return nil
+    }
+
+    private static func imageDataCandidates(in items: [PasteboardItem]) -> [Data] {
+        var result: [Data] = []
+        for item in items {
+            let imageTypes = item.types
+                .filter { UTType($0)?.conforms(to: .image) == true }
+                .sorted { lhs, rhs in
+                    lhs == UTType.png.identifier && rhs != UTType.png.identifier
+                }
+            for type in imageTypes {
+                if let data = item.data(forType: type) { result.append(data) }
+            }
+        }
+        return result
+    }
+
+    private static func pngRepresentation(for data: Data) throws -> Data {
         if data.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
-            return ("public.png", data)
+            return data
         }
-        if data.starts(with: [0x49, 0x49, 0x2A, 0x00]) || data.starts(with: [0x4D, 0x4D, 0x00, 0x2A]) {
-            return ("public.tiff", data)
+
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let sourceType = CGImageSourceGetType(source),
+              UTType(sourceType as String)?.conforms(to: .image) == true,
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            throw MacClippyCardDragExportError.invalidImageData
         }
-        return (MacClippyCardDragPolicy.typeIdentifier(for: .image), data)
+
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            output as CFMutableData,
+            UTType.png.identifier as CFString,
+            1,
+            nil
+        ) else {
+            throw MacClippyCardDragExportError.imageEncodingFailed
+        }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            throw MacClippyCardDragExportError.imageEncodingFailed
+        }
+        return output as Data
     }
 }

@@ -7,6 +7,7 @@ public enum MacClippyPasteboardContent: Equatable, Sendable {
     case rtf(Data, plainText: String)
     case image(Data)
     case files([URL])
+    case items([PasteboardItem])
 }
 
 public enum MacClippyPasteboardPreparer {
@@ -18,23 +19,106 @@ public enum MacClippyPasteboardPreparer {
         _ content: MacClippyPasteboardContent,
         on pasteboard: NSPasteboard
     ) -> Bool {
-        pasteboard.clearContents()
+        guard (try? MacClippyNativePasteboard.clear(pasteboard)) != nil else { return false }
+        return prepareContent(content, on: pasteboard)
+    }
 
+    private static func prepareContent(
+        _ content: MacClippyPasteboardContent,
+        on pasteboard: NSPasteboard
+    ) -> Bool {
         switch content {
         case let .text(value):
-            return pasteboard.setString(value, forType: .string)
+            return writeText(value, to: pasteboard)
         case let .html(value, plainText):
-            return pasteboard.setString(plainText, forType: .string)
-                && pasteboard.setString(value, forType: .html)
+            return writeHTML(value, plainText: plainText, to: pasteboard)
         case let .rtf(data, plainText):
-            return pasteboard.setString(plainText, forType: .string)
-                && pasteboard.setData(data, forType: .rtf)
+            return writeRTF(data, plainText: plainText, to: pasteboard)
         case let .image(data):
-            let representation = imageRepresentation(for: data)
-            return pasteboard.setData(representation.data, forType: representation.type)
+            return writeImage(data, to: pasteboard)
         case let .files(urls):
-            return pasteboard.writeObjects(urls as [NSURL])
+            return writeFiles(urls, to: pasteboard)
+        case let .items(items):
+            return writeItems(items, to: pasteboard)
         }
+    }
+
+    private static func writeText(_ value: String, to pasteboard: NSPasteboard) -> Bool {
+        writeSingleItem(to: pasteboard) { item in
+            try MacClippyNativePasteboard.set(value, on: item, forType: .string)
+        }
+    }
+
+    private static func writeHTML(
+        _ value: String,
+        plainText: String,
+        to pasteboard: NSPasteboard
+    ) -> Bool {
+        writeSingleItem(to: pasteboard) { item in
+            try MacClippyNativePasteboard.set(plainText, on: item, forType: .string)
+                && MacClippyNativePasteboard.set(value, on: item, forType: .html)
+        }
+    }
+
+    private static func writeRTF(
+        _ data: Data,
+        plainText: String,
+        to pasteboard: NSPasteboard
+    ) -> Bool {
+        writeSingleItem(to: pasteboard) { item in
+            try MacClippyNativePasteboard.set(plainText, on: item, forType: .string)
+                && MacClippyNativePasteboard.set(data, on: item, forType: .rtf)
+        }
+    }
+
+    private static func writeImage(_ data: Data, to pasteboard: NSPasteboard) -> Bool {
+        let representation = imageRepresentation(for: data)
+        return writeSingleItem(to: pasteboard) { item in
+            try MacClippyNativePasteboard.set(
+                representation.data,
+                on: item,
+                forType: representation.type
+            )
+        }
+    }
+
+    private static func writeFiles(_ urls: [URL], to pasteboard: NSPasteboard) -> Bool {
+        (try? MacClippyNativePasteboard.write(urls as [NSURL], to: pasteboard)) ?? false
+    }
+
+    private static func writeItems(_ items: [PasteboardItem], to pasteboard: NSPasteboard) -> Bool {
+        let nativeItems = items.compactMap(makeNativeItem)
+        guard !nativeItems.isEmpty, nativeItems.count == items.count else { return false }
+        return (try? MacClippyNativePasteboard.write(nativeItems, to: pasteboard)) ?? false
+    }
+
+    private static func makeNativeItem(_ source: PasteboardItem) -> NSPasteboardItem? {
+        let item = NSPasteboardItem()
+        for type in source.types {
+            guard let data = source.data(forType: type) else { continue }
+            guard (try? MacClippyNativePasteboard.set(
+                data,
+                on: item,
+                forType: NSPasteboard.PasteboardType(type)
+            )) == true else { return nil }
+        }
+        return item
+    }
+
+    private static func writeSingleItem(
+        to pasteboard: NSPasteboard,
+        configure: (NSPasteboardItem) throws -> Bool
+    ) -> Bool {
+        guard let item = makeItem(configure) else { return false }
+        return (try? MacClippyNativePasteboard.write([item], to: pasteboard)) ?? false
+    }
+
+    private static func makeItem(
+        _ configure: (NSPasteboardItem) throws -> Bool
+    ) -> NSPasteboardItem? {
+        let item = NSPasteboardItem()
+        guard (try? configure(item)) == true else { return nil }
+        return item
     }
 
     private static func imageRepresentation(for data: Data) -> (data: Data, type: NSPasteboard.PasteboardType) {

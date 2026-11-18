@@ -1,5 +1,10 @@
 import Foundation
 
+struct MacClippyRetentionDeletionResult {
+    let recordIDs: [RecordID]
+    let reclaimedBlobIDs: Set<String>
+}
+
 extension MacClippyRetentionPolicy {
     static let metadataPageSize = 256
 
@@ -38,8 +43,14 @@ extension MacClippyRetentionPolicy {
         shouldContinue: @escaping () -> Bool = { true },
         withCommitFence: (() throws -> Void) throws -> Void,
         revalidateIDs: (([RecordID]) throws -> [RecordID])? = nil
-    ) throws -> [RecordID] {
+    ) throws -> MacClippyRetentionDeletionResult {
         var deletedIDs: [RecordID] = []
+        var reclaimedBlobIDs = Set<String>()
+        guard shouldContinue() else {
+            return MacClippyRetentionDeletionResult(recordIDs: deletedIDs, reclaimedBlobIDs: reclaimedBlobIDs)
+        }
+        try store.authenticateOwnedBlobReferenceIndexForRetention(shouldContinue: shouldContinue)
+        try store.authenticateRetentionCandidates(ids, shouldContinue: shouldContinue)
         try withCommitFence {
             guard !ids.isEmpty else { return }
             guard shouldContinue() else { return }
@@ -47,7 +58,10 @@ extension MacClippyRetentionPolicy {
             let protectedFilteredIDs = ids.filter { !protectedIDs.contains($0) }
             let deletableIDs = try revalidateIDs?(protectedFilteredIDs) ?? protectedFilteredIDs
             guard !deletableIDs.isEmpty else { return }
-            guard let journal = try store.beginDeletion(ids: deletableIDs) else { return }
+            guard let journal = try store.beginDeletion(
+                ids: deletableIDs,
+                allowUnprovenLegacyReferences: true
+            ) else { return }
 
             // Keep the journal until every secondary store and blob cleanup step
             // succeeds. If the process is killed at any point, startup can replay
@@ -60,12 +74,18 @@ extension MacClippyRetentionPolicy {
             }
 
             guard shouldContinue() else { return }
-            let unreferenced = try store.unreferencedBlobIDs(journal.blobIDs, shouldContinue: shouldContinue)
+            let unreferenced = try store.unreferencedBlobIDsWithoutBackfill(
+                journal.blobIDs,
+                shouldContinue: shouldContinue
+            )
             for blobID in unreferenced {
                 try blobs.delete(id: blobID)
             }
+            // Return the exact set proven unreferenced and passed to BlobStore
+            // while the commit fence still prevents a concurrent owner update.
+            reclaimedBlobIDs = unreferenced
             try store.completeDeletion(operationID: journal.operationID)
         }
-        return deletedIDs
+        return MacClippyRetentionDeletionResult(recordIDs: deletedIDs, reclaimedBlobIDs: reclaimedBlobIDs)
     }
 }

@@ -1,0 +1,20 @@
+excluded:
+  - .build
+  - .tools
+  - MacClippyKit/.build
+  - .swiftlint-baseline.yml
+
+identifier_name:
+  excluded:
+    - id
+    - x
+    - y
+    - i
+    - j
+    - k
+    - ok
+    - db
+    - to
+    - lm
+    - tc
+    - h

@@ -74,9 +74,11 @@ struct MacClippyAppKitSearchField: NSViewRepresentable {
         var parent: MacClippyAppKitSearchField?
         var lastCollapseToken = 0
         var lastProgrammaticSyncToken = 0
+        private weak var field: MacClippyIMESearchField?
         private var lastComposing: Bool?
 
         func attach(to field: MacClippyIMESearchField, parent: MacClippyAppKitSearchField) {
+            self.field = field
             self.parent = parent
             field.coordinator = self
         }
@@ -100,6 +102,7 @@ struct MacClippyAppKitSearchField: NSViewRepresentable {
             guard let parent, parent.isFocused != focused else { return }
             DispatchQueue.main.async { [weak self] in
                 guard let parent = self?.parent, parent.isFocused != focused else { return }
+                if let field = self?.field, field.isEditing != focused { return }
                 parent.onFocusChange(focused)
             }
         }
@@ -123,7 +126,10 @@ struct MacClippyAppKitSearchField: NSViewRepresentable {
             textView: NSTextView,
             doCommandBy commandSelector: Selector
         ) -> Bool {
-            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            if commandSelector == #selector(NSResponder.insertNewline(_:))
+                || commandSelector == #selector(NSResponder.insertTab(_:))
+                || commandSelector == #selector(NSResponder.insertBacktab(_:)) {
+                guard !textView.hasMarkedText() else { return false }
                 parent?.onSubmit()
                 return true
             }

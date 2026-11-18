@@ -29,6 +29,9 @@ final class MacClippyQueuePasteModelTests: XCTestCase {
             isProcessTrusted: { true },
             postEvents: { [weak self] _, _ in
                 self?.postedEventCount &+= 1
+            },
+            postEventsToProcess: { [weak self] _, _, _ in
+                self?.postedEventCount &+= 1
             }
         )
         runtime = try MacClippyRuntime(paths: paths, pasteInjector: injector)
@@ -53,6 +56,7 @@ final class MacClippyQueuePasteModelTests: XCTestCase {
 
         model.beginSession()
         model.selectAllVisible()
+        MacClippyTestWait.until({ model.selectionIsReady }, failOnTimeout: true)
         XCTAssertTrue(model.hasMultipleSelection)
         var didClose = false
         model.pasteQueued(completion: { didClose = true })
@@ -83,6 +87,7 @@ final class MacClippyQueuePasteModelTests: XCTestCase {
 
         model.beginSession()
         model.selectAllVisible()
+        MacClippyTestWait.until({ model.selectionIsReady }, failOnTimeout: true)
         XCTAssertTrue(model.hasMultipleSelection)
         var didClose = false
         model.pasteQueued(completion: { didClose = true })
@@ -103,12 +108,15 @@ final class MacClippyQueuePasteModelTests: XCTestCase {
 
     @MainActor
     func testModelPasteQueuedManualStopKeepsDockOpenAndShowsManualStopFeedback() throws {
-        // An untrusted injector returns manualPasteRequired at the first record.
+        // An untrusted injector prepares the first record and stops for manual paste.
         let paths = try MacClippyPaths(rootURL: tempRoot)
         let injector = MacClippyPasteInjector(
             pasteboard: pasteboard,
             isProcessTrusted: { false },
             postEvents: { [weak self] _, _ in
+                self?.postedEventCount &+= 1
+            },
+            postEventsToProcess: { [weak self] _, _, _ in
                 self?.postedEventCount &+= 1
             }
         )
@@ -122,6 +130,7 @@ final class MacClippyQueuePasteModelTests: XCTestCase {
 
         model.beginSession()
         model.selectAllVisible()
+        MacClippyTestWait.until({ model.selectionIsReady }, failOnTimeout: true)
         XCTAssertTrue(model.hasMultipleSelection)
         var didClose = false
         model.pasteQueued(completion: { didClose = true })
@@ -180,6 +189,7 @@ final class MacClippyQueuePasteModelTests: XCTestCase {
 
         model.beginSession()
         model.selectAllVisible()
+        MacClippyTestWait.until({ model.selectionIsReady }, failOnTimeout: true)
         XCTAssertTrue(model.hasMultipleSelection)
         var didClose = false
         model.pasteQueued(completion: { didClose = true })

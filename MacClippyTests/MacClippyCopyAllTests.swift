@@ -32,6 +32,9 @@ final class MacClippyCopyAllTests: XCTestCase {
             isProcessTrusted: { true },
             postEvents: { [weak self] _, _ in
                 self?.postedEventCount &+= 1
+            },
+            postEventsToProcess: { [weak self] _, _, _ in
+                self?.postedEventCount &+= 1
             }
         )
         runtime = try MacClippyRuntime(paths: paths, pasteInjector: injector)
@@ -146,11 +149,11 @@ final class MacClippyCopyAllTests: XCTestCase {
         let second = try runtime.appendTestRecord(.text("beta"))
 
         let result = try runtime.pasteOrdered(ids: [second.id, first.id])
-        guard case let .merged(injected) = result else {
+        guard case let .merged(result: injection) = result else {
             XCTFail("expected .merged for pasteOrdered, got \(result)")
             return
         }
-        XCTAssertTrue(injected, "pasteOrdered should inject the paste keystroke when trusted")
+        XCTAssertEqual(injection, .injected, "pasteOrdered should inject the paste keystroke when trusted")
         XCTAssertEqual(postedEventCount, 1, "pasteOrdered posts exactly one paste keystroke")
         XCTAssertEqual(pasteboard.string(forType: .string), "beta\nalpha")
     }
@@ -167,6 +170,7 @@ final class MacClippyCopyAllTests: XCTestCase {
 
         model.beginSession()
         model.selectAllVisible()
+        MacClippyTestWait.until({ model.selectionIsReady }, failOnTimeout: true)
         XCTAssertTrue(model.hasMultipleSelection)
         model.copySelectedAll()
 
@@ -194,6 +198,7 @@ final class MacClippyCopyAllTests: XCTestCase {
 
         model.beginSession()
         model.selectAllVisible()
+        MacClippyTestWait.until({ model.selectionIsReady }, failOnTimeout: true)
         XCTAssertTrue(model.hasMultipleSelection)
         model.copySelectedAll()
 
@@ -223,6 +228,7 @@ final class MacClippyCopyAllTests: XCTestCase {
 
         model.beginSession()
         model.selectAllVisible()
+        MacClippyTestWait.until({ model.selectionIsReady }, failOnTimeout: true)
         model.copySelectedAll()
 
         // End the session (hide) and start a new one (reopen) before the work

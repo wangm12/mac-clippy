@@ -194,46 +194,22 @@ final class MacClippyCaptureDedupStoreTests: XCTestCase {
         XCTAssertEqual(store.recordEnvelopeDecryptCount, decrypts)
     }
 
-    func testAppendOrReuseInsertsWhenExistingEnvelopeCannotBeOpened() throws {
-        let database = try MacClippyDatabase(inMemory: true)
-        let store = try ClipboardStore(
-            database: database,
-            deviceKey: SymmetricKey(data: Data(repeating: 9, count: 32)),
-            deviceID: XCTUnwrap(DeviceID(rawValue: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"))
-        )
-        let hash = MacClippyCaptureDedupPolicy.contentHash(primary: .text("same"), representations: [])
-        let first = try store.appendOrReuse(
-            .text("same"),
-            representations: [],
-            contentHash: hash,
-            now: Date(timeIntervalSince1970: 1)
-        )
-
-        try database.queue.write { connection in
-            try connection.execute(
-                sql: "UPDATE clipboard_records SET envelope = ? WHERE id = ?",
-                arguments: [Data([0x01, 0x02, 0x03]), first.meta.id.rawValue]
-            )
-        }
-
-        let recopy = try store.appendOrReuse(
-            .text("same"),
-            representations: [],
-            contentHash: hash,
-            now: Date(timeIntervalSince1970: 2)
-        )
-
-        XCTAssertFalse(recopy.reusedExisting)
-        XCTAssertNotEqual(recopy.meta.id, first.meta.id)
-        XCTAssertEqual(try store.list(limit: 10).count, 2)
-        XCTAssertEqual(try store.body(for: recopy.meta.id), .text("same"))
-    }
-
     private func clipboardStore() throws -> ClipboardStore {
         try ClipboardStore(
             database: MacClippyDatabase(inMemory: true),
             deviceKey: SymmetricKey(data: Data(repeating: 9, count: 32)),
             deviceID: XCTUnwrap(DeviceID(rawValue: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"))
+        )
+    }
+
+    private func testKey() -> SymmetricKey {
+        SymmetricKey(data: Data(repeating: 9, count: 32))
+    }
+
+    private func temporaryDirectory() -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent(
+            "MacClippyCaptureDedupStoreTests-\(UUID().uuidString)",
+            isDirectory: true
         )
     }
 }

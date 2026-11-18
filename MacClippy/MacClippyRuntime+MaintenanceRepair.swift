@@ -7,6 +7,34 @@ import MacClippyCore
 import MacClippyPlatform
 
 extension MacClippyRuntime {
+    func scheduleDeferredBlobDelete(_ blobID: String) {
+        maintenanceQueue.async { [weak self] in
+            guard let self, let lifecycleToken = self.activeLifecycleToken() else { return }
+            do {
+                try self.performCurrentLifecycleCommit(lifecycleToken) {
+                    // A deferred file may have gained a new owner since the
+                    // original cleanup decision. Revalidate under the short
+                    // storage fence before asking BlobStore to unlink it.
+                    guard try self.clipboardStore.unreferencedBlobIDsWithoutBackfill([blobID]).contains(blobID) else {
+                        return
+                    }
+                    try self.blobStore.delete(id: blobID)
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                self.storageDegradedReasons.insert("orphan-blob-cleanup-failed")
+                MacClippyLog.record(
+                    category: .blob,
+                    code: .blobCleanupFailed,
+                    operation: "deferred_blob_cleanup",
+                    recoveryAction: "run_storage_reconciliation",
+                    impact: "possible_orphan_blob"
+                )
+            }
+        }
+    }
+
     func markSearchRepairNeededLocked() {
         storageDegradedReasons.insert("fts-repair-needed")
         do {
@@ -58,7 +86,7 @@ extension MacClippyRuntime {
             guard page.count == 256 else { break }
             blobOffset += page.count
         }
-        let unreferenced = try clipboardStore.unreferencedBlobIDs(
+        let unreferenced = try clipboardStore.unreferencedBlobIDsWithoutBackfill(
             blobIDs,
             shouldContinue: shouldContinue
         )

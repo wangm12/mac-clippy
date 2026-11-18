@@ -17,6 +17,10 @@ MacClippy.xcodeproj/xcuserdata/
 MacClippy.xcodeproj/project.xcworkspace/xcuserdata/
 *.xcuserstate
 
+# Python helper caches
+__pycache__/
+*.py[cod]
+
 # Local credentials and signing material
 .env
 .env.*

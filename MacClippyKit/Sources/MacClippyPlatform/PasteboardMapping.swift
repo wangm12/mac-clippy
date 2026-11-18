@@ -70,6 +70,7 @@ public extension MacClippyCaptureDedupPolicy {
             primary: primary,
             representations: representations.map { representation in
                 MacClippyCaptureDedupRepresentation(
+                    itemIndex: representation.itemIndex,
                     uti: representation.uti,
                     payloadState: representation.payloadState.rawValue,
                     payloadBytes: representation.payloadBytes
@@ -130,14 +131,14 @@ public enum MacClippyCaptureMapper {
     // URLs) is irrelevant here because the mapper never decodes strings; raw
     // bytes are retained verbatim per UTI.
     public static func representations(for change: PasteboardChange) -> [MacClippyClipboardRepresentation] {
-        var seen = Set<String>()
+        var seenItemTypes = Set<String>()
         var ordered: [MacClippyClipboardRepresentation] = []
 
-        for item in change.items {
+        for (itemIndex, item) in change.items.enumerated() {
             for type in item.types {
                 let uti = type
-                guard !seen.contains(uti) else { continue }
-                seen.insert(uti)
+                let identity = "\(itemIndex)\u{0}\(uti)"
+                guard seenItemTypes.insert(identity).inserted else { continue }
 
                 let payloadState: MacClippyClipboardRepresentationPayloadState
                 let data: Data?
@@ -163,6 +164,7 @@ public enum MacClippyCaptureMapper {
                 }
 
                 ordered.append(MacClippyClipboardRepresentation(
+                    itemIndex: itemIndex,
                     uti: uti,
                     payloadBytes: data,
                     blobID: nil,
@@ -244,30 +246,18 @@ public enum MacClippyCaptureMapper {
     }
 
     static func plainText(fromHTML html: String) -> String {
-        if let attributed = try? NSAttributedString(
-            data: Data(html.utf8),
-            options: [
-                .documentType: NSAttributedString.DocumentType.html,
-                .characterEncoding: String.Encoding.utf8.rawValue
-            ],
-            documentAttributes: nil
-        ) {
-            return attributed.string
-        }
-
-        return html
-            .replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
-            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        MacClippyPasteboardPrivacyHTML.plainText(from: html)
     }
 
     static func plainText(fromRTF data: Data) -> String? {
-        guard let attributed = try? NSAttributedString(
-            data: data,
-            options: [.documentType: NSAttributedString.DocumentType.rtf],
-            documentAttributes: nil
-        ) else { return nil }
-        return attributed.string
+        autoreleasepool {
+            guard let attributed = try? NSAttributedString(
+                data: data,
+                options: [.documentType: NSAttributedString.DocumentType.rtf],
+                documentAttributes: nil
+            ) else { return nil }
+            return attributed.string
+        }
     }
 
     private static func imagePayload(in items: [PasteboardItem]) -> MacClippyCapturePayload? {

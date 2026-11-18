@@ -37,6 +37,28 @@ final class MacClippyPasteboardWriteSentinelTests: XCTestCase {
         XCTAssertFalse(sentinel.consume(changeCount: 2))
     }
 
+    func testRestartPruningKeepsFutureTokenAndConsumesExactCurrentGeneration() {
+        let sentinel = MacClippyPasteboardWriteSentinel()
+        sentinel.beginWrite(expectedChangeCount: 9)
+        sentinel.beginWrite(expectedChangeCount: 11)
+
+        XCTAssertFalse(sentinel.consumeAndPrune(through: 10))
+        XCTAssertEqual(sentinel.pendingCount, 1)
+        XCTAssertTrue(sentinel.consumeAndPrune(through: 11))
+        XCTAssertEqual(sentinel.pendingCount, 0)
+    }
+
+    func testPendingTokensStayBoundedToRecentGenerations() {
+        let sentinel = MacClippyPasteboardWriteSentinel()
+        for changeCount in 1...40 {
+            sentinel.beginWrite(expectedChangeCount: changeCount)
+        }
+
+        XCTAssertEqual(sentinel.pendingCount, 32)
+        XCTAssertFalse(sentinel.consume(changeCount: 8))
+        XCTAssertTrue(sentinel.consume(changeCount: 40))
+    }
+
     func testCoordinatorStampsPasteboardWriteAndRegistersToken() {
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("MacClippySentinelTests-\(UUID().uuidString)"))
         let sentinel = MacClippyPasteboardWriteSentinel()

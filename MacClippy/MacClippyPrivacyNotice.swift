@@ -10,15 +10,21 @@ enum MacClippyPrivacyNoticePolicy {
     static let message = """
     Mac Clippy keeps a local history of clipboard items so you can search, preview, copy, and paste them later.
 
-    Clipboard payloads and image blobs are encrypted with a key in Keychain.
-    Previews, OCR text, custom names, and search metadata are stored locally.
-    Diagnostics and backups are user-triggered local actions.
+    Clipboard payloads and image blobs are encrypted with a key stored in Keychain.
+    Previews, OCR text, custom names, and search metadata are stored locally on this Mac.
+    Diagnostics and backups are user-controlled actions.
 
-    By default, concealed, transient, auto-generated, and common password-manager content is excluded. You can pause capture, add app or text exclusions, set retention limits, enable the advanced Capture All option, and delete history in Settings. Deleting history removes the record, search entry, OCR text, representation data, and associated blobs when they are no longer shared by another record.
+    By default, concealed, transient, auto-generated, and common password-manager content is excluded. You can \
+    pause capture, add app or text exclusions, set retention limits, enable the advanced Capture All option, \
+    and delete history in Settings. Deleting history removes the record, search entry, OCR text, \
+    representation data, and associated blobs when they are no longer shared by another record.
 
-    Accessibility enables automatic paste and Snippet expansion. Input Monitoring enables the global shortcut and Snippet trigger monitoring. Without those permissions, search, copy, and manual paste remain available.
+    Accessibility enables automatic paste and Snippet expansion. Input Monitoring enables the global shortcut \
+    and Snippet trigger monitoring. Without those permissions, search, copy, and manual paste remain available.
 
-    The current build makes no network calls. Clipboard data stays on this Mac unless you explicitly export diagnostics or create a backup. A formal public privacy-policy URL must be supplied by the product owner before distribution.
+    Mac Clippy makes no network calls by default. Clipboard data stays on this Mac unless you export \
+    diagnostics, save a local or iCloud Drive encrypted backup, or connect your own Google Drive account \
+    (appDataFolder scope) to upload passphrase-encrypted backups.
     """
 
     static func shouldPresent(defaults: UserDefaults = .standard) -> Bool {

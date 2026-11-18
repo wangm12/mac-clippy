@@ -65,6 +65,7 @@ final class MacClippyCopyPrepareFailureTests: XCTestCase {
         wait { model.historyItems.count >= 2 }
         model.beginSession()
         model.selectAllVisible()
+        MacClippyTestWait.until({ model.selectionIsReady }, failOnTimeout: true)
         model.copySelectedAll()
 
         wait { model.actionError != nil || model.actionFeedback != nil }
@@ -79,6 +80,9 @@ final class MacClippyCopyPrepareFailureTests: XCTestCase {
             pasteboard: pasteboard,
             isProcessTrusted: { true },
             postEvents: { [weak self] _, _ in
+                self?.postedEventCount &+= 1
+            },
+            postEventsToProcess: { [weak self] _, _, _ in
                 self?.postedEventCount &+= 1
             },
             preparer: { _, _ in false }

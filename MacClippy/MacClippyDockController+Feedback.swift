@@ -5,9 +5,11 @@ import QuartzCore
 import SwiftUI
 
 extension MacClippyDockController {
-    func showCopyToast(title: String) {
+    func showCopyToast(title: String, duration: TimeInterval = 1.2) {
         let screen = screenContainingCursor() ?? NSScreen.main
         guard let screen else { return }
+        toastGeneration &+= 1
+        let generation = toastGeneration
 
         let toastView = MacClippyCopyToastView(title: title)
         let hostingView = NSHostingView(rootView: toastView)
@@ -49,8 +51,8 @@ extension MacClippyDockController {
 
         toastDismissTask?.cancel()
         toastDismissTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 1_200_000_000)
-            guard let self, !Task.isCancelled else { return }
+            try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+            guard let self, !Task.isCancelled, self.toastGeneration == generation else { return }
             self.dismissCopyToast()
         }
     }
@@ -65,12 +67,14 @@ extension MacClippyDockController {
     }
 
     func dismissCopyToast() {
+        toastGeneration &+= 1
+        let generation = toastGeneration
         toastDismissTask?.cancel()
         toastDismissTask = nil
         guard let toast = toastPanel, toast.isVisible else { return }
         animateToastOpacity(toast, from: toast.contentView?.layer?.opacity ?? 1, to: 0, duration: 0.1)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak toast] in
-            guard let self, self.toastPanel === toast else { return }
+            guard let self, self.toastPanel === toast, self.toastGeneration == generation else { return }
             toast?.orderOut(nil)
         }
     }
@@ -89,5 +93,49 @@ extension MacClippyDockController {
         animation.timingFunction = MacClippyMotion.entranceTimingFunction
         layer.add(animation, forKey: "macClippyToastOpacity")
         layer.opacity = to
+    }
+}
+
+enum MacClippyPreviewFrameMetrics {
+    private static let widthFraction: CGFloat = 0.72
+    private static let heightFraction: CGFloat = 0.72
+    private static let minimumWidth: CGFloat = 560
+    private static let minimumHeight: CGFloat = 440
+    private static let maximumWidth: CGFloat = 960
+    private static let maximumHeight: CGFloat = 720
+
+    static func preferredSize(visibleFrame: CGRect, availableHeight: CGFloat) -> CGSize {
+        let width = min(
+            maximumWidth,
+            max(minimumWidth, visibleFrame.width * widthFraction)
+        )
+        let height = min(
+            maximumHeight,
+            max(minimumHeight, availableHeight * heightFraction)
+        )
+        return CGSize(width: width, height: height)
+    }
+}
+
+extension CGRect {
+    var midPoint: CGPoint {
+        CGPoint(x: midX, y: midY)
+    }
+}
+
+final class BeforePasteTransitionBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: (shouldContinue: Bool, targetPID: Int32?) = (true, nil)
+
+    func set(_ newValue: (shouldContinue: Bool, targetPID: Int32?)) {
+        lock.lock()
+        value = newValue
+        lock.unlock()
+    }
+
+    func get() -> (shouldContinue: Bool, targetPID: Int32?) {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
     }
 }

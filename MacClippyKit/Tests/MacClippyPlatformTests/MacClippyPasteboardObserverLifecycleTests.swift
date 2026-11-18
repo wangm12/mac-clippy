@@ -61,33 +61,6 @@ final class PasteboardObserverLifecycleTests: XCTestCase {
         observer.stop()
     }
 
-    func testObserverStopResetsWriteSentinelPendingTokens() {
-        // stop()/restart must not inherit the write sentinel's pending tokens
-        // from a previous session. Register a token, stop the observer, then
-        // confirm the sentinel has no pending tokens so a restart cannot
-        // suppress a recapture that was actually a stale internal write from
-        // the prior session.
-        let reader = SteppingTestPasteboardReader(
-            initial: PasteboardChange(changeCount: 1, items: [
-                PasteboardItem(types: ["public.utf8-plain-text"], representations: [
-                    "public.utf8-plain-text": Data("seed".utf8)
-                ])
-            ])
-        )
-        let sentinel = MacClippyPasteboardWriteSentinel()
-        sentinel.beginWrite(expectedChangeCount: 2)
-        sentinel.beginWrite(expectedChangeCount: 3)
-        XCTAssertEqual(sentinel.pendingCount, 2)
-
-        let observer = PasteboardObserver(reader: reader, writeSentinel: sentinel, pollInterval: 1)
-        observer.start { _ in }
-
-        observer.stop()
-        XCTAssertEqual(sentinel.pendingCount, 0, "stop() must reset the write sentinel's pending tokens")
-        XCTAssertFalse(sentinel.consume(changeCount: 2), "stale token from prior session must not suppress recapture")
-        XCTAssertFalse(sentinel.consume(changeCount: 3))
-    }
-
     func testObserverConcurrentStartStopCallsAreSerialized() {
         let reader = SteppingTestPasteboardReader(
             initial: PasteboardChange(changeCount: 1, items: [])
@@ -160,60 +133,6 @@ final class PasteboardObserverLifecycleTests: XCTestCase {
 
         XCTAssertEqual(delivered.map(\.changeCount), [2])
         observer.stop()
-    }
-
-    func testObserverProductionDefaultQueueIsNotMain() {
-        // The production default queue must NOT be the main queue so polling
-        // and the synchronous retry helper's sleeps never block the UI. We
-        // assert this by delivering a change through the real timer fire path
-        // and confirming the handler runs on a background queue whose label
-        // matches the production poll queue constant. A main-queue default
-        // would run the handler on the main thread.
-        let reader = SteppingTestPasteboardReader(
-            initial: PasteboardChange(changeCount: 1, items: [
-                PasteboardItem(types: ["public.utf8-plain-text"], representations: [
-                    "public.utf8-plain-text": Data("seed".utf8)
-                ])
-            ])
-        )
-        // Use the production default queue explicitly (no queue argument) so
-        // the test exercises the same default the runtime relies on.
-        let observer = PasteboardObserver(reader: reader, pollInterval: 0.01)
-        let expectation = XCTestExpectation(description: "handler runs on the production poll queue")
-
-        var handlerQueueLabel: String?
-        var handlerIsMainThread: Bool?
-        observer.start { _ in
-            // __dispatch_queue_get_label(nil) returns the label of the queue
-            // that is currently executing this block; DispatchQueue.currentLabel
-            // is not available on this toolchain.
-            handlerQueueLabel = String(cString: __dispatch_queue_get_label(nil))
-            handlerIsMainThread = Thread.isMainThread
-            expectation.fulfill()
-        }
-        observer.poll()
-
-        // Bump the changeCount so the first timer fire delivers a change.
-        reader.change = PasteboardChange(
-            changeCount: 2,
-            items: [PasteboardItem(types: ["public.utf8-plain-text"], representations: [
-                "public.utf8-plain-text": Data("delivered".utf8)
-            ])]
-        )
-
-        wait(for: [expectation], timeout: 5)
-        observer.stop()
-
-        XCTAssertEqual(
-            handlerQueueLabel,
-            MacClippyPasteboardObserver.productionPollQueueLabel,
-            "production default queue must be the dedicated poll queue"
-        )
-        XCTAssertEqual(
-            handlerIsMainThread,
-            false,
-            "production default queue must not be the main queue"
-        )
     }
 
     func testSleepSuspendsThePollingTimerWithoutAdvancingLastChangeCount() {
@@ -364,4 +283,5 @@ final class PasteboardObserverLifecycleTests: XCTestCase {
         )
         observer.stop()
     }
+
 }

@@ -54,4 +54,27 @@ final class MacClippySearchURLGrammarTests: XCTestCase {
         XCTAssertTrue(MacClippySmartText.matchesURL("www.example.com"))
         XCTAssertFalse(MacClippySmartText.matchesURL("http status 500"))
     }
+
+    func testURLScopeAndListMatchGrammarForSurroundingUnicodeWhitespace() throws {
+        let store = try ClipboardStore(
+            database: MacClippyDatabase(inMemory: true),
+            deviceKey: SymmetricKey(data: Data(repeating: 17, count: 32))
+        )
+        var expected = Set<RecordID>()
+        for whitespace in ["", " ", "\t", "\n", "\r\n", "\u{00A0}", "\u{3000}"] {
+            let meta = try store.append(.text(whitespace + "https://example.com/世界" + whitespace))
+            XCTAssertTrue(MacClippySearchGrammar.matches(
+                .url, record: .init(meta: meta, contentKind: .text)
+            ))
+            expected.insert(meta.id)
+        }
+        for text in ["https://example.com has a sentence", "www.example.com has a sentence"] {
+            let meta = try store.append(.text(text))
+            XCTAssertFalse(MacClippySearchGrammar.matches(.url, record: .init(meta: meta, contentKind: .text)))
+        }
+        XCTAssertEqual(Set(try store.list(limit: 100, requiresURL: true).map(\.id)), expected)
+        XCTAssertEqual(
+            Set(try store.matchingRecordIDs(filter: .init(), requiresURL: true)), expected
+        )
+    }
 }

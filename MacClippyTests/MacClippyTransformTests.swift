@@ -46,6 +46,9 @@ final class MacClippyTransformTests: XCTestCase {
             isProcessTrusted: { true },
             postEvents: { [weak self] _, _ in
                 self?.postedEventCount &+= 1
+            },
+            postEventsToProcess: { [weak self] _, _, _ in
+                self?.postedEventCount &+= 1
             }
         )
         runtime = try MacClippyRuntime(paths: paths, pasteInjector: injector)
@@ -256,6 +259,47 @@ final class MacClippyTransformTests: XCTestCase {
         XCTAssertEqual(updated?.meta.frequency, 0, "a malformed rtf paste must not bump frequency")
     }
 
+    func testDragPayloadExportsClipboardTextInsteadOfTheRecordID() throws {
+        let meta = try runtime.appendTestRecord(.text("drop me into Notes"))
+
+        let text = try runtime.dragPayload(id: meta.id, representation: .plainText)
+        XCTAssertEqual(text.typeIdentifier, "public.utf8-plain-text")
+        XCTAssertEqual(String(data: text.data, encoding: .utf8), "drop me into Notes")
+
+        let record = try runtime.dragPayload(id: meta.id, representation: .recordID)
+        XCTAssertEqual(record.typeIdentifier, MacClippyCardDragPolicy.recordTypeIdentifier)
+        XCTAssertEqual(String(data: record.data, encoding: .utf8), meta.id.rawValue)
+    }
+
+    func testDragPayloadExportsImageBytesOnAPublicImageType() throws {
+        let meta = try runtime.appendTestRecord(.image(blobID: "unused", width: 1, height: 1))
+        let payload = try runtime.dragPayload(id: meta.id, representation: .image)
+        XCTAssertEqual(payload.typeIdentifier, "public.png")
+        XCTAssertTrue(payload.data.starts(with: [0x89, 0x50, 0x4E, 0x47]))
+    }
+
+    // MARK: - Helpers
+
+    // Build a minimal valid RTF document whose plain text is the given string.
+    // Uses escaped plain-text characters so NSAttributedString can decode it.
+    private func minimalRTF(carrying text: String) -> Data {
+        let escaped = text.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "{", with: "\\{")
+            .replacingOccurrences(of: "}", with: "\\}")
+        let rtf = "{\\rtf1\\ansi\\ansicpg1252\\fromansicpg1252 " + escaped + "}"
+        return Data(rtf.utf8)
+    }
+
+    @MainActor
+    private func wait(
+        until condition: () -> Bool,
+        timeout: TimeInterval = 2.0
+    ) {
+        MacClippyTestWait.until(condition, timeout: timeout)
+    }
+}
+
+extension MacClippyTransformTests {
     // MARK: - Dock model: context-facing paths preserve async behavior
 
     @MainActor
@@ -351,44 +395,5 @@ final class MacClippyTransformTests: XCTestCase {
         model.workQueue.sync {}
 
         XCTAssertFalse(didClose, "stale transformed-paste completion must not close a reopened dock")
-    }
-
-    func testDragPayloadExportsClipboardTextInsteadOfTheRecordID() throws {
-        let meta = try runtime.appendTestRecord(.text("drop me into Notes"))
-
-        let text = try runtime.dragPayload(id: meta.id, representation: .plainText)
-        XCTAssertEqual(text.typeIdentifier, "public.utf8-plain-text")
-        XCTAssertEqual(String(data: text.data, encoding: .utf8), "drop me into Notes")
-
-        let record = try runtime.dragPayload(id: meta.id, representation: .recordID)
-        XCTAssertEqual(record.typeIdentifier, MacClippyCardDragPolicy.recordTypeIdentifier)
-        XCTAssertEqual(String(data: record.data, encoding: .utf8), meta.id.rawValue)
-    }
-
-    func testDragPayloadExportsImageBytesOnAPublicImageType() throws {
-        let meta = try runtime.appendTestRecord(.image(blobID: "unused", width: 1, height: 1))
-        let payload = try runtime.dragPayload(id: meta.id, representation: .image)
-        XCTAssertEqual(payload.typeIdentifier, "public.png")
-        XCTAssertTrue(payload.data.starts(with: [0x89, 0x50, 0x4E, 0x47]))
-    }
-
-    // MARK: - Helpers
-
-    // Build a minimal valid RTF document whose plain text is the given string.
-    // Uses escaped plain-text characters so NSAttributedString can decode it.
-    private func minimalRTF(carrying text: String) -> Data {
-        let escaped = text.replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "{", with: "\\{")
-            .replacingOccurrences(of: "}", with: "\\}")
-        let rtf = "{\\rtf1\\ansi\\ansicpg1252\\fromansicpg1252 " + escaped + "}"
-        return Data(rtf.utf8)
-    }
-
-    @MainActor
-    private func wait(
-        until condition: () -> Bool,
-        timeout: TimeInterval = 2.0
-    ) {
-        MacClippyTestWait.until(condition, timeout: timeout)
     }
 }

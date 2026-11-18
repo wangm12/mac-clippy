@@ -51,6 +51,8 @@ final class MacClippyDockHostingView: NSHostingView<MacClippyDockView> {
     // so the content container's first-mouse policy alone is not sufficient.
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    override var mouseDownCanMoveWindow: Bool { false }
+
     override var isOpaque: Bool { false }
 
     override func viewDidMoveToWindow() {
@@ -247,19 +249,17 @@ final class MacClippyDockPanel: NSPanel {
     init(contentRect: NSRect) {
         super.init(
             contentRect: contentRect,
-            // The dock is opened by a global hotkey but is an interactive
-            // surface. It must activate and become the key window so the
-            // following Space/arrows/clicks are delivered to this panel rather
-            // than back to the app that was active before the hotkey.
-            // A nonactivating panel can become key without pulling focus away
-            // from a full-screen host app. This is the standard AppKit shape
-            // for a global quick-input surface.
+            // Keep the host app active, including full-screen editors. The
+            // controller makes this nonactivating panel key for search input.
             styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
 
         isOpaque = false
+        // Anchored dock: content clicks must never become window dragging.
+        isMovable = false
+        isMovableByWindowBackground = false
         backgroundColor = .clear
         // Follow the system appearance so Regular glass can sample the
         // desktop. Forcing darkAqua made the plate a black sheet.

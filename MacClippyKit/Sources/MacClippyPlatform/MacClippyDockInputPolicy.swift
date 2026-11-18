@@ -24,11 +24,13 @@ public enum MacClippyDockKeyAction: Equatable {
     case native
     case dismissModal
     case enterSearch
+    case focusResults
     case exitSearch
     case closeDock
     case showPreview
     case hidePreview
     case showDetails
+    case retryDetails
     case hideDetails
     case editContent
     case rename
@@ -137,7 +139,19 @@ private extension MacClippyDockKeyRouterPolicy {
                 hasMarkedText: context.hasMarkedText
             )
         }
-        guard context.mode != .search else { return .native }
+        if context.mode == .search {
+            if !context.hasMarkedText,
+               context.modifiers.isDisjoint(with: commandModifiers),
+               [36, 76, 48].contains(context.keyCode) {
+                return context.isRepeat ? .consume : .focusResults
+            }
+            return .native
+        }
+        if context.mode == .picker,
+           context.keyCode == 48,
+           context.modifiers.isDisjoint(with: commandModifiers) {
+            return .enterSearch
+        }
 
         if let contentAction = contentKeyDownAction(context) {
             return contentAction
@@ -168,7 +182,7 @@ private extension MacClippyDockKeyRouterPolicy {
            context.modifiers.isDisjoint(with: [.control, .shift]) {
             return context.mode == .details ? .hideDetails : .showDetails
         }
-        if context.keyCode == 40,
+        if context.keyCode == 40 || context.keyCode == 3,
            context.modifiers.contains(.command),
            context.modifiers.isDisjoint(with: [.option, .control]) {
             return .enterSearch
@@ -296,6 +310,7 @@ private extension MacClippyDockKeyRouterPolicy {
         let shift = context.modifiers.contains(.shift)
 
         if command, !shift, context.keyCode == 0 {
+            if context.mode == .details || context.mode == .preview { return .native }
             return .selectAll
         }
         // Cmd+Delete should remove the focused card even when the user has
@@ -306,7 +321,8 @@ private extension MacClippyDockKeyRouterPolicy {
         if command, !shift, isDeleteKey, context.hasCardFocus || context.hasMultipleSelection {
             return .deleteSelection
         }
-        if command, !shift, context.keyCode == 35, context.hasMultipleSelection {
+        if command, !shift, context.keyCode == 35,
+           context.hasCardFocus || context.hasMultipleSelection || context.mode == .details {
             return .pinSelection
         }
         return nil

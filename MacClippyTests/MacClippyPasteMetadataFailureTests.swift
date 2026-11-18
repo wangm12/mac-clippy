@@ -27,6 +27,9 @@ final class MacClippyPasteMetadataFailureTests: XCTestCase {
                 // Force the post-injection metadata write to fail. The
                 // injection itself has already been accepted at this point.
                 self?.runtime.closeStorageForTesting()
+            },
+            postEventsToProcess: { [weak self] _, _, _ in
+                self?.runtime.closeStorageForTesting()
             }
         )
         runtime = try MacClippyRuntime(paths: paths, pasteInjector: injector)

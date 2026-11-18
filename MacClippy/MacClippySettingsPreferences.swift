@@ -2,6 +2,19 @@ import Foundation
 import MacClippyCore
 import MacClippyPlatform
 
+enum MacClippySnippetPreferences {
+    static func expansionInstructions(for rawMode: String) -> String {
+        switch MacClippySnippetExpansionMode(rawValue: rawMode) {
+        case .confirmWithTab:
+            return "Type a ;trigger, then press Tab to expand it."
+        case .disabled:
+            return "Choose an expansion mode to use ;triggers while typing."
+        case .autoExpand, nil:
+            return "Type a ;trigger, then press Space to expand it."
+        }
+    }
+}
+
 enum MacClippyRetentionPreferences {
     static let maxItemsKey = "com.macallyouneed.macclippy.retention.maxItems"
     static let maxAgeDaysKey = "com.macallyouneed.macclippy.retention.maxAgeDays"

@@ -109,7 +109,8 @@ final class MacClippyLiquidGlassTests: XCTestCase {
 
         let cardLabel = try appSource(named: "MacClippyClipboardCardLabel.swift")
         XCTAssertTrue(cardLabel.contains("colorScheme, .light"))
-        XCTAssertTrue(cardLabel.contains("MacClippyMotion.hoverScale"))
+        let dockHoverView = try appSource(named: "MacClippyDockView.swift")
+        XCTAssertTrue(dockHoverView.contains("MacClippyMotion.hoverScale"))
 
         let icon = NSImage(size: NSSize(width: 256, height: 256))
         let prepared = MacClippySourceAppIcon.prepared(
@@ -132,8 +133,9 @@ final class MacClippyLiquidGlassTests: XCTestCase {
 
         let snippets = try appSource(named: "MacClippyDockCardContent.swift")
         XCTAssertTrue(snippets.contains("MacClippySnippetHoverChrome"))
-        XCTAssertTrue(snippets.contains("MacClippyDockCardHoverChrome"))
-        XCTAssertTrue(snippets.contains("MacClippyMotion.hoverScale"))
+        let hoverSource = try appSource(named: "MacClippyDockView.swift")
+        XCTAssertTrue(hoverSource.contains("MacClippyDockCardHoverChrome"))
+        XCTAssertTrue(hoverSource.contains("MacClippyMotion.hoverScale"))
     }
 
     func testDockNavSourcesUsePieceGlassAndKeepCarouselEdgeFade() throws {
@@ -233,4 +235,64 @@ final class MacClippyLiquidGlassTests: XCTestCase {
             .appendingPathComponent("MacClippy")
         return try String(contentsOf: sourceRoot.appendingPathComponent(fileName), encoding: .utf8)
     }
+}
+
+extension MacClippyLiquidGlassTests {
+    @MainActor
+    func testPrimaryActionTextKeepsContrastAcrossAccentColorsAndAppearances() {
+        let previous = NSApp.appearance
+        defer { NSApp.appearance = previous }
+        let colors: [NSColor] = [.systemBlue, .systemOrange, .systemYellow, .systemRed,
+                                 .systemPurple, .systemGreen, .systemGray, .black, .white,
+                                 NSColor(srgbRed: 0.46, green: 0.46, blue: 0.46, alpha: 1)]
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            NSApp.appearance = NSAppearance(named: appearance)
+            NSApp.effectiveAppearance.performAsCurrentDrawingAppearance {
+                for color in colors {
+                    let foreground = MacClippyDockTheme.contrastingForeground(for: color)
+                    XCTAssertGreaterThanOrEqual(contrast(foreground, color), 4.5)
+                }
+                for hovered in [false, true] {
+                    let fill = NSColor(MacClippyDockTheme.accentFillColor(hovered: hovered))
+                    let text = NSColor(MacClippyDockTheme.accentForegroundColor(hovered: hovered))
+                    XCTAssertEqual(fill.alphaComponent, 1)
+                    XCTAssertGreaterThanOrEqual(contrast(text, fill), 4.5)
+                }
+            }
+        }
+    }
+
+    private func contrast(_ first: NSColor, _ second: NSColor) -> CGFloat {
+        func luminance(_ color: NSColor) -> CGFloat {
+            guard let rgb = color.usingColorSpace(.sRGB) else {
+                XCTFail("Contrast colors must resolve to sRGB")
+                return 0
+            }
+            let values = [rgb.redComponent, rgb.greenComponent, rgb.blueComponent].map {
+                $0 <= 0.04045 ? $0 / 12.92 : pow(($0 + 0.055) / 1.055, 2.4)
+            }
+            return zip(values, [CGFloat(0.2126), 0.7152, 0.0722]).reduce(0) { $0 + $1.0 * $1.1 }
+        }
+        let values = [luminance(first), luminance(second)].sorted()
+        return (values[1] + 0.05) / (values[0] + 0.05)
+    }
+
+    @MainActor
+    func testRetainedPaletteColorsFollowAppearanceWithoutRebuildingTheirView() throws {
+        let colors = [MacClippyDockTheme.card, MacClippyDockTheme.text,
+                      MacClippyDockTheme.panelStrong, MacClippyDockTheme.searchField]
+        let light = [MacClippyDockTheme.cardLight, MacClippyDockTheme.textLight,
+                     MacClippyDockTheme.panelStrongLight, MacClippyDockTheme.searchFieldLight]
+        let dark = [MacClippyDockTheme.cardDark, MacClippyDockTheme.textDark,
+                    MacClippyDockTheme.panelStrongDark, MacClippyDockTheme.searchFieldDark]
+        for (name, expected) in [(NSAppearance.Name.aqua, light), (.darkAqua, dark), (.aqua, light)] {
+            let appearance = try XCTUnwrap(NSAppearance(named: name))
+            appearance.performAsCurrentDrawingAppearance {
+                for (color, target) in zip(colors, expected) {
+                    XCTAssertEqual(color.usingColorSpace(.sRGB), target.usingColorSpace(.sRGB))
+                }
+            }
+        }
+    }
+
 }

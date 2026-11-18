@@ -23,7 +23,7 @@ extension MacClippyUserFacingError {
                 return missingItem
             case .invalidStoredRecord:
                 return corruptItem
-            case .inputTooLarge:
+            case .inputTooLarge, .unprovenLegacyAttachmentReferences:
                 return fallback
             }
         }

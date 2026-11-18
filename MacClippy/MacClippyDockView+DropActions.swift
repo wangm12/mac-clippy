@@ -5,6 +5,13 @@ import UniformTypeIdentifiers
 import MacClippyCore
 
 extension MacClippyDockView {
+    private func beginDropConfirmation() -> UInt {
+        dropConfirmationGeneration &+= 1
+        dropConfirmedPinboardID = nil
+        dropConfirmedSnippets = false
+        return dropConfirmationGeneration
+    }
+
     func handleDrop(_ providers: [NSItemProvider], on pinboard: MacClippyPinboardEntry) -> Bool {
         let expectedSession = model.currentSessionGeneration
         let recordType = MacClippyCardDragPolicy.recordTypeIdentifier
@@ -19,8 +26,7 @@ extension MacClippyDockView {
         }) else {
             return false
         }
-        dropConfirmationGeneration &+= 1
-        let confirmationGeneration = dropConfirmationGeneration
+        let confirmationGeneration = beginDropConfirmation()
         dropConfirmedPinboardID = pinboard.id
 
         let loadType = provider.registeredTypeIdentifiers.contains(resolvedType) ? resolvedType : recordType
@@ -71,8 +77,7 @@ extension MacClippyDockView {
         }) else {
             return false
         }
-        dropConfirmationGeneration &+= 1
-        let confirmationGeneration = dropConfirmationGeneration
+        let confirmationGeneration = beginDropConfirmation()
         dropConfirmedSnippets = true
 
         let loadType = provider.registeredTypeIdentifiers.contains(resolvedType) ? resolvedType : recordType

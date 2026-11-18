@@ -72,8 +72,26 @@ extension MacClippyDockModel {
         }
     }
 
+    var availableSnippetFolders: [String] {
+        var seen: Set<String> = []
+        var folders: [String] = []
+        for snippet in snippets {
+            guard let folder = snippet.folder?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !folder.isEmpty,
+                  seen.insert(folder).inserted else { continue }
+            folders.append(folder)
+        }
+        return folders.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
     var visibleSnippets: [MacClippySnippetEntry] {
         selectedTab == .snippets ? filteredSnippets : []
+    }
+
+    func selectSnippetFolder(_ folder: String?) {
+        guard selectedSnippetFolder != folder else { return }
+        selectedSnippetFolder = folder
+        scheduleSnippetFilter()
     }
 
     func scheduleSnippetFilter() {
@@ -88,7 +106,11 @@ extension MacClippyDockModel {
         }
 
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let source = snippets
+        let activeFolder = selectedSnippetFolder
+        let source = snippets.filter { snippet in
+            guard let activeFolder else { return true }
+            return snippet.folder?.trimmingCharacters(in: .whitespacesAndNewlines) == activeFolder
+        }
         guard !normalizedQuery.isEmpty else {
             filteredSnippets = source
             return
@@ -315,64 +337,6 @@ extension MacClippyDockModel {
         return false
     }
 
-    func requestSearchFocus() {
-        searchFocusRequest &+= 1
-        applyEmptyOverwriteEvent(.programmaticQueryWrite)
-    }
-
-    func resetSearchFocus() {
-        searchFocusReset &+= 1
-    }
-
-    func markSearchFieldEditable() {
-        applyEmptyOverwriteEvent(.userKeyEvent)
-    }
-
-    func noteSearchFieldUserKeyEvent() {
-        applyEmptyOverwriteEvent(.userKeyEvent)
-    }
-
-    func commitSearchFieldText(_ incoming: String, hasMarkedText: Bool = false) {
-        let current = query
-        query = MacClippyDockSearchQueryWritePolicy.committedQuery(
-            current: current,
-            incoming: incoming,
-            allowEmptyOverwrite: allowsEmptySearchFieldOverwrite,
-            hasMarkedText: hasMarkedText,
-            preservedTokens: visibleSmartListTokens
-        )
-        if !incoming.isEmpty, incoming != current {
-            applyEmptyOverwriteEvent(.nonEmptyFieldCommit)
-        }
-    }
-
-    func clearSearchQuery() {
-        applyEmptyOverwriteEvent(.explicitClear)
-        query = ""
-    }
-
-    func setErrorForDetails(_ message: String) {
-        actionError = message
-    }
-
-    func appendSearchText(_ text: String) {
-        applyEmptyOverwriteEvent(.programmaticQueryWrite)
-        query.append(text)
-    }
-
-    func deleteSearchCharacter() {
-        guard !query.isEmpty else { return }
-        applyEmptyOverwriteEvent(.explicitClear)
-        query.removeLast()
-    }
-
-    func applyEmptyOverwriteEvent(_ event: MacClippyDockSearchEmptyOverwriteEvent) {
-        allowsEmptySearchFieldOverwrite = MacClippyDockSearchQueryWritePolicy.allowsEmptyOverwrite(
-            currently: allowsEmptySearchFieldOverwrite,
-            after: event
-        )
-    }
-
     func loadPreview(
         for target: MacClippyDockPreviewTarget,
         completion: @escaping @MainActor @Sendable (Result<MacClippyRuntimePreviewPayload, Error>) -> Void
@@ -400,65 +364,6 @@ extension MacClippyDockModel {
         }
         previewWorkItem = MacClippyDispatchWorkItem(workItem)
         previewQueue.async(execute: workItem)
-    }
-
-    func loadDetails(
-        for id: RecordID,
-        completion: @escaping @MainActor @Sendable (Result<MacClippyItemDetails, Error>) -> Void
-    ) {
-        detailsCancellationToken?.cancel()
-        let cancellationToken = MacClippyCancellationToken()
-        detailsCancellationToken = cancellationToken
-        let runtimeReference = runtime
-        let session = sessionGeneration
-        workQueue.async { [runtimeReference, cancellationToken] in
-            guard !cancellationToken.isCancelled else { return }
-            let result = Result { try runtimeReference.details(id: id) }
-            MacClippyMainHop.async { [weak self] in
-                guard let self,
-                      !cancellationToken.isCancelled,
-                      self.sessionGeneration == session else { return }
-                completion(result)
-            }
-        }
-    }
-
-    func editDetails(
-        id: RecordID,
-        text: String,
-        completion: @escaping @MainActor @Sendable (Result<Void, Error>) -> Void
-    ) {
-        let runtimeReference = runtime
-        let session = sessionGeneration
-        workQueue.async { [weak self, runtimeReference] in
-            let result = Result { _ = try runtimeReference.edit(id: id, text: text) }
-            MacClippyMainHop.async { [weak self] in
-                guard let self, self.sessionGeneration == session else { return }
-                completion(result.map { _ in () })
-                if case .success = result {
-                    self.reload()
-                }
-            }
-        }
-    }
-
-    func renameDetails(
-        id: RecordID,
-        name: String?,
-        completion: @escaping @MainActor @Sendable (Result<Void, Error>) -> Void
-    ) {
-        let runtimeReference = runtime
-        let session = sessionGeneration
-        workQueue.async { [weak self, runtimeReference] in
-            let result = Result { _ = try runtimeReference.setCustomLabel(id: id, label: name) }
-            MacClippyMainHop.async { [weak self] in
-                guard let self, self.sessionGeneration == session else { return }
-                completion(result.map { _ in () })
-                if case .success = result {
-                    self.reload()
-                }
-            }
-        }
     }
 
 }

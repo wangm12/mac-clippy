@@ -217,6 +217,7 @@ extension MacClippyRuntime {
         shouldCancel: () -> Bool
     ) throws -> MacClippyHistoryPage {
         let searchCursor = try validatedSearchCursor(pageToken)
+        guard searchCursor.structuredScope == nil else { throw MacClippyHistoryPageError.searchIndexChanged }
         var lastSearchCursor = searchCursor.searchCursor
         var items: [MacClippyHistoryEntry] = []
         items.reserveCapacity(limit)
@@ -241,14 +242,7 @@ extension MacClippyRuntime {
                     return MacClippyHistoryPage(items: [], nextPageToken: nil)
                 }
                 guard let meta = metasByID[hit.id], let entry = entriesByID[hit.id] else { continue }
-                items.append(MacClippyHistoryEntry(
-                    meta: meta,
-                    contentKind: entry.contentKind,
-                    preview: MacClippySearchQuery.displayText(fromFTSSnippet: hit.snippet),
-                    fileURLs: entry.fileURLs,
-                    imageDimensions: entry.imageDimensions,
-                    isRemoteClipboard: entry.isRemoteClipboard
-                ))
+                items.append(historySearchEntry(hit, meta: meta, entry: entry))
                 lastSearchCursor = MacClippySearchCursor(rank: hit.rank, rowID: hit.rowID)
                 guard items.count == limit else { continue }
 
@@ -282,70 +276,44 @@ extension MacClippyRuntime {
         shouldCancel: () -> Bool
     ) throws -> MacClippyHistoryPage {
         let searchCursor = try validatedSearchCursor(pageToken)
+        let scope = try historySearchScope(
+            context, reusing: searchCursor.structuredScope, shouldCancel: shouldCancel
+        )
         var lastSearchCursor = searchCursor.searchCursor
         var items: [MacClippyHistoryEntry] = []
         items.reserveCapacity(context.limit)
-        let terms = context.query.bareTerms
 
         while items.count < context.limit {
             guard !shouldCancel() else {
                 return MacClippyHistoryPage(items: [], nextPageToken: nil)
             }
-            let batchLimit = max(1, context.limit - items.count + 1)
-            let (hits, metas, knownKinds) = try withStoreLock {
-                let hits = try searchStore.search(terms: terms, limit: batchLimit, after: lastSearchCursor)
-                let ids = hits.map(\.id)
-                let metas = try clipboardStore.metas(for: ids)
-                let knownKinds: [RecordID: MacClippyContentKind] = context.needsKind
-                    ? try clipboardStore.contentKinds(for: ids)
-                    : [:]
-                return (hits, metas, knownKinds)
-            }
+            let batchLimit = max(128, context.limit - items.count + 1)
+            let batch = try structuredHistorySearchBatch(
+                context, after: lastSearchCursor, scope: scope,
+                limit: batchLimit, shouldCancel: shouldCancel
+            )
+            let hits = batch.hits
             guard !hits.isEmpty else { break }
-
-            let metasByID = Dictionary(uniqueKeysWithValues: metas.map { ($0.id, $0) })
-            let matchingHits = try matchingStructuredHits(
-                hits,
-                metasByID: metasByID,
-                limit: hits.count,
-                query: context.query,
-                needsKind: context.needsKind,
-                knownKinds: knownKinds,
-                shouldCancel: shouldCancel
-            )
-            let entriesByID = try entries(
-                for: matchingHits.map { $0.1 },
-                validateContentKind: true
-            )
-            let matchingMetasByID = Dictionary(uniqueKeysWithValues: matchingHits.map { ($0.0.id, $0.1) })
 
             for (index, hit) in hits.enumerated() {
                 guard !shouldCancel() else {
                     return MacClippyHistoryPage(items: [], nextPageToken: nil)
                 }
-                guard let meta = matchingMetasByID[hit.id],
-                      let entry = entriesByID[meta.id],
-                      context.requestedKind == nil || entry.contentKind == context.requestedKind else { continue }
-                items.append(MacClippyHistoryEntry(
-                    meta: meta,
-                    contentKind: entry.contentKind,
-                    preview: MacClippySearchQuery.displayText(fromFTSSnippet: hit.snippet),
-                    fileURLs: entry.fileURLs,
-                    imageDimensions: entry.imageDimensions,
-                    isRemoteClipboard: entry.isRemoteClipboard
-                ))
+                guard let entry = batch.entriesByID[hit.id] else { continue }
+                items.append(entry)
                 lastSearchCursor = MacClippySearchCursor(rank: hit.rank, rowID: hit.rowID)
                 guard items.count == context.limit else { continue }
 
                 let hasMoreInBatch = index + 1 < hits.count || hits.count == batchLimit
-                try ensureSearchRevision(searchCursor.indexRevision)
+                try ensureStructuredSearchRevision(searchCursor.indexRevision, scope: scope)
                 return MacClippyHistoryPage(
                     items: recencySorted(items),
                     nextPageToken: hasMoreInBatch
                         ? .searchCursor(MacClippySearchPageCursor(
                             indexRevision: searchCursor.indexRevision,
                             lastRank: lastSearchCursor?.rank,
-                            lastRowID: lastSearchCursor?.rowID
+                            lastRowID: lastSearchCursor?.rowID,
+                            structuredScope: scope
                         ))
                         : nil
                 )
@@ -357,7 +325,7 @@ extension MacClippyRuntime {
             guard hits.count == batchLimit else { break }
         }
 
-        try ensureSearchRevision(searchCursor.indexRevision)
+        try ensureStructuredSearchRevision(searchCursor.indexRevision, scope: scope)
         return MacClippyHistoryPage(items: recencySorted(items), nextPageToken: nil)
     }
 
@@ -375,7 +343,7 @@ extension MacClippyRuntime {
         return cursor
     }
 
-    private func ensureSearchRevision(_ revision: Int64) throws {
+    func ensureSearchRevision(_ revision: Int64) throws {
         guard try withStoreLock({ try searchStore.indexRevision() }) == revision else {
             throw MacClippyHistoryPageError.searchIndexChanged
         }

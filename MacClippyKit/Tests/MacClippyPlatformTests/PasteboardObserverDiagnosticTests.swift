@@ -18,7 +18,8 @@ final class PasteboardObserverDiagnosticTests: XCTestCase {
         let observer = PasteboardObserver(
             reader: reader,
             pollInterval: 1,
-            diagnosticsRecorder: diagnosticsRecorder
+            diagnosticsRecorder: diagnosticsRecorder,
+            secondsSinceLastUserInput: { 0 }
         )
         var delivered: [PasteboardChange] = []
         observer.start { delivered.append($0) }
@@ -54,7 +55,8 @@ final class PasteboardObserverDiagnosticTests: XCTestCase {
             reader: reader,
             writeSentinel: sentinel,
             pollInterval: 1,
-            diagnosticsRecorder: diagnosticsRecorder
+            diagnosticsRecorder: diagnosticsRecorder,
+            secondsSinceLastUserInput: { 0 }
         )
         var delivered: [PasteboardChange] = []
         observer.start { delivered.append($0) }
@@ -90,7 +92,8 @@ final class PasteboardObserverDiagnosticTests: XCTestCase {
             reader: reader,
             pollInterval: 1,
             retryState: MacClippyPasteboardReadRetryState(maxAttempts: 4),
-            diagnosticsRecorder: diagnosticsRecorder
+            diagnosticsRecorder: diagnosticsRecorder,
+            secondsSinceLastUserInput: { 0 }
         )
         var delivered: [PasteboardChange] = []
         observer.start { delivered.append($0) }
@@ -123,7 +126,8 @@ final class PasteboardObserverDiagnosticTests: XCTestCase {
         let observer = PasteboardObserver(
             reader: reader,
             pollInterval: 1,
-            diagnosticsRecorder: diagnosticsRecorder
+            diagnosticsRecorder: diagnosticsRecorder,
+            secondsSinceLastUserInput: { 0 }
         )
         var delivered: [PasteboardChange] = []
         observer.start { delivered.append($0) }
@@ -156,7 +160,8 @@ final class PasteboardObserverDiagnosticTests: XCTestCase {
             reader: reader,
             writeSentinel: sentinel,
             pollInterval: 1,
-            diagnosticsRecorder: diagnosticsRecorder
+            diagnosticsRecorder: diagnosticsRecorder,
+            secondsSinceLastUserInput: { 0 }
         )
         var delivered: [PasteboardChange] = []
         observer.start { delivered.append($0) }

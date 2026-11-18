@@ -8,9 +8,7 @@ public enum MacClippyClipboardText {
         case let .text(value):
             value
         case let .html(value):
-            attributedString(from: record)?.string.trimmingCharacters(in: .whitespacesAndNewlines) ??
-                value.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
-                .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            MacClippyPasteboardPrivacyHTML.plainText(from: value)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
         case .rtf:
             attributedString(from: record)?.string.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -22,11 +20,12 @@ public enum MacClippyClipboardText {
     public static func attributedString(from record: ClipboardRecord) -> NSAttributedString? {
         switch record {
         case let .html(value):
-            attributedString(from: Data(value.utf8), documentType: .html)
+            let sanitized = MacClippyPasteboardPrivacyHTML.sanitizedHTMLForAttributedPreview(value)
+            return attributedString(from: Data(sanitized.utf8), documentType: .html)
         case let .rtf(data):
-            attributedString(from: data, documentType: .rtf)
+            return attributedString(from: data, documentType: .rtf)
         case .text, .image, .encryptedImage, .files:
-            nil
+            return nil
         }
     }
 
@@ -34,10 +33,27 @@ public enum MacClippyClipboardText {
         from data: Data,
         documentType: NSAttributedString.DocumentType
     ) -> NSAttributedString? {
-        let options: [NSAttributedString.DocumentReadingOptionKey: Any] = [
-            .documentType: documentType,
-            .characterEncoding: String.Encoding.utf8.rawValue
-        ]
-        return try? NSAttributedString(data: data, options: options, documentAttributes: nil)
+        if documentType == .html && !Thread.isMainThread {
+            return DispatchQueue.main.sync {
+                decodeAttributedString(from: data, documentType: .html)
+            }
+        }
+        return decodeAttributedString(from: data, documentType: documentType)
+    }
+
+    private static func decodeAttributedString(
+        from data: Data,
+        documentType: NSAttributedString.DocumentType
+    ) -> NSAttributedString? {
+        autoreleasepool {
+            var options: [NSAttributedString.DocumentReadingOptionKey: Any] = [
+                .documentType: documentType,
+                .characterEncoding: String.Encoding.utf8.rawValue
+            ]
+            if documentType == .html {
+                options[.timeout] = 0.5
+            }
+            return try? NSAttributedString(data: data, options: options, documentAttributes: nil)
+        }
     }
 }

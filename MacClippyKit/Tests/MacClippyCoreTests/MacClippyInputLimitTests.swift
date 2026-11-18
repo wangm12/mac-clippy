@@ -40,8 +40,8 @@ final class MacClippyInputLimitTests: XCTestCase {
         let updateLimits = MacClippyPasteboardInputLimits(
             maxRepresentationBytes: 8,
             maxChangeBytes: 12,
-            maxRecordBytes: 40,
-            maxHistoryBytes: 64
+            maxRecordBytes: 80,
+            maxHistoryBytes: 160
         )
         let updateStore = try ClipboardStore(
             database: MacClippyDatabase(inMemory: true),

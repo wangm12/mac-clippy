@@ -180,8 +180,8 @@ final class MacClippyCardThumbnailLoader: @unchecked Sendable {
             existing.accounting.addWaiter()
             existing.waiters[waiterID] = completion
             lock.unlock()
-            return MacClippyCardThumbnailWaiter { [weak self] in
-                self?.releaseWaiter(key, waiterID: waiterID)
+            return MacClippyCardThumbnailWaiter { [weak self, existing] in
+                self?.releaseWaiter(key, waiterID: waiterID, flight: existing)
             }
         }
         if flights[key]?.operation.isCancelled == true {
@@ -223,18 +223,19 @@ final class MacClippyCardThumbnailLoader: @unchecked Sendable {
         lock.unlock()
         queue.addOperation(operation)
 
-        return MacClippyCardThumbnailWaiter { [weak self] in
-            self?.releaseWaiter(key, waiterID: waiterID)
+        return MacClippyCardThumbnailWaiter { [weak self, flight] in
+            self?.releaseWaiter(key, waiterID: waiterID, flight: flight)
         }
     }
 
-    private func releaseWaiter(_ key: RequestKey, waiterID: UUID) {
+    private func releaseWaiter(_ key: RequestKey, waiterID: UUID, flight originFlight: Flight) {
         lock.lock()
-        guard let flight = flights[key] else {
+        guard let flight = flights[key],
+              flight === originFlight,
+              flight.waiters.removeValue(forKey: waiterID) != nil else {
             lock.unlock()
             return
         }
-        flight.waiters.removeValue(forKey: waiterID)
         if flight.accounting.releaseWaiter() {
             let operation = flight.operation
             operation.cancel()

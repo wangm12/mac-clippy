@@ -148,8 +148,8 @@ final class MacClippySettingsTests: XCTestCase {
         let message = MacClippyPrivacyNoticePolicy.message
 
         XCTAssertTrue(message.contains("Deleting history removes"))
-        XCTAssertTrue(message.contains("makes no network calls"))
-        XCTAssertTrue(message.contains("formal public privacy-policy URL"))
+        XCTAssertTrue(message.contains("makes no network calls by default"))
+        XCTAssertFalse(message.contains("formal public privacy-policy URL"))
         XCTAssertFalse(MacClippyPrivacyNoticePolicy.settingsTitle.isEmpty)
     }
 

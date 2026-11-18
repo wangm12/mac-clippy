@@ -66,6 +66,37 @@ final class MacClippyDeletionJournalTests: XCTestCase {
         XCTAssertTrue(try store.pendingDeletions().isEmpty)
     }
 
+    func testDeletionJournalReadsAllDistinctBlobsAcrossDuplicateRecordReferences() throws {
+        let store = try ClipboardStore(
+            database: MacClippyDatabase(inMemory: true),
+            deviceKey: testKey()
+        )
+        var recordIDs: [RecordID] = []
+        for index in 0..<257 {
+            let blobID = index < 2 ? "shared-blob" : "blob-\(index)"
+            let meta = try store.append(
+                .text("journal page \(index)"),
+                representations: [
+                    MacClippyClipboardRepresentation(
+                        uti: "public.data",
+                        payloadBytes: nil,
+                        blobID: blobID
+                    )
+                ]
+            )
+            recordIDs.append(meta.id)
+        }
+
+        let immediate = try XCTUnwrap(store.beginDeletion(ids: recordIDs))
+        let reread = try XCTUnwrap(store.pendingDeletions().first)
+
+        XCTAssertEqual(immediate.recordIDs.count, 257)
+        XCTAssertEqual(immediate.blobIDs.count, 256)
+        XCTAssertEqual(Set(reread.recordIDs), Set(immediate.recordIDs))
+        XCTAssertEqual(reread.blobIDs, immediate.blobIDs)
+        XCTAssertEqual(reread.blobIDs.count, 256)
+    }
+
     func testDeletionJournalFailsClosedWhenStoredKindDisagreesWithEnvelope() throws {
         let database = try MacClippyDatabase(inMemory: true)
         let store = try ClipboardStore(database: database, deviceKey: testKey())
@@ -91,7 +122,11 @@ final class MacClippyDeletionJournalTests: XCTestCase {
         let blobRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("MacClippyDeletionJournalFailure-\(UUID().uuidString)")
         let blobs = try BlobStore(rootURL: blobRoot, key: testKey())
-        defer { try? FileManager.default.removeItem(at: blobRoot) }
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: blobRoot.path)
+            try? FileManager.default.removeItem(at: blobRoot)
+        }
+        let blobID = try blobs.write(Data("retained after failed unlink".utf8), id: "journal-blob")
 
         let meta = try store.append(
             .text("journal blob failure"),
@@ -99,11 +134,12 @@ final class MacClippyDeletionJournalTests: XCTestCase {
                 MacClippyClipboardRepresentation(
                     uti: "public.data",
                     payloadBytes: nil,
-                    blobID: "../invalid-blob-id"
+                    blobID: blobID
                 )
             ]
         )
         try search.upsert(id: meta.id, text: "journal blob failure")
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: blobRoot.path)
 
         let policy = RetentionPolicy(maxItems: 0)
         XCTAssertThrowsError(try policy.enforce(store: store, blobs: blobs, search: search))
@@ -113,7 +149,7 @@ final class MacClippyDeletionJournalTests: XCTestCase {
         let pending = try store.pendingDeletions()
         XCTAssertEqual(pending.count, 1)
         XCTAssertEqual(pending[0].recordIDs, [meta.id])
-        XCTAssertEqual(pending[0].blobIDs, ["../invalid-blob-id"])
+        XCTAssertEqual(pending[0].blobIDs, [blobID])
     }
 
     func testRetentionCompletesJournalAfterSuccessfulTextDeletion() throws {

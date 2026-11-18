@@ -260,7 +260,7 @@ final class MacClippyDockEfficiencyTests: XCTestCase {
     }
 
     @MainActor
-    func testToggleSmartListAppliesAndClearsTheSavedQuery() {
+    func testToggleSmartListPreservesKeywordsAndTogglesOnlyType() {
         let model = MacClippyDockModel(runtime: runtime)
         let urls = MacClippySmartListPolicy.catalog[0]
         model.query = "invoice"
@@ -269,12 +269,12 @@ final class MacClippyDockEfficiencyTests: XCTestCase {
         model.toggleSmartList(urls)
 
         XCTAssertTrue(MacClippySmartListPolicy.isActive(urls, in: model.query))
-        XCTAssertEqual(model.query, "type:url")
+        XCTAssertEqual(model.query, "invoice type:url")
         XCTAssertEqual(model.selectedTab, .history)
 
         model.toggleSmartList(urls)
         XCTAssertFalse(MacClippySmartListPolicy.isActive(urls, in: model.query))
-        XCTAssertEqual(model.query, "")
+        XCTAssertEqual(model.query, "invoice")
         XCTAssertTrue(model.isAllFilterSelected)
     }
 
@@ -303,7 +303,7 @@ final class MacClippyDockEfficiencyTests: XCTestCase {
     }
 
     @MainActor
-    func testSelectAllFilterClearsTheActiveSmartList() {
+    func testHistoryNavigationPreservesTheActiveSearch() {
         let model = MacClippyDockModel(runtime: runtime)
         let urls = MacClippySmartListPolicy.catalog[0]
         model.query = "invoice"
@@ -312,11 +312,11 @@ final class MacClippyDockEfficiencyTests: XCTestCase {
 
         model.selectAllFilter()
 
-        XCTAssertTrue(model.isAllFilterSelected)
+        XCTAssertFalse(model.isAllFilterSelected)
         XCTAssertEqual(model.selectedTab, .history)
-        XCTAssertEqual(model.query, "")
-        XCTAssertFalse(MacClippySmartListPolicy.isActive(urls, in: model.query))
-        XCTAssertEqual(model.displayedSearchText, "")
+        XCTAssertEqual(model.query, "invoice type:url")
+        XCTAssertTrue(MacClippySmartListPolicy.isActive(urls, in: model.query))
+        XCTAssertEqual(model.displayedSearchText, "invoice")
     }
 
     @MainActor
@@ -330,6 +330,7 @@ final class MacClippyDockEfficiencyTests: XCTestCase {
         model.query = "typeimage"
         XCTAssertTrue(model.visibleItems.isEmpty)
 
+        model.clearSearchQuery()
         model.toggleSmartList(MacClippySmartListPolicy.catalog[0])
         model.commitSearchFieldText("typeimage")
         XCTAssertEqual(model.query, "type:url")
@@ -348,9 +349,8 @@ final class MacClippyDockEfficiencyTests: XCTestCase {
 
         model.selectAllFilter()
         model.commitSearchFieldText("typeimage")
-        XCTAssertTrue(model.isAllFilterSelected)
-        XCTAssertEqual(model.query, "")
-        XCTAssertEqual(model.visibleItems.map(\.id), [url.id, image.id, text.id])
+        XCTAssertEqual(model.query, "type:image")
+        XCTAssertEqual(model.visibleItems.map(\.id), [image.id])
     }
 
     @MainActor

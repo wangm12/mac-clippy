@@ -19,14 +19,16 @@ extension MacClippyRuntime {
     /// that case no per-item outcome is known.
     @discardableResult
     func delete(ids: [RecordID]) throws -> MacClippyBatchDeleteResult {
-        try withStoreLock {
+        try clipboardStore.authenticateOwnedBlobReferenceIndex()
+        return try withStoreLock {
             try deleteLocked(ids: ids)
         }
     }
 
     @discardableResult
     func deleteUnpinnedHistory() throws -> MacClippyBatchDeleteResult {
-        try withStoreLock {
+        try clipboardStore.authenticateOwnedBlobReferenceIndex()
+        return try withStoreLock {
             try deleteUnpinnedHistoryLocked()
         }
     }
@@ -38,6 +40,9 @@ extension MacClippyRuntime {
         guard isCurrentLifecycleToken(lifecycleToken) else {
             throw CancellationError()
         }
+        try clipboardStore.authenticateOwnedBlobReferenceIndex(shouldContinue: { [weak self] in
+            self?.isCurrentLifecycleToken(lifecycleToken) ?? false
+        })
 
         var aggregate = MacClippyBatchDeleteResult(
             deletedIDs: [],

@@ -69,7 +69,7 @@ final class MacClippyDockInteractionPolicyTests: XCTestCase {
         XCTAssertEqual(action(mode: .search, keyCode: 49, hasCardFocus: true), .native)
         XCTAssertEqual(action(mode: .search, keyCode: 123, hasCardFocus: true), .native)
         XCTAssertEqual(action(mode: .search, keyCode: 51, hasCardFocus: true), .native)
-        XCTAssertEqual(action(mode: .search, keyCode: 36, hasCardFocus: true), .native)
+        XCTAssertEqual(action(mode: .search, keyCode: 36, hasCardFocus: true), .focusResults)
         XCTAssertEqual(action(mode: .search, keyCode: 53, hasCardFocus: true), .exitSearch)
         XCTAssertEqual(
             action(mode: .search, keyCode: 53, hasCardFocus: true, hasMarkedText: true),

@@ -1,6 +1,6 @@
 import Foundation
 
-public enum MacClippyCardDragRepresentation: Equatable, Sendable {
+public enum MacClippyCardDragRepresentation: Hashable, Sendable {
     case recordID
     case plainText
     case rtf

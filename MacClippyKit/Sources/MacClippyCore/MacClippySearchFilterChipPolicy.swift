@@ -59,10 +59,7 @@ public enum MacClippySearchFilterChipPolicy {
         let parsed = MacClippySearchGrammar.parse(raw)
         let remaining = parsed.clauses.filter { self.token(for: $0, calendar: calendar) != token }
         guard remaining.count != parsed.clauses.count else { return raw }
-        return serialize(
-            MacClippySearchGrammar.Query(bareTerms: parsed.bareTerms, clauses: remaining),
-            calendar: calendar
-        )
+        return MacClippySearchGrammar.removingFilterToken(token, from: raw, calendar: calendar)
     }
 
     public static func appending(

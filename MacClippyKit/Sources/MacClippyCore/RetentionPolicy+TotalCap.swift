@@ -1,12 +1,5 @@
 import Foundation
 
-private struct MacClippyTotalStorageAccounting {
-    var totalBytes = 0
-    var countedBlobIDs = Set<String>()
-    var blobReferenceCounts: [String: Int] = [:]
-    var blobByteCounts: [String: Int] = [:]
-}
-
 private struct MacClippyTotalDeletionBatch {
     let ids: [RecordID]
     let expectedFootprints: [RecordID: (modified: Date, footprint: MacClippyStoredPayloadFootprint)]
@@ -17,11 +10,15 @@ private struct MacClippyTotalRetentionContext {
     let blobs: BlobStore
     let search: SearchStore
     let protectedIDs: Set<RecordID>
-    let accounting: MacClippyTotalStorageAccounting
     let maxTotalBytes: Int
     let shouldContinue: () -> Bool
     let withCommitFence: (() throws -> Void) throws -> Void
     let protectedIDsProvider: (() throws -> Set<RecordID>)?
+}
+
+private struct MacClippyTotalCommitOutcome {
+    let deletion: MacClippyRetentionDeletionResult
+    let revision: Int64
 }
 
 extension MacClippyRetentionPolicy {
@@ -34,143 +31,123 @@ extension MacClippyRetentionPolicy {
         withCommitFence: @escaping ((() throws -> Void) throws -> Void) = { operation in try operation() },
         protectedIDsProvider: (() throws -> Set<RecordID>)? = nil
     ) throws {
-        guard let maxTotalBytes else { return }
-        guard shouldContinue() else { return }
-        var accounting = MacClippyTotalStorageAccounting()
-        try Self.buildTotalStorageAccounting(
-            store: store,
-            blobs: blobs,
-            protectedIDs: protectedIDs,
-            accounting: &accounting,
-            shouldContinue: shouldContinue
-        )
-        guard shouldContinue(), accounting.totalBytes > maxTotalBytes else { return }
-
+        guard let maxTotalBytes, shouldContinue() else { return }
         let context = MacClippyTotalRetentionContext(
-            store: store,
-            blobs: blobs,
-            search: search,
-            protectedIDs: protectedIDs,
-            accounting: accounting,
-            maxTotalBytes: maxTotalBytes,
-            shouldContinue: shouldContinue,
-            withCommitFence: withCommitFence,
-            protectedIDsProvider: protectedIDsProvider
+            store: store, blobs: blobs, search: search, protectedIDs: protectedIDs,
+            maxTotalBytes: max(0, maxTotalBytes), shouldContinue: shouldContinue,
+            withCommitFence: withCommitFence, protectedIDsProvider: protectedIDsProvider
         )
-
-        var remaining = accounting.totalBytes
-        var remainingBlobReferences = accounting.blobReferenceCounts
-        var madeProgress = true
-        while remaining > maxTotalBytes, madeProgress, shouldContinue() {
-            madeProgress = false
-            try Self.deleteTotalPageCandidates(
-                context: context,
-                remaining: &remaining,
-                remainingBlobReferences: &remainingBlobReferences,
-                madeProgress: &madeProgress
+        guard var accounting = try Self.refreshedTotalAccounting(context) else { return }
+        var restarts = 0
+        while accounting.totalBytes > context.maxTotalBytes, shouldContinue() {
+            var madeProgress = false
+            let invalidated = try Self.deleteTotalPageCandidates(
+                context: context, accounting: &accounting, madeProgress: &madeProgress
             )
+            if invalidated {
+                restarts += 1
+                guard restarts <= 3, let refreshed = try Self.refreshedTotalAccounting(context) else { return }
+                accounting = refreshed
+            } else if !madeProgress {
+                return
+            }
         }
     }
 
-    private static func buildTotalStorageAccounting(
-        store: ClipboardStore,
-        blobs: BlobStore,
-        protectedIDs: Set<RecordID>,
-        accounting: inout MacClippyTotalStorageAccounting,
-        shouldContinue: @escaping () -> Bool
-    ) throws {
-        try scanMetadataPagesOldest(store: store, shouldContinue: shouldContinue) { page in
-            for meta in page {
-                let footprint = try store.storageFootprint(for: meta.id)
-                for blobID in footprint.blobIDs {
-                    accounting.blobReferenceCounts[blobID, default: 0] += 1
-                    if accounting.blobByteCounts[blobID] == nil {
-                        accounting.blobByteCounts[blobID] = try blobs.byteSizeChecked(id: blobID)
-                    }
-                }
-                guard !protectedIDs.contains(meta.id) else { continue }
-                accounting.totalBytes += footprint.inlineBytes
-                for blobID in footprint.blobIDs where accounting.countedBlobIDs.insert(blobID).inserted {
-                    accounting.totalBytes += accounting.blobByteCounts[blobID] ?? 0
-                }
-            }
-            return false
-        }
+    private static func refreshedTotalAccounting(
+        _ context: MacClippyTotalRetentionContext
+    ) throws -> MacClippyTotalStorageAccounting? {
+        try totalStorageAccounting(
+            store: context.store, blobs: context.blobs, protectedIDs: context.protectedIDs,
+            protectedIDsProvider: context.protectedIDsProvider, shouldContinue: context.shouldContinue
+        )
     }
 
     private static func deleteTotalPageCandidates(
         context: MacClippyTotalRetentionContext,
-        remaining: inout Int,
-        remainingBlobReferences: inout [String: Int],
+        accounting: inout MacClippyTotalStorageAccounting,
         madeProgress: inout Bool
-    ) throws {
+    ) throws -> Bool {
+        var invalidated = false
         try scanMetadataPagesOldest(store: context.store, shouldContinue: context.shouldContinue) { page in
-            let candidates = page.filter { !context.protectedIDs.contains($0.id) }
+            let candidates = page.filter { !accounting.protectedIDs.contains($0.id) }
             var candidateIndex = 0
-            while remaining > context.maxTotalBytes, candidateIndex < candidates.count {
-                guard let batch = try makeTotalDeletionBatch(
-                    candidates: candidates,
-                    candidateIndex: &candidateIndex,
-                    context: context,
-                    remaining: remaining,
-                    remainingBlobReferences: remainingBlobReferences
-                ) else { break }
-
-                let deletedIDs = try deleteRecords(
-                    batch.ids,
-                    store: context.store,
-                    blobs: context.blobs,
-                    search: context.search,
-                    protectedIDsProvider: context.protectedIDsProvider,
-                    shouldContinue: context.shouldContinue,
-                    withCommitFence: context.withCommitFence,
-                    revalidateIDs: { ids in
-                        try revalidatedTotalIDs(ids, expected: batch.expectedFootprints, store: context.store)
+            while accounting.totalBytes > context.maxTotalBytes, candidateIndex < candidates.count {
+                let batch: MacClippyTotalDeletionBatch?
+                do {
+                    batch = try makeTotalDeletionBatch(
+                        candidates: candidates, candidateIndex: &candidateIndex,
+                        context: context, accounting: accounting
+                    )
+                } catch MacClippyStoreError.recordNotFound {
+                    guard try context.store.recordsRevision() != accounting.revision else {
+                        throw MacClippyStoreError.recordNotFound
                     }
-                )
-                for id in deletedIDs {
-                    guard let footprint = batch.expectedFootprints[id]?.footprint else { continue }
-                    remaining -= footprint.inlineBytes
-                    for blobID in footprint.blobIDs {
-                        remainingBlobReferences[blobID, default: 0] -= 1
-                        if remainingBlobReferences[blobID] == 0 {
-                            remaining -= context.accounting.blobByteCounts[blobID] ?? 0
-                        }
-                    }
+                    invalidated = true
+                    return true
                 }
-                madeProgress = madeProgress || !deletedIDs.isEmpty
+                guard let batch else { break }
+                guard let outcome = try commitTotalDeletionBatch(batch, context: context, accounting: accounting) else {
+                    invalidated = true
+                    return true
+                }
+                for id in outcome.deletion.recordIDs {
+                    if let footprint = batch.expectedFootprints[id]?.footprint { accounting.remove(footprint) }
+                }
+                accounting.revision = outcome.revision
+                madeProgress = madeProgress || !outcome.deletion.recordIDs.isEmpty
             }
-            return remaining <= context.maxTotalBytes
+            return accounting.totalBytes <= context.maxTotalBytes
         }
+        return invalidated
+    }
+
+    private static func commitTotalDeletionBatch(
+        _ batch: MacClippyTotalDeletionBatch,
+        context: MacClippyTotalRetentionContext,
+        accounting: MacClippyTotalStorageAccounting
+    ) throws -> MacClippyTotalCommitOutcome? {
+        var revisionAfter: Int64?
+        let deletion = try deleteRecords(
+            batch.ids, store: context.store, blobs: context.blobs, search: context.search,
+            protectedIDsProvider: context.protectedIDsProvider, shouldContinue: context.shouldContinue,
+            withCommitFence: { operation in
+                try context.withCommitFence {
+                    guard context.shouldContinue() else { return }
+                    let protectedIDs = try context.protectedIDsProvider?() ?? context.protectedIDs
+                    guard try context.store.recordsRevision() == accounting.revision,
+                          protectedIDs == accounting.protectedIDs else { return }
+                    // Validate the whole budget before deleting any member of a
+                    // planned batch. Ownership or pins may have changed at the fence.
+                    try operation()
+                    revisionAfter = try context.store.recordsRevision()
+                }
+            },
+            revalidateIDs: { ids in
+                try revalidatedTotalIDs(ids, expected: batch.expectedFootprints, store: context.store)
+            }
+        )
+        guard let revisionAfter else { return nil }
+        return MacClippyTotalCommitOutcome(deletion: deletion, revision: revisionAfter)
     }
 
     private static func makeTotalDeletionBatch(
         candidates: [ClipboardItemMeta],
         candidateIndex: inout Int,
         context: MacClippyTotalRetentionContext,
-        remaining: Int,
-        remainingBlobReferences: [String: Int]
+        accounting: MacClippyTotalStorageAccounting
     ) throws -> MacClippyTotalDeletionBatch? {
         var ids: [RecordID] = []
         var expectedFootprints: [RecordID: (modified: Date, footprint: MacClippyStoredPayloadFootprint)] = [:]
-        var plannedRemaining = remaining
-        var plannedBlobReferences = remainingBlobReferences
-        while candidateIndex < candidates.count, plannedRemaining > context.maxTotalBytes {
+        var planned = accounting
+        while candidateIndex < candidates.count, planned.totalBytes > context.maxTotalBytes, context.shouldContinue() {
             let meta = candidates[candidateIndex]
             candidateIndex += 1
             let footprint = try context.store.storageFootprint(for: meta.id)
-            let releasableBlobBytes = footprint.blobIDs.reduce(into: 0) { bytes, blobID in
-                guard plannedBlobReferences[blobID] == 1 else { return }
-                bytes += context.accounting.blobByteCounts[blobID] ?? 0
-            }
-            let bytes = footprint.inlineBytes + releasableBlobBytes
-            guard bytes > 0 else { continue }
+            guard footprint.inlineBytes > 0 || !footprint.blobIDs.isEmpty else { continue }
             ids.append(meta.id)
             expectedFootprints[meta.id] = (meta.modified, footprint)
-            plannedRemaining -= bytes
-            for blobID in footprint.blobIDs {
-                plannedBlobReferences[blobID, default: 0] -= 1
-            }
+            planned.remove(footprint)
         }
         guard !ids.isEmpty else { return nil }
         return MacClippyTotalDeletionBatch(ids: ids, expectedFootprints: expectedFootprints)
@@ -184,13 +161,8 @@ extension MacClippyRetentionPolicy {
         let currentMetas = try store.metas(for: ids)
         return try currentMetas.compactMap { meta in
             guard let expectedFootprint = expected[meta.id],
-                  expectedFootprint.modified == meta.modified
-            else {
-                return nil
-            }
-            return try store.storageFootprint(for: meta.id) == expectedFootprint.footprint
-                ? meta.id
-                : nil
+                  expectedFootprint.modified == meta.modified else { return nil }
+            return try store.storageFootprint(for: meta.id) == expectedFootprint.footprint ? meta.id : nil
         }
     }
 }

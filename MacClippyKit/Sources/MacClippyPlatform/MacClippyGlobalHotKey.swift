@@ -109,14 +109,59 @@ public final class MacClippyGlobalHotKey {
         return hotKey.handle(event)
     }
 
+    private final class RegistrationState: @unchecked Sendable {
+        private let lock = NSLock()
+        var hotKeyRef: EventHotKeyRef?
+        var eventHandlerRef: EventHandlerRef?
+
+        var isRegistered: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return hotKeyRef != nil && eventHandlerRef != nil
+        }
+
+        var hasHotKey: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return hotKeyRef != nil
+        }
+
+        func setEventHandler(_ handler: EventHandlerRef?) {
+            lock.lock()
+            eventHandlerRef = handler
+            lock.unlock()
+        }
+
+        func setHotKey(_ hotKey: EventHotKeyRef?) {
+            lock.lock()
+            hotKeyRef = hotKey
+            lock.unlock()
+        }
+
+        func unregister() {
+            lock.lock()
+            let hotKey = hotKeyRef
+            let handler = eventHandlerRef
+            hotKeyRef = nil
+            eventHandlerRef = nil
+            lock.unlock()
+
+            if let hotKey {
+                UnregisterEventHotKey(hotKey)
+            }
+            if let handler {
+                RemoveEventHandler(handler)
+            }
+        }
+    }
+
     private var descriptor: MacClippyGlobalHotKeyDescriptor
     private let eventHotKeyID: EventHotKeyID
     private let callback: @MainActor @Sendable () -> Void
-    private var hotKeyRef: EventHotKeyRef?
-    private var eventHandlerRef: EventHandlerRef?
+    private let registrationState = RegistrationState()
 
     public var isRegistered: Bool {
-        hotKeyRef != nil && eventHandlerRef != nil
+        registrationState.isRegistered
     }
 
     public init(
@@ -129,8 +174,12 @@ public final class MacClippyGlobalHotKey {
         self.callback = callback
     }
 
+    deinit {
+        registrationState.unregister()
+    }
+
     public func register() throws {
-        guard hotKeyRef == nil, eventHandlerRef == nil else { return }
+        guard !registrationState.isRegistered else { return }
 
         var eventType = EventTypeSpec(
             eventClass: OSType(kEventClassKeyboard),
@@ -148,7 +197,7 @@ public final class MacClippyGlobalHotKey {
         guard installStatus == noErr, let installedHandler else {
             throw MacClippyGlobalHotKeyError.eventHandlerInstallationFailed(installStatus)
         }
-        eventHandlerRef = installedHandler
+        registrationState.setEventHandler(installedHandler)
 
         var registeredHotKey: EventHotKeyRef?
         let registrationStatus = RegisterEventHotKey(
@@ -163,18 +212,11 @@ public final class MacClippyGlobalHotKey {
             unregister()
             throw MacClippyGlobalHotKeyError.registrationFailed(registrationStatus)
         }
-        hotKeyRef = registeredHotKey
+        registrationState.setHotKey(registeredHotKey)
     }
 
     public func unregister() {
-        if let hotKeyRef {
-            UnregisterEventHotKey(hotKeyRef)
-        }
-        if let eventHandlerRef {
-            RemoveEventHandler(eventHandlerRef)
-        }
-        hotKeyRef = nil
-        eventHandlerRef = nil
+        registrationState.unregister()
     }
 
     public func update(to newDescriptor: MacClippyGlobalHotKeyDescriptor) throws {
@@ -227,12 +269,12 @@ public final class MacClippyGlobalHotKey {
 
         if Thread.isMainThread {
             MainActor.assumeIsolated { [weak self] in
-                guard let self, self.hotKeyRef != nil else { return }
+                guard let self, self.registrationState.hasHotKey else { return }
                 self.callback()
             }
         } else {
             DispatchQueue.main.async { @MainActor [weak self] in
-                guard let self, self.hotKeyRef != nil else { return }
+                guard let self, self.registrationState.hasHotKey else { return }
                 self.callback()
             }
         }

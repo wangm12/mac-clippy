@@ -4,6 +4,12 @@ import Foundation
 import MacClippyCore
 import MacClippyPlatform
 
+private struct MacClippyPasteExecutionContext {
+    let targetProcessIdentifier: Int32?
+    let beforePaste: (() -> Bool)?
+    let gate: MacClippyPasteInjectionGate?
+}
+
 private enum MacClippyQueuedPastePreparation {
     case content(MacClippyPasteboardContent)
     case unavailable(MacClippyDockMultiPastePolicy.Kind)
@@ -12,7 +18,67 @@ private enum MacClippyQueuedPastePreparation {
 private enum MacClippyQueuedPasteAttempt {
     case injected
     case unavailable(MacClippyDockMultiPastePolicy.Kind)
-    case manualPasteRequired
+    case preparedForManualPaste
+    case failed(MacClippyPasteInjectionFailure)
+    case cancelled
+}
+
+private struct MacClippyQueuedPasteProgress {
+    private(set) var injectedIDs: [RecordID] = []
+    private(set) var unavailableIDs: [RecordID] = []
+    private(set) var unavailableKinds: [MacClippyDockMultiPastePolicy.Kind] = []
+
+    mutating func record(
+        _ attempt: MacClippyQueuedPasteAttempt,
+        id: RecordID,
+        remainingIDs: [RecordID]
+    ) -> MacClippyQueuePasteResult? {
+        switch attempt {
+        case let .unavailable(kind):
+            unavailableIDs.append(id)
+            unavailableKinds.append(kind)
+            return nil
+        case .injected:
+            injectedIDs.append(id)
+            return nil
+        case .preparedForManualPaste:
+            return .preparedForManualPaste(
+                injectedIDs: injectedIDs,
+                unavailableIDs: unavailableIDs,
+                unavailableKinds: unavailableKinds,
+                preparedID: id,
+                remainingIDs: remainingIDs
+            )
+        case let .failed(failure):
+            return .failed(
+                injectedIDs: injectedIDs,
+                unavailableIDs: unavailableIDs,
+                unavailableKinds: unavailableKinds,
+                failedID: id,
+                failure: failure,
+                remainingIDs: remainingIDs
+            )
+        case .cancelled:
+            return cancelled(remainingIDs: remainingIDs)
+        }
+    }
+
+    func cancelled(remainingIDs: [RecordID]) -> MacClippyQueuePasteResult {
+        .cancelled(
+            injectedIDs: injectedIDs,
+            unavailableIDs: unavailableIDs,
+            unavailableKinds: unavailableKinds,
+            remainingIDs: remainingIDs
+        )
+    }
+
+    func completed() -> MacClippyQueuePasteResult {
+        .completed(
+            injectedIDs: injectedIDs,
+            unavailableIDs: unavailableIDs,
+            unavailableKinds: unavailableKinds
+        )
+    }
 }
 
 extension MacClippyRuntime {
@@ -33,7 +99,7 @@ extension MacClippyRuntime {
     ///     queue CONTINUES with the remaining IDs — nothing is silently skipped.
     ///   - Inject one Cmd+V through the shared MacClippyPasteInjector. Bump that
     ///     record's frequency only after .injected.
-    ///   - If the injector returns .manualPasteRequired, STOP immediately: the
+    ///   - If the injector returns .preparedForManualPaste, STOP immediately:
     ///     current pasteboard item has not been consumed automatically. Return
     ///     the current ID plus all remaining IDs in remainingIDs; do not claim
     ///     them injected and do not continue posting events.
@@ -48,14 +114,19 @@ extension MacClippyRuntime {
     @discardableResult
     func pasteQueued(
         ids: [RecordID],
-        shouldCancel: () -> Bool = { false },
+        shouldCancel: @escaping () -> Bool = { false },
+        beforePaste: (() -> Bool)? = nil,
         sideEffectGate: MacClippyPasteInjectionGate? = nil,
+        targetProcessIdentifier: Int32? = nil,
         onProgress: (@Sendable (Int, Int) -> Void)? = nil
     ) throws -> MacClippyQueuePasteResult {
         try measureDiagnosticMetric("paste_queue") {
-            guard !shouldCancel() else {
-                return completedQueuedPasteResult(
-                    injectedIDs: [], unavailableIDs: [], unavailableKinds: []
+            guard !shouldCancel(), sideEffectGate?.isOpen != false else {
+                return .cancelled(
+                    injectedIDs: [],
+                    unavailableIDs: [],
+                    unavailableKinds: [],
+                    remainingIDs: ids
                 )
             }
 
@@ -66,7 +137,11 @@ extension MacClippyRuntime {
                 ids: ids,
                 knownKinds: knownKinds,
                 shouldCancel: shouldCancel,
-                sideEffectGate: sideEffectGate,
+                context: .init(
+                    targetProcessIdentifier: targetProcessIdentifier,
+                    beforePaste: beforePaste,
+                    gate: sideEffectGate
+                ),
                 onProgress: onProgress
             )
         }
@@ -75,80 +150,61 @@ extension MacClippyRuntime {
     private func pasteQueuedRecords(
         ids: [RecordID],
         knownKinds: [RecordID: MacClippyContentKind],
-        shouldCancel: () -> Bool,
-        sideEffectGate: MacClippyPasteInjectionGate?,
+        shouldCancel: @escaping () -> Bool,
+        context: MacClippyPasteExecutionContext,
         onProgress: (@Sendable (Int, Int) -> Void)?
     ) throws -> MacClippyQueuePasteResult {
-        var injectedIDs: [RecordID] = []
-        var unavailableIDs: [RecordID] = []
-        var unavailableKinds: [MacClippyDockMultiPastePolicy.Kind] = []
+        let sideEffectGate = context.gate
+        var progress = MacClippyQueuedPasteProgress()
 
         for (index, id) in ids.enumerated() {
-            guard !shouldCancel() else {
-                return completedQueuedPasteResult(
-                    injectedIDs: injectedIDs,
-                    unavailableIDs: unavailableIDs,
-                    unavailableKinds: unavailableKinds
-                )
+            guard !shouldCancel(), sideEffectGate?.isOpen != false else {
+                return progress.cancelled(remainingIDs: Array(ids[index...]))
             }
 
             onProgress?(index + 1, ids.count)
-            switch try attemptQueuedPaste(
+            let attempt = try attemptQueuedPaste(
                 id: id,
                 knownKinds: knownKinds,
-                sideEffectGate: sideEffectGate
-            ) {
-            case let .unavailable(kind):
-                unavailableIDs.append(id)
-                unavailableKinds.append(kind)
-            case .injected:
-                injectedIDs.append(id)
-            case .manualPasteRequired:
-                return .manualPasteRequired(
-                    injectedIDs: injectedIDs,
-                    unavailableIDs: unavailableIDs,
-                    unavailableKinds: unavailableKinds,
-                    manualPasteRequiredID: id,
-                    remainingIDs: Array(ids[index...])
+                beforePaste: index == 0 ? context.beforePaste : nil,
+                execution: QueuedPasteExecution(
+                    shouldCancel: shouldCancel,
+                    sideEffectGate: sideEffectGate,
+                    targetProcessIdentifier: context.targetProcessIdentifier
                 )
+            )
+            if let terminalResult = progress.record(
+                attempt,
+                id: id,
+                remainingIDs: Array(ids[index...])
+            ) {
+                return terminalResult
             }
 
             guard waitForQueuedPasteIfNeeded(
                 index: index,
                 totalCount: ids.count,
-                shouldCancel: shouldCancel
+                shouldCancel: shouldCancel,
+                sideEffectGate: sideEffectGate
             ) else {
-                return completedQueuedPasteResult(
-                    injectedIDs: injectedIDs,
-                    unavailableIDs: unavailableIDs,
-                    unavailableKinds: unavailableKinds
-                )
+                return progress.cancelled(remainingIDs: Array(ids.dropFirst(index + 1)))
             }
         }
 
-        return completedQueuedPasteResult(
-            injectedIDs: injectedIDs,
-            unavailableIDs: unavailableIDs,
-            unavailableKinds: unavailableKinds
-        )
+        return progress.completed()
     }
 
-    private func completedQueuedPasteResult(
-        injectedIDs: [RecordID],
-        unavailableIDs: [RecordID],
-        unavailableKinds: [MacClippyDockMultiPastePolicy.Kind]
-    ) -> MacClippyQueuePasteResult {
-        .completed(
-            injectedIDs: injectedIDs,
-            unavailableIDs: unavailableIDs,
-            unavailableKinds: unavailableKinds
-        )
+    private struct QueuedPasteExecution {
+        let shouldCancel: () -> Bool
+        let sideEffectGate: MacClippyPasteInjectionGate?
+        let targetProcessIdentifier: Int32?
     }
 
     private func attemptQueuedPaste(
         id: RecordID,
         knownKinds: [RecordID: MacClippyContentKind],
-        sideEffectGate: MacClippyPasteInjectionGate?
+        beforePaste: (() -> Bool)?,
+        execution: QueuedPasteExecution
     ) throws -> MacClippyQueuedPasteAttempt {
         switch try prepareQueuedPasteContent(id: id, knownKinds: knownKinds) {
         case let .unavailable(kind):
@@ -157,12 +213,19 @@ extension MacClippyRuntime {
             switch injectPasteboardContent(
                 content,
                 frequencyIDs: [id],
-                sideEffectGate: sideEffectGate
+                targetProcessIdentifier: execution.targetProcessIdentifier,
+                beforePaste: beforePaste,
+                validateBeforePaste: { !execution.shouldCancel() },
+                sideEffectGate: execution.sideEffectGate
             ) {
             case .injected:
                 return .injected
-            case .manualPasteRequired:
-                return .manualPasteRequired
+            case .preparedForManualPaste:
+                return .preparedForManualPaste
+            case let .failed(failure):
+                return .failed(failure)
+            case .cancelled:
+                return .cancelled
             }
         }
     }
@@ -172,10 +235,12 @@ extension MacClippyRuntime {
         knownKinds: [RecordID: MacClippyContentKind]
     ) throws -> MacClippyQueuedPastePreparation {
         do {
-            return try withStoreLock {
-                let body = try clipboardStore.body(for: id)
-                return .content(try pasteboardContent(for: body, plain: false))
+            let blobLease = try blobStore.acquireRootReadLease()
+            defer { blobLease.release() }
+            let snapshot = try withStoreLock {
+                try clipboardStore.playbackSnapshot(for: id)
             }
+            return .content(try pasteboardContent(for: snapshot, plain: false))
         } catch {
             let isMissing: Bool = {
                 guard let storeError = error as? MacClippyStoreError else { return false }
@@ -195,12 +260,13 @@ extension MacClippyRuntime {
     private func waitForQueuedPasteIfNeeded(
         index: Int,
         totalCount: Int,
-        shouldCancel: () -> Bool
+        shouldCancel: () -> Bool,
+        sideEffectGate: MacClippyPasteInjectionGate?
     ) -> Bool {
         guard index < totalCount - 1 else { return true }
         let deadline = Date().addingTimeInterval(MacClippyQueuePastePolicy.settleInterval)
         while Date() < deadline {
-            guard !shouldCancel() else { return false }
+            guard !shouldCancel(), sideEffectGate?.isOpen != false else { return false }
             Thread.sleep(forTimeInterval: 0.01)
         }
         return true
@@ -209,20 +275,25 @@ extension MacClippyRuntime {
     func injectPasteboardContent(
         _ content: MacClippyPasteboardContent,
         frequencyIDs: [RecordID] = [],
+        targetProcessIdentifier: Int32? = nil,
+        beforePaste: (() -> Bool)? = nil,
+        validateBeforePaste: (() -> Bool)? = nil,
         sideEffectGate: MacClippyPasteInjectionGate?
     ) -> PasteInjectionResult {
-        let operation = {
-            let result = self.pasteInjector.inject(content: content)
-            guard result == .injected else { return result }
-            for id in frequencyIDs {
-                self.recordSuccessfulPasteFrequency(for: id)
-            }
-            return result
+        let result = pasteInjector.inject(
+            content: content,
+            beforePaste: beforePaste,
+            validateBeforePaste: validateBeforePaste,
+            validateCommitContext: validateBeforePaste,
+            snapshotPolicy: .bestEffort(maxBytes: 16 * 1024 * 1024),
+            gate: sideEffectGate,
+            targetProcessIdentifier: targetProcessIdentifier
+        )
+        guard result == .injected else { return result }
+        for id in frequencyIDs {
+            recordSuccessfulPasteFrequency(for: id)
         }
-        if let sideEffectGate {
-            return sideEffectGate.withOpenGate(operation) ?? .manualPasteRequired
-        }
-        return operation()
+        return result
     }
 
     /// Shared ordered-selection resolution for pasteOrdered and copyOrdered.

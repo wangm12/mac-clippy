@@ -78,43 +78,52 @@ extension MacClippyDockView {
     func snippetCard(_ snippet: MacClippySnippetEntry, index: Int) -> some View {
         let isFocused = index == model.focusedIndex
         let card = Button {
-            handleCardClick(clickCount: 1, modifiers: currentModifierFlags(), focus: { model.focus(snippet) })
+            handleCardClick(
+                clickCount: 1, modifiers: currentModifierFlags(), target: .snippet(snippet.id),
+                focus: { model.focus(snippet) })
         } label: {
             snippetCardContent(snippet, isFocused: isFocused)
         }
         .buttonStyle(MacClippyCardButtonStyle())
         .simultaneousGesture(TapGesture(count: 2).onEnded {
-            handleCardClick(clickCount: 2, modifiers: currentModifierFlags(), focus: { model.focus(snippet) })
+            handleCardClick(
+                clickCount: 2, modifiers: currentModifierFlags(), target: .snippet(snippet.id),
+                focus: { model.focus(snippet) })
         })
         .contextMenu {
             snippetContextMenu(snippet)
         }
         .foregroundStyle(MacClippyDockTheme.textColor)
-        .modifier(MacClippyCardHoverModifier(enabled: !model.isPreviewVisible, reduceMotion: reduceMotion))
         .accessibilityLabel(snippetAccessibilityLabel(snippet))
         .accessibilityAddTraits([])
 
         return card
+            .accessibilityAction(named: "Edit") { onEditSnippet(snippet) }
             .accessibilityAction(named: "Paste") {
                 focusCard()
-                model.focus(snippet)
-                model.pasteFocused(completion: onClose)
+                model.pasteTarget(.snippet(snippet.id), completion: onClose)
             }
             .accessibilityAction(named: "Copy") {
                 focusCard()
-                model.focus(snippet)
-                model.copyFocused()
+                model.copyTarget(.snippet(snippet.id))
             }
             .accessibilityAction(named: "Preview") {
                 focusCard()
-                model.focus(snippet)
-                onPreview()
+                onPreviewTarget(.snippet(snippet.id))
             }
             .accessibilityAction(named: "Delete") {
                 focusCard()
-                model.focus(snippet)
-                model.deleteFocused()
+                model.deleteSnippet(id: snippet.id)
             }
+            .overlay(alignment: .topTrailing) {
+                MacClippyCardQuickActions {
+                    model.copyTarget(.snippet(snippet.id))
+                } more: {
+                    snippetContextMenu(snippet)
+                }
+                .padding(.top, 8).padding(.trailing, 12)
+            }
+            .modifier(MacClippyCardHoverModifier(enabled: !model.isPreviewVisible, reduceMotion: reduceMotion))
     }
 
     func card(_ item: MacClippyHistoryEntry, index: Int) -> some View {
@@ -170,6 +179,7 @@ extension MacClippyDockView {
             handleCardClick(
                 clickCount: 1,
                 modifiers: currentModifierFlags(),
+                target: .item(item.id),
                 focus: { model.focusAndSelect(item) },
                 selection: selectionHandler(for: item, index: index)
             )
@@ -188,7 +198,9 @@ extension MacClippyDockView {
         }
         .buttonStyle(MacClippyCardButtonStyle())
         .simultaneousGesture(TapGesture(count: 2).onEnded {
-            handleCardClick(clickCount: 2, modifiers: currentModifierFlags(), focus: { model.focusAndSelect(item) })
+            handleCardClick(
+                clickCount: 2, modifiers: currentModifierFlags(), target: .item(item.id),
+                focus: { model.focusAndSelect(item) })
         })
         .contextMenu {
             itemContextMenu(item)
@@ -196,98 +208,24 @@ extension MacClippyDockView {
         .onDrag {
             cardDragProvider(for: item)
         } preview: {
-            Text(item.preview.isEmpty ? "Clipboard item" : item.preview)
-                .font(.caption)
-                .lineLimit(1)
-                .foregroundStyle(MacClippyDockTheme.textColor)
-                .padding(.horizontal, 10)
-                .frame(width: 180, height: 32, alignment: .leading)
-                .background(
-                    MacClippyDockTheme.cardColor.opacity(0.72),
-                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                )
-                .opacity(0.72)
-        }
-    }
-
-    func cardDragProvider(for item: MacClippyHistoryEntry) -> NSItemProvider {
-        let provider = NSItemProvider()
-        for representation in MacClippyCardDragPolicy.representations(for: item.contentKind) {
-            registerCardDragRepresentation(
-                representation,
-                item: item,
-                on: provider
+            MacClippyCardDragPreview(
+                context: context,
+                thumbnail: cachedCardDragThumbnail(for: item)
             )
         }
-        return provider
     }
 
-    private func registerCardDragRepresentation(
-        _ representation: MacClippyCardDragRepresentation,
-        item: MacClippyHistoryEntry,
-        on provider: NSItemProvider
-    ) {
-        if representation == .fileURL {
-            registerCardDragFileURLs(item.fileURLs, recordID: item.id, on: provider)
-            return
-        }
-
-        let typeIdentifiers: [String]
-        if representation == .image {
-            typeIdentifiers = ["public.png", "public.tiff"]
-        } else {
-            typeIdentifiers = [MacClippyCardDragPolicy.typeIdentifier(for: representation)]
-        }
-
-        let runtime = model.runtime
-        for typeIdentifier in typeIdentifiers {
-            provider.registerDataRepresentation(
-                forTypeIdentifier: typeIdentifier,
-                visibility: .all
-            ) { completion in
-                do {
-                    let payload = try runtime.dragPayload(id: item.id, representation: representation)
-                    guard payload.typeIdentifier == typeIdentifier else {
-                        completion(nil, nil)
-                        return nil
-                    }
-                    completion(payload.data, nil)
-                } catch {
-                    completion(nil, error)
-                }
-                return nil
-            }
-        }
-    }
-
-    private func registerCardDragFileURLs(
-        _ urls: [URL],
-        recordID: RecordID,
-        on provider: NSItemProvider
-    ) {
-        for url in urls {
-            let typeIdentifier = UTType(filenameExtension: url.pathExtension)?.identifier
-                ?? UTType.data.identifier
-            provider.registerFileRepresentation(
-                forTypeIdentifier: typeIdentifier,
-                fileOptions: [],
-                visibility: .all
-            ) { completion in
-                completion(url, false, nil)
-                return nil
-            }
-        }
-        let runtime = model.runtime
-        provider.registerDataRepresentation(
-            forTypeIdentifier: MacClippyCardDragPolicy.typeIdentifier(for: .fileURL),
-            visibility: .all
-        ) { completion in
-            do {
-                let payload = try runtime.dragPayload(id: recordID, representation: .fileURL)
-                completion(payload.data, nil)
-            } catch {
-                completion(nil, error)
-            }
+    private func cachedCardDragThumbnail(for item: MacClippyHistoryEntry) -> CGImage? {
+        switch item.contentKind {
+        case .image:
+            return model.thumbnailLoader.cachedImage(id: item.id, maxPixelSize: 480)
+        case .files:
+            guard let url = item.fileURLs.first else { return nil }
+            let pointSize: CGSize = MacClippyFilePresentation.mediaKind(for: url) == .image
+                ? CGSize(width: MacClippyDockCardMetrics.width, height: MacClippyDockCardMetrics.height)
+                : CGSize(width: 96, height: 96)
+            return MacClippyFileThumbnailLoader.cachedImage(for: url, pointSize: pointSize)
+        case .text, .html, .rtf:
             return nil
         }
     }
@@ -316,50 +254,23 @@ extension MacClippyDockView {
         _ content: Content,
         context: MacClippyClipboardCardContext
     ) -> some View {
-        content
+        let styled = content
             .foregroundStyle(MacClippyDockTheme.textColor)
-            .modifier(MacClippyCardHoverModifier(enabled: !model.isPreviewVisible, reduceMotion: reduceMotion))
             .accessibilityLabel(cardAccessibilityLabel(context: context))
             .accessibilityHint(cardAccessibilityHint(context: context) ?? "")
             .accessibilityAddTraits(context.isSelected ? .isSelected : [])
-            .accessibilityAction(named: "Paste") {
-                focusCard()
-                model.focusAndSelect(context.item)
-                model.pasteFocused(completion: onClose)
-            }
-            .accessibilityAction(named: "Copy") {
-                focusCard()
-                model.focusAndSelect(context.item)
-                model.copyFocused()
-            }
-            .accessibilityAction(named: "Preview") {
-                focusCard()
-                model.focusAndSelect(context.item)
-                onPreview()
-            }
-            .accessibilityAction(named: "Copy plain") {
-                guard context.item.supportsPlainCopy else { return }
-                focusCard()
-                model.focusAndSelect(context.item)
-                model.copyFocused(plain: true)
-            }
-            .accessibilityAction(named: "Rename") {
-                model.focus(context.item)
-                model.presentRenameItem(for: context.item)
-            }
-            .accessibilityAction(named: model.pinboards.isEmpty ? "Create list" : "Pin to list") {
-                focusCard()
-                model.focusAndSelect(context.item)
-                if let firstPinboard = model.pinboards.first {
-                    model.togglePinFocused(in: firstPinboard.id)
-                } else {
-                    model.presentCreateCategory()
+        return cardAccessibilityActions(styled, context: context)
+            .overlay(alignment: .topTrailing) {
+                if !model.hasMultipleSelection {
+                    MacClippyCardQuickActions {
+                        focusCard()
+                        model.copyRecord(id: context.item.id)
+                    } more: {
+                        itemContextMenu(context.item)
+                    }
+                    .padding(.top, 8).padding(.trailing, 12)
                 }
             }
-            .accessibilityAction(named: "Delete") {
-                focusCard()
-                model.focusAndSelect(context.item)
-                model.deleteFocused()
-            }
+            .modifier(MacClippyCardHoverModifier(enabled: !model.isPreviewVisible, reduceMotion: reduceMotion))
     }
 }

@@ -1,3 +1,8 @@
+import AppKit
+import CoreGraphics
+import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 import XCTest
 
 @testable import MacClippy
@@ -5,8 +10,9 @@ import MacClippyCore
 import MacClippyPlatform
 
 final class MacClippyRuntimeBatchOperationsTests: XCTestCase {
-    private var tempRoot: URL!
-    private var runtime: MacClippyRuntime!
+    var tempRoot: URL!
+    var pasteboardEnvironment: MacClippyAppTestPasteboardEnvironment!
+    var runtime: MacClippyRuntime!
 
     override func setUpWithError() throws {
         tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -15,12 +21,23 @@ final class MacClippyRuntimeBatchOperationsTests: XCTestCase {
         )
         try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
         let paths = try MacClippyPaths(rootURL: tempRoot)
-        runtime = try MacClippyRuntime(paths: paths)
+        pasteboardEnvironment = MacClippyAppTestPasteboardEnvironment(
+            label: "MacClippyBatchOperations",
+            sourceAppBundleID: { "com.example.macclippy-tests-source" }
+        )
+        runtime = try MacClippyRuntime(
+            paths: paths,
+            observer: pasteboardEnvironment.observer,
+            pasteInjector: pasteboardEnvironment.injector,
+            enableSnippetExpansion: false,
+            preferencesDefaults: pasteboardEnvironment.preferencesDefaults
+        )
     }
 
     override func tearDownWithError() throws {
         runtime?.closeForTesting()
         runtime = nil
+        pasteboardEnvironment = nil
         if let tempRoot {
             try? FileManager.default.removeItem(at: tempRoot)
         }
@@ -34,13 +51,15 @@ final class MacClippyRuntimeBatchOperationsTests: XCTestCase {
 
         // Visual order in the dock is newest-first: second, first.
         let result = try runtime.pasteOrdered(ids: [second.id, first.id])
-        guard case .merged = result else {
+        guard case let .merged(injection) = result else {
             XCTFail("expected .merged for a homogeneous text selection, got \(result)")
             return
         }
+        XCTAssertEqual(injection, .injected)
+        XCTAssertEqual(pasteboardEnvironment.pasteboard.string(forType: .string), "second\nfirst")
         // The exact merged text is covered by the pure
-        // MacClippyDockMultiPastePolicyTests; here we assert the result kind
-        // only, since the injector writes to NSPasteboard.general.
+        // MacClippyDockMultiPastePolicyTests; this test's injector uses a
+        // unique named pasteboard and fake event posters.
     }
 
     func testOrderedMultiPasteReturnsMixedForImageInSelectionAndDoesNotPasteSubset() throws {
@@ -99,13 +118,15 @@ final class MacClippyRuntimeBatchOperationsTests: XCTestCase {
         let empty = try runtime.appendTestRecord(.text(""))
 
         let result = try runtime.pasteOrdered(ids: [alphaRecord.id, empty.id])
-        guard case .merged = result else {
+        guard case let .merged(injection) = result else {
             XCTFail("expected .merged for a text selection with one empty real text, got \(result)")
             return
         }
+        XCTAssertEqual(injection, .injected)
+        XCTAssertEqual(pasteboardEnvironment.pasteboard.string(forType: .string), "alpha\n")
         // The exact merged string is covered by the pure policy tests; here we
-        // assert the result kind only, since the injector writes to
-        // NSPasteboard.general.
+        // assert the result kind only. The test injector is fully isolated
+        // from the system pasteboard and event taps.
     }
 
     // MARK: - Stale operation/session generation (model-level)
@@ -123,6 +144,7 @@ final class MacClippyRuntimeBatchOperationsTests: XCTestCase {
         // stale completion must not call the close handler.
         model.beginSession()
         model.selectAllVisible()
+        MacClippyTestWait.until({ model.selectionIsReady }, failOnTimeout: true)
         XCTAssertTrue(model.hasMultipleSelection)
         XCTAssertEqual(model.selectionCount, 2)
         var didClose = false
@@ -149,6 +171,7 @@ final class MacClippyRuntimeBatchOperationsTests: XCTestCase {
         wait { model.historyItems.count >= 2 }
 
         model.selectAllVisible()
+        MacClippyTestWait.until({ model.selectionIsReady }, failOnTimeout: true)
 
         // Start a batch delete, then immediately start a second batch delete
         // before the first completes. The second bumps operationGeneration, so
@@ -245,6 +268,7 @@ final class MacClippyRuntimeBatchOperationsTests: XCTestCase {
 
         // Cmd+A on a single record selects one -> still no surface (count == 1).
         model.selectAllVisible()
+        MacClippyTestWait.until({ model.selectionIsReady }, failOnTimeout: true)
         XCTAssertFalse(model.hasMultipleSelection)
 
         // Switch to snippets: surface never shows.
@@ -262,6 +286,7 @@ final class MacClippyRuntimeBatchOperationsTests: XCTestCase {
         wait { model.historyItems.count >= 2 }
 
         model.selectAllVisible()
+        MacClippyTestWait.until({ model.selectionIsReady }, failOnTimeout: true)
         XCTAssertTrue(model.hasMultipleSelection)
 
         // First Escape (clear-selection-first): selection is cleared, focus
@@ -281,7 +306,58 @@ final class MacClippyRuntimeBatchOperationsTests: XCTestCase {
 
     // MARK: - Helpers
 
-    private func wait(until condition: () -> Bool, timeout: TimeInterval = 2.0) {
+    func wait(until condition: () -> Bool, timeout: TimeInterval = 2.0) {
         MacClippyTestWait.until(condition, timeout: timeout)
     }
+
+    func noisyPNG(width: Int, height: Int) throws -> Data {
+        var pixels = Data(count: width * height * 4)
+        pixels.withUnsafeMutableBytes { rawBuffer in
+            guard let bytes = rawBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            var state: UInt32 = 0x1234_5678
+            for offset in stride(from: 0, to: width * height * 4, by: 4) {
+                state = state &* 1_664_525 &+ 1_013_904_223
+                bytes[offset] = UInt8(truncatingIfNeeded: state >> 24)
+                state = state &* 1_664_525 &+ 1_013_904_223
+                bytes[offset + 1] = UInt8(truncatingIfNeeded: state >> 24)
+                state = state &* 1_664_525 &+ 1_013_904_223
+                bytes[offset + 2] = UInt8(truncatingIfNeeded: state >> 24)
+                bytes[offset + 3] = 255
+            }
+        }
+        guard let provider = CGDataProvider(data: pixels as CFData),
+              let image = CGImage(
+                  width: width,
+                  height: height,
+                  bitsPerComponent: 8,
+                  bitsPerPixel: 32,
+                  bytesPerRow: width * 4,
+                  space: CGColorSpaceCreateDeviceRGB(),
+                  bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+                  provider: provider,
+                  decode: nil,
+                  shouldInterpolate: false,
+                  intent: .defaultIntent
+              ) else {
+            throw MacClippyStoreError.invalidStoredRecord
+        }
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            output,
+            UTType.png.identifier as CFString,
+            1,
+            nil
+        ) else {
+            throw MacClippyStoreError.invalidStoredRecord
+        }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            throw MacClippyStoreError.invalidStoredRecord
+        }
+        return output as Data
+    }
+}
+
+func observablePasteboardTypes(_ item: NSPasteboardItem) -> [String] {
+    item.types.map(\.rawValue).filter { $0 != "public.utf16-external-plain-text" }
 }

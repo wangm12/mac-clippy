@@ -144,12 +144,13 @@ enum MacClippyRuntimePreviewPayload: Sendable {
 }
 
 struct MacClippyItemRepresentationDetails: Identifiable, Sendable {
+    let itemIndex: Int
     let uti: String
     let payloadState: MacClippyClipboardRepresentationPayloadState
     let byteCount: Int
     let isAvailable: Bool
 
-    var id: String { uti }
+    var id: String { "\(itemIndex):\(uti)" }
 }
 
 struct MacClippyItemDetails: Identifiable, Sendable {
@@ -222,7 +223,7 @@ struct MacClippyBatchPinResult: Sendable, Equatable {
 }
 
 enum MacClippyMultiPasteResult: Sendable, Equatable {
-    case merged(injected: Bool)
+    case merged(result: PasteInjectionResult)
     case mixed(
         supportedIDs: [RecordID],
         unsupportedIDs: [RecordID],
@@ -255,11 +256,25 @@ enum MacClippyQueuePasteResult: Sendable, Equatable {
         unavailableIDs: [RecordID],
         unavailableKinds: [MacClippyDockMultiPastePolicy.Kind]
     )
-    case manualPasteRequired(
+    case preparedForManualPaste(
         injectedIDs: [RecordID],
         unavailableIDs: [RecordID],
         unavailableKinds: [MacClippyDockMultiPastePolicy.Kind],
-        manualPasteRequiredID: RecordID,
+        preparedID: RecordID,
+        remainingIDs: [RecordID]
+    )
+    case failed(
+        injectedIDs: [RecordID],
+        unavailableIDs: [RecordID],
+        unavailableKinds: [MacClippyDockMultiPastePolicy.Kind],
+        failedID: RecordID,
+        failure: MacClippyPasteInjectionFailure,
+        remainingIDs: [RecordID]
+    )
+    case cancelled(
+        injectedIDs: [RecordID],
+        unavailableIDs: [RecordID],
+        unavailableKinds: [MacClippyDockMultiPastePolicy.Kind],
         remainingIDs: [RecordID]
     )
 }

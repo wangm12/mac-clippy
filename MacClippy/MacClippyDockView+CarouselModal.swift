@@ -2,93 +2,6 @@ import AppKit
 import SwiftUI
 
 extension MacClippyDockView {
-    @ViewBuilder
-    var modalOverlay: some View {
-        if let modal = model.modal {
-            ZStack {
-                Color.black.opacity(0.22)
-                    .ignoresSafeArea()
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        if case .confirmDeleteCategory = modal {
-                            model.dismissModal()
-                        }
-                    }
-                switch modal {
-                case let .createCategory(token):
-                    MacClippyCreateCategoryEditor { name, color, completion in
-                        model.createPinboard(name: name, color: color) { succeeded in
-                            if succeeded {
-                                model.dismissModal()
-                            }
-                            completion(succeeded)
-                        }
-                    } onCancel: {
-                        model.dismissModal()
-                    }
-                    .id(token)
-                case let .renameItem(recordID, initialName, token):
-                    MacClippyRenameItemEditor(initialName: initialName) { result in
-                        if case let .save(name) = result {
-                            model.renameItem(id: recordID, name: name)
-                        }
-                        model.dismissModal()
-                    } onCancel: {
-                        model.dismissModal()
-                    }
-                    .id(token)
-                case let .renameCategory(pinboardID, token):
-                    Group {
-                        if let pinboard = model.pinboards.first(where: { $0.id == pinboardID }) {
-                            MacClippyRenameCategoryEditor(initialName: pinboard.name) { name in
-                                model.renamePinboard(pinboard, to: name)
-                                model.dismissModal()
-                            } onCancel: {
-                                model.dismissModal()
-                            }
-                        } else {
-                            Color.clear.onAppear { model.dismissModal() }
-                        }
-                    }
-                    .id(token)
-                case let .confirmDeleteCategory(pinboardID, name, token):
-                    Group {
-                        if let pinboard = model.pinboards.first(where: { $0.id == pinboardID }) {
-                            MacClippyConfirmDeleteCategoryEditor(categoryName: name) {
-                                model.deletePinboard(pinboard)
-                                model.dismissModal()
-                            } onCancel: {
-                                model.dismissModal()
-                            }
-                        } else {
-                            Color.clear.onAppear { model.dismissModal() }
-                        }
-                    }
-                    .id(token)
-                }
-            }
-            .transition(MacClippyMotion.fadeTransition(reduceMotion: reduceMotion))
-            .animation(MacClippyMotion.animation(MacClippyMotion.contentAnimation, reduceMotion: reduceMotion), value: model.modal)
-            .accessibilityElement(children: .contain)
-            .accessibilityAddTraits(.isModal)
-            .accessibilityFocused($modalAccessibilityFocused)
-            .accessibilityLabel(modalAccessibilityLabel(for: modal))
-        }
-    }
-
-    func modalAccessibilityLabel(for modal: MacClippyDockModal) -> String {
-        switch modal {
-        case .createCategory:
-            return "New category dialog"
-        case .renameItem:
-            return "Rename clipboard item dialog"
-        case .renameCategory:
-            return "Rename category dialog"
-        case .confirmDeleteCategory:
-            return "Delete category confirmation dialog"
-        }
-    }
-
     func announceSearchResultsIfNeeded() {
         let isLoading: Bool
         let hasMore: Bool
@@ -303,6 +216,7 @@ extension MacClippyDockView {
 
     private var snippetCarousel: some View {
         let visibleSnippets = model.visibleSnippets
+        let folders = model.availableSnippetFolders
         return ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: MacClippyDockCardMetrics.gap) {
@@ -340,7 +254,14 @@ extension MacClippyDockView {
                     }
                 }
                 .padding(.horizontal, 12)
-                .padding(.vertical, MacClippyDockCardMetrics.carouselVerticalPadding)
+                .padding(
+                    .top,
+                    folders.isEmpty ? MacClippyDockCardMetrics.carouselVerticalPadding : 28
+                )
+                .padding(
+                    .bottom,
+                    folders.isEmpty ? MacClippyDockCardMetrics.carouselVerticalPadding : 6
+                )
             }
             // Same keyboard/preview-only focus-follow behavior as the
             // clipboard carousel; pointer selection never recenters it.
@@ -360,8 +281,57 @@ extension MacClippyDockView {
         // carousel, including when the add card is the only card.
         .frame(height: MacClippyDockCardMetrics.carouselHeight(for: dynamicTypeSize))
         .mask { carouselEdgeFade }
+        .overlay(alignment: .topLeading) {
+            if !folders.isEmpty {
+                snippetFolderBar(folders)
+            }
+        }
         .overlay { MacClippyDockScrollSignpostProbe().allowsHitTesting(false) }
         .onAppear { model.noteCardListAppeared() }
+    }
+
+    private func snippetFolderBar(_ folders: [String]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                snippetFolderPill(title: "All", isSelected: model.selectedSnippetFolder == nil) {
+                    model.selectSnippetFolder(nil)
+                }
+                ForEach(folders, id: \.self) { folder in
+                    snippetFolderPill(
+                        title: folder,
+                        isSelected: model.selectedSnippetFolder == folder
+                    ) {
+                        model.selectSnippetFolder(folder)
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 2)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Snippet folders")
+    }
+
+    private func snippetFolderPill(
+        title: String,
+        isSelected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.caption.weight(isSelected ? .semibold : .medium))
+                .foregroundStyle(
+                    isSelected ? MacClippyDockTheme.accentColor : MacClippyDockTheme.mutedColor
+                )
+                .padding(.horizontal, 10)
+                .padding(.vertical, 3)
+                .background(
+                    isSelected ? MacClippyDockTheme.accentSoftColor : MacClippyDockTheme.cardColor.opacity(0.6),
+                    in: Capsule()
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private var snippetAddCard: some View {

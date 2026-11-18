@@ -188,8 +188,12 @@ public enum MacClippyDockInputMethodPolicy {
         leavingSearch: Bool,
         isHiding: Bool,
         didStealActivation: Bool = true,
-        hideReason: MacClippyDockHideReason = .command
+        hideReason: MacClippyDockHideReason = .command,
+        hostIsAlreadyActive: Bool = false
     ) -> Bool {
+        if hostIsAlreadyActive {
+            return false
+        }
         if isHiding {
             return hideReason != .outsideClick
         }
@@ -270,7 +274,9 @@ public enum MacClippyDockInputMethodPolicy {
     ) -> CGPoint {
         CGPoint(x: point.x, y: primaryHeight - point.y)
     }
+}
 
+extension MacClippyDockInputMethodPolicy {
     private static func windowPID(_ value: Any?) -> Int32? {
         if let value = value as? Int32 { return value }
         if let value = value as? Int { return Int32(value) }
@@ -320,18 +326,20 @@ public enum MacClippyDockInputMethodPolicy {
         return inputMethodCandidateLayers(windows: windows)
     }
 
-    private static let inputMethodOwnerTokens = [
-        "SCIM",
-        "TCIM",
-        "TYIM",
-        "ChineseIM",
-        "JapaneseIM",
-        "KoreanIM",
-        "VietnameseIM",
-        "PluginIM",
-        "PressAndHold",
-        "CharacterPalette",
-        "Input Method",
-        "InputMethod",
-    ]
+    private static var inputMethodOwnerTokens: [String] {
+        [
+            "SCIM",
+            "TCIM",
+            "TYIM",
+            "ChineseIM",
+            "JapaneseIM",
+            "KoreanIM",
+            "VietnameseIM",
+            "PluginIM",
+            "PressAndHold",
+            "CharacterPalette",
+            "Input Method",
+            "InputMethod"
+        ]
+    }
 }

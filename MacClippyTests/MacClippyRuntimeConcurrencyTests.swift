@@ -21,8 +21,29 @@ private final class MacClippyConcurrencyErrorCollector: @unchecked Sendable {
     }
 }
 
+private final class MacClippyImageReadOutcome: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: (data: Data?, error: String?) = (nil, nil)
+
+    func store(_ result: Result<Data, Error>) {
+        lock.lock()
+        switch result {
+        case let .success(data): value = (data, nil)
+        case let .failure(error): value = (nil, String(describing: error))
+        }
+        lock.unlock()
+    }
+
+    var snapshot: (data: Data?, error: String?) {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+}
+
 final class MacClippyRuntimeConcurrencyTests: XCTestCase {
     private var tempRoot: URL!
+    private var pasteboardEnvironment: MacClippyAppTestPasteboardEnvironment!
     private var runtime: MacClippyRuntime!
 
     override func setUpWithError() throws {
@@ -31,12 +52,20 @@ final class MacClippyRuntimeConcurrencyTests: XCTestCase {
             isDirectory: true
         )
         try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
-        runtime = try MacClippyRuntime(paths: try MacClippyPaths(rootURL: tempRoot))
+        pasteboardEnvironment = MacClippyAppTestPasteboardEnvironment(label: "MacClippyRuntimeConcurrency")
+        runtime = try MacClippyRuntime(
+            paths: try MacClippyPaths(rootURL: tempRoot),
+            observer: pasteboardEnvironment.observer,
+            pasteInjector: pasteboardEnvironment.injector,
+            enableSnippetExpansion: false,
+            preferencesDefaults: pasteboardEnvironment.preferencesDefaults
+        )
     }
 
     override func tearDownWithError() throws {
         runtime?.closeForTesting()
         runtime = nil
+        pasteboardEnvironment = nil
         if let tempRoot {
             try? FileManager.default.removeItem(at: tempRoot)
         }
@@ -74,6 +103,27 @@ final class MacClippyRuntimeConcurrencyTests: XCTestCase {
             XCTFail("expected image preview")
         }
         XCTAssertEqual(runtime.blobReadsWhileStoreLockHeld, 0)
+    }
+
+    func testImageDataHoldsLeaseBetweenRecordLookupAndBlobRead() throws {
+        let image = try runtime.appendTestRecord(.image(blobID: "unused", width: 1, height: 1))
+        let blobID = try imageBlobID(for: image.id)
+        let sharedRuntime = try XCTUnwrap(runtime)
+        try assertImageReadLeaseProtection(blobID: blobID) { [sharedRuntime] in
+            try sharedRuntime.imageData(id: image.id)
+        }
+    }
+
+    func testPreviewHoldsLeaseBetweenRecordLookupAndBlobRead() throws {
+        let image = try runtime.appendTestRecord(.image(blobID: "unused", width: 1, height: 1))
+        let blobID = try imageBlobID(for: image.id)
+        let sharedRuntime = try XCTUnwrap(runtime)
+        try assertImageReadLeaseProtection(blobID: blobID) { [sharedRuntime] in
+            guard case .image = try sharedRuntime.preview(id: image.id) else {
+                throw MacClippyStoreError.invalidStoredRecord
+            }
+            return Data([1])
+        }
     }
 
     func testConcurrentHistoryAndLabelAccessUsesRuntimeStoreBoundary() throws {
@@ -152,6 +202,48 @@ final class MacClippyRuntimeConcurrencyTests: XCTestCase {
 
         XCTAssertEqual(entries.first?.contentKind, .text)
         XCTAssertNotEqual(entries.first?.preview, "stale projection")
+    }
+
+    private func imageBlobID(for id: RecordID) throws -> String {
+        switch try runtime.clipboardStore.body(for: id) {
+        case let .image(blobID, _, _), let .encryptedImage(blobID, _, _): return blobID
+        case .text, .html, .rtf, .files: throw MacClippyStoreError.invalidStoredRecord
+        }
+    }
+
+    private func assertImageReadLeaseProtection(
+        blobID: String,
+        read: @escaping @Sendable () throws -> Data
+    ) throws {
+        let leaseAcquired = DispatchSemaphore(value: 0)
+        let resumeRead = DispatchSemaphore(value: 0)
+        let completed = DispatchGroup()
+        let outcome = MacClippyImageReadOutcome()
+        runtime.afterImageBlobLeaseAcquiredForTesting = { _ in
+            leaseAcquired.signal()
+            _ = resumeRead.wait(timeout: .now() + 5)
+        }
+        defer {
+            resumeRead.signal()
+            runtime.afterImageBlobLeaseAcquiredForTesting = nil
+        }
+
+        completed.enter()
+        DispatchQueue.global().async {
+            outcome.store(Result { try read() })
+            completed.leave()
+        }
+
+        XCTAssertEqual(leaseAcquired.wait(timeout: .now() + 3), .success)
+        try runtime.blobStore.delete(id: blobID)
+        XCTAssertTrue(try runtime.blobStore.containsChecked(id: blobID))
+        resumeRead.signal()
+        XCTAssertEqual(completed.wait(timeout: .now() + 3), .success)
+
+        let result = outcome.snapshot
+        XCTAssertNil(result.error)
+        XCTAssertFalse(result.data?.isEmpty ?? true)
+        XCTAssertTrue(try runtime.blobStore.containsChecked(id: blobID))
     }
 
     @MainActor

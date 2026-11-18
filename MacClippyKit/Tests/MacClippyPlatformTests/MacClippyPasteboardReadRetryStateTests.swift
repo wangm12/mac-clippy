@@ -43,6 +43,82 @@ final class MacClippyPasteboardReadRetryStateTests: XCTestCase {
         XCTAssertFalse(state.incrementAttempts(for: 123))
     }
 
+    func testDeprecatedUpdateUnavailableTypesMatchesGenerationAwareUpdate() throws {
+        let original = PasteboardChange(
+            changeCount: 42,
+            items: [PasteboardItem(types: ["public.utf8-plain-text", "com.lazy"], representations: [
+                "public.utf8-plain-text": Data("ready".utf8)
+            ])],
+            sourceAppBundleID: "com.example.source"
+        )
+        let remaining = [(itemIndex: 0, uti: "com.lazy")]
+
+        let compatibilityState = MacClippyPasteboardReadRetryState(maxAttempts: 4)
+        compatibilityState.record(change: original, unavailableTypes: [(0, "com.lazy"), (0, "com.other")])
+        XCTAssertTrue(compatibilityState.incrementAttempts(for: 42))
+
+        let primaryState = MacClippyPasteboardReadRetryState(maxAttempts: 4)
+        primaryState.record(change: original, unavailableTypes: [(0, "com.lazy"), (0, "com.other")])
+        XCTAssertTrue(primaryState.incrementAttempts(for: 42))
+        XCTAssertTrue(primaryState.update(change: original, unavailableTypes: remaining))
+
+        compatibilityState.updateUnavailableTypes(for: 42, unavailableTypes: remaining)
+
+        let compatibilityPending = try XCTUnwrap(compatibilityState.pending(for: 42))
+        let primaryPending = try XCTUnwrap(primaryState.pending(for: 42))
+        XCTAssertEqual(compatibilityPending.attempts, primaryPending.attempts)
+        XCTAssertEqual(compatibilityPending.unavailableTypes.map(\.uti), primaryPending.unavailableTypes.map(\.uti))
+        XCTAssertEqual(
+            compatibilityPending.unavailableTypes.map(\.itemIndex),
+            primaryPending.unavailableTypes.map(\.itemIndex)
+        )
+        XCTAssertEqual(compatibilityPending.originalChange, primaryPending.originalChange)
+    }
+
+    func testDeprecatedUpdateUnavailableTypesPreservesLegacyCountOnlyBehavior() throws {
+        let state = MacClippyPasteboardReadRetryState(maxAttempts: 4)
+        state.record(changeCount: 70, unavailableTypes: [(0, "a"), (1, "b")])
+        XCTAssertTrue(state.incrementAttempts(for: 70))
+
+        state.updateUnavailableTypes(for: 70, unavailableTypes: [(1, "b")])
+
+        let pending = try XCTUnwrap(state.pending(for: 70))
+        XCTAssertNil(pending.originalChange)
+        XCTAssertEqual(pending.attempts, 1)
+        XCTAssertEqual(pending.unavailableTypes.map(\.uti), ["b"])
+        XCTAssertEqual(pending.unavailableTypes.map(\.itemIndex), [1])
+
+        state.updateUnavailableTypes(for: 70, unavailableTypes: [])
+        XCTAssertNil(state.pending(for: 70), "an empty legacy update clears the pending entry")
+        state.updateUnavailableTypes(for: 71, unavailableTypes: [(0, "unknown")])
+        XCTAssertNil(state.pending(for: 71), "unknown generations remain a no-op")
+    }
+
+    func testRetryUpdateStillRequiresMatchingGenerationAndItemTypes() throws {
+        let original = PasteboardChange(
+            changeCount: 51,
+            items: [PasteboardItem(types: ["public.utf8-plain-text", "com.lazy"], representations: [
+                "public.utf8-plain-text": Data("ready".utf8)
+            ])]
+        )
+        let differentTypes = PasteboardChange(
+            changeCount: 51,
+            items: [PasteboardItem(types: ["public.utf8-plain-text", "com.other"], representations: [
+                "public.utf8-plain-text": Data("ready".utf8)
+            ])]
+        )
+        let state = MacClippyPasteboardReadRetryState()
+        state.record(change: original, unavailableTypes: [(0, "com.lazy")])
+
+        XCTAssertFalse(state.update(change: differentTypes, unavailableTypes: [(0, "com.other")]))
+        state.updateUnavailableTypes(for: 52, unavailableTypes: [(0, "com.lazy")])
+
+        let pending = try XCTUnwrap(state.pending(for: 51))
+        XCTAssertEqual(pending.originalChange, original)
+        XCTAssertEqual(pending.unavailableTypes.map(\.uti), ["com.lazy"])
+        XCTAssertNil(state.pending(for: 52))
+    }
+
     func testClearAllDropsEveryPendingEntry() {
         // stop()/restart on the observer clears all cross-poll retry state so
         // a new session cannot inherit stale pending entries from the prior

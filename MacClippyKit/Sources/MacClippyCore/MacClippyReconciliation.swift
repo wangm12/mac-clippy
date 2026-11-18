@@ -263,30 +263,7 @@ public enum MacClippyReconciliation {
     ) throws -> MacClippyReconciliationBlobReferenceScan {
         var referenced = MacClippyReachabilityFilter()
         var missing = MacClippyReconciliationDiagnosticSample<String>(limit: diagnosticSampleLimit)
-        var cursor: MacClippyClipboardHistoryCursor?
-        while true {
-            guard shouldContinue() else { throw CancellationError() }
-            let page = try store.listOldest(limit: pageSize, after: cursor)
-            guard !page.isEmpty else { break }
-            for meta in page {
-                guard shouldContinue() else { throw CancellationError() }
-                let body = try store.body(for: meta.id)
-                guard meta.contentKind == nil || body.contentKind == meta.contentKind else {
-                    throw MacClippyStoreError.invalidStoredRecord
-                }
-                if let blobID = body.imageBlobID {
-                    referenced.insert(blobID)
-                    if try !blobs.containsChecked(id: blobID) { missing.append(blobID) }
-                }
-            }
-            guard page.count == pageSize, let last = page.last else { break }
-            cursor = MacClippyClipboardHistoryCursor(
-                modified: last.modified,
-                lamport: last.lamport,
-                id: last.id
-            )
-        }
-        try store.forEachRepresentationBlobID(shouldContinue: shouldContinue) { blobID in
+        try store.forEachReferencedBlobID(shouldContinue: shouldContinue) { blobID in
             referenced.insert(blobID)
             if try !blobs.containsChecked(id: blobID) { missing.append(blobID) }
         }
@@ -323,7 +300,9 @@ public enum MacClippyReconciliation {
         }
         return MacClippyReconciliationBlobCleanupScan(orphan: orphan, failed: failed)
     }
+}
 
+private extension MacClippyReconciliation {
     private static func scanFTS(
         store: ClipboardStore,
         search: SearchStore,

@@ -45,6 +45,7 @@ struct MacClippyDiagnosticsExport: Codable, Sendable {
     let preferences: Preferences
     let databases: [Database]
     let blobs: BlobSummary
+    let captureQueue: MacClippyCaptureQueueMetrics
     let recentEvents: [MacClippyDiagnosticsEvent]
     let metrics: [String: MacClippyDiagnosticsMetric]
 }
@@ -53,18 +54,25 @@ struct MacClippyDiagnosticsStorageSnapshot: Sendable {
     let databaseHealth: [String: MacClippyDatabaseHealthReport]
     let databaseRowCounts: [String: Int64]
     let databaseRowCountIssues: [String: String]
+    let captureQueue: MacClippyCaptureQueueMetrics
 }
 
 enum MacClippyDiagnosticsExporter {
     static func export(
         to url: URL,
         defaults: UserDefaults = .standard,
+        paths: MacClippyPaths? = nil,
         storageSnapshot: MacClippyDiagnosticsStorageSnapshot? = nil
     ) throws {
-        let paths = try MacClippyPaths()
-        let databases = buildDatabases(at: paths, storageSnapshot: storageSnapshot)
+#if MACCLIPPY_E2E
+        guard let paths else { throw MacClippyE2EIsolationError.missingRuntimeDependencies }
+        let resolvedPaths = paths
+#else
+        let resolvedPaths = try paths ?? MacClippyPaths()
+#endif
+        let databases = buildDatabases(at: resolvedPaths, storageSnapshot: storageSnapshot)
 
-        let blobSummary = summarizeBlobs(at: paths.blobsURL)
+        let blobSummary = summarizeBlobs(at: resolvedPaths.blobsURL)
         let excludedApps = defaults.string(forKey: MacClippyRetentionPreferences.excludedAppsKey)?
             .split(separator: ",")
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -93,6 +101,7 @@ enum MacClippyDiagnosticsExporter {
             ),
             databases: databases,
             blobs: blobSummary,
+            captureQueue: storageSnapshot?.captureQueue ?? .empty,
             recentEvents: recentDiagnosticEvents(),
             metrics: MacClippyDiagnosticsRecorder.shared.metricSnapshot()
         )

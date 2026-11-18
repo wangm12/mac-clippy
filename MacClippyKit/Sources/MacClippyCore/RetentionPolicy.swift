@@ -123,7 +123,7 @@ public struct MacClippyRetentionPolicy: Sendable {
                     candidateIndex += batch.count
                     let ids = batch.map(\.id)
                     let expectedModified = Dictionary(uniqueKeysWithValues: batch.map { ($0.id, $0.modified) })
-                    let deletedIDs = try Self.deleteRecords(
+                    let deletion = try Self.deleteRecords(
                         ids,
                         store: store,
                         blobs: blobs,
@@ -136,8 +136,8 @@ public struct MacClippyRetentionPolicy: Sendable {
                             return currentMetas.filter { expectedModified[$0.id] == $0.modified }.map(\.id)
                         }
                     )
-                    remaining -= deletedIDs.count
-                    madeProgress = madeProgress || !deletedIDs.isEmpty
+                    remaining -= deletion.recordIDs.count
+                    madeProgress = madeProgress || !deletion.recordIDs.isEmpty
                 }
                 return remaining <= normalizedCap
             }
